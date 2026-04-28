@@ -1,0 +1,46 @@
+﻿import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import sensible from '@fastify/sensible';
+import { env } from './config.js';
+import { aiRoutes } from './ai/routes.js';
+import { noteRoutes } from './routes/notes.js';
+import { linkRoutes } from './routes/links.js';
+import { kindRoutes } from './routes/kinds.js';
+import { startHocuspocus } from './collaboration/hocuspocus.js';
+
+async function start() {
+  const app = Fastify({
+    logger: {
+      transport:
+        env.NODE_ENV === 'development'
+          ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss' } }
+          : undefined,
+    },
+  });
+
+  await app.register(sensible);
+  await app.register(cors, { origin: env.CORS_ORIGIN.split(',') });
+
+  app.get('/health', async () => ({
+    ok: true,
+    name: 'continuum-server',
+    env: env.NODE_ENV,
+    time: new Date().toISOString(),
+  }));
+
+  await app.register(aiRoutes, { prefix: '/api/ai' });
+  await app.register(noteRoutes, { prefix: '/api/notes' });
+  await app.register(linkRoutes, { prefix: '/api/links' });
+  await app.register(kindRoutes, { prefix: '/api/kinds' });
+
+  try {
+    await app.listen({ host: env.SERVER_HOST, port: env.SERVER_PORT });
+    await startHocuspocus();
+    app.log.info(`Hocuspocus listening on ws://${env.HOCUSPOCUS_HOST}:${env.HOCUSPOCUS_PORT}`);
+  } catch (err) {
+    app.log.error(err);
+    process.exit(1);
+  }
+}
+
+start();

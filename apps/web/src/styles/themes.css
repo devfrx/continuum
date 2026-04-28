@@ -1,0 +1,237 @@
+/**
+ * Theme palettes — light & dark.
+ *
+ * Tokens here are *semantic* (what they're for) rather than literal
+ * (what color they are). Components reference them by purpose so
+ * dark mode requires zero component changes.
+ *
+ * Activation:
+ *   <html data-theme="light">  → light mode
+ *   <html data-theme="dark">   → dark mode
+ *   no attribute               → follows OS via prefers-color-scheme
+ */
+
+/* ────────────────────────────────────────────────────────────────────
+ * LIGHT — Anthropic-inspired warm cream palette
+ * ──────────────────────────────────────────────────────────────────── */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* Surfaces — base → elevated */
+  --bg: #faf7f2;
+  --bg-soft: #f5f1ea;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #ffffff;
+  --bg-overlay: rgba(31, 27, 22, 0.45);
+  --bg-inverse: #1f1b16;
+
+  /* Text */
+  --fg: #1f1b16;
+  --fg-strong: #14110d;
+  --fg-muted: #6b645a;
+  --fg-subtle: #9a9286;
+  --fg-on-accent: #ffffff;
+  --fg-inverse: #faf7f2;
+
+  /* Borders */
+  --border: #e8e1d5;
+  --border-strong: #d6cdbe;
+  --border-subtle: #f0ebe2;
+
+  /* Accent — terracotta */
+  --accent: #c96e4a;
+  --accent-hover-color: #b85e3c;
+  --accent-active-color: #a04e30;
+  --accent-soft: rgba(201, 110, 74, 0.1);
+  --accent-hover: rgba(201, 110, 74, 0.18);
+  --accent-ring: rgba(201, 110, 74, 0.32);
+
+  /* Status */
+  --success: #5c8a6b;
+  --success-soft: rgba(92, 138, 107, 0.12);
+  --warning: #c98a2b;
+  --warning-soft: rgba(201, 138, 43, 0.14);
+  --danger: #b5563e;
+  --danger-soft: rgba(181, 86, 62, 0.12);
+  --info: #4a7ba6;
+  --info-soft: rgba(74, 123, 166, 0.12);
+
+  /* Elevation — composed shadows */
+  --shadow-xs: 0 1px 1px rgba(31, 27, 22, 0.04);
+  --shadow-sm:
+    0 1px 2px rgba(31, 27, 22, 0.04),
+    0 1px 3px rgba(31, 27, 22, 0.04);
+  --shadow-md:
+    0 2px 4px rgba(31, 27, 22, 0.04),
+    0 4px 12px rgba(31, 27, 22, 0.06);
+  --shadow-lg:
+    0 4px 8px rgba(31, 27, 22, 0.04),
+    0 12px 28px rgba(31, 27, 22, 0.08);
+  --shadow-xl:
+    0 8px 16px rgba(31, 27, 22, 0.05),
+    0 24px 48px rgba(31, 27, 22, 0.12);
+  --shadow-focus: 0 0 0 var(--focus-ring-w) var(--accent-ring);
+
+  /* Selection */
+  --selection-bg: var(--accent-soft);
+  --selection-fg: var(--fg);
+
+  /* Graph canvas (Sigma + 3D) — semantic, theme-reactive */
+  --graph-bg: #faf7f2;
+  --graph-grid: rgba(31, 27, 22, 0.05);
+  --graph-label-bg: #ffffff;
+  --graph-label-border: #e8e1d5;
+  --graph-label-fg: #1f1b16;
+  --graph-edge: rgba(120, 110, 96, 0.55);
+  --graph-edge-dim: rgba(155, 144, 130, 0.22);
+  --graph-edge-focus: rgba(201, 110, 74, 0.95);
+  --graph-node-dim: #d9d2c6;
+  --graph-node-hidden: rgba(31, 27, 22, 0.06);
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * DARK — warm midnight, same hue family as light
+ * ──────────────────────────────────────────────────────────────────── */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #1a1714;
+  --bg-soft: #211d19;
+  --bg-elev: #26221d;
+  --bg-elev-2: #2d2823;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+  --bg-inverse: #faf7f2;
+
+  /* Text */
+  --fg: #ece6db;
+  --fg-strong: #f8f4eb;
+  --fg-muted: #a39c8e;
+  --fg-subtle: #756e62;
+  --fg-on-accent: #ffffff;
+  --fg-inverse: #1f1b16;
+
+  /* Borders */
+  --border: #36302a;
+  --border-strong: #463f37;
+  --border-subtle: #2b2620;
+
+  /* Accent — slightly lifted for dark contrast */
+  --accent: #e08359;
+  --accent-hover-color: #ec9268;
+  --accent-active-color: #c96e4a;
+  --accent-soft: rgba(224, 131, 89, 0.14);
+  --accent-hover: rgba(224, 131, 89, 0.22);
+  --accent-ring: rgba(224, 131, 89, 0.4);
+
+  /* Status */
+  --success: #7aae8b;
+  --success-soft: rgba(122, 174, 139, 0.16);
+  --warning: #e0a957;
+  --warning-soft: rgba(224, 169, 87, 0.18);
+  --danger: #d97056;
+  --danger-soft: rgba(217, 112, 86, 0.16);
+  --info: #6b9fc9;
+  --info-soft: rgba(107, 159, 201, 0.16);
+
+  /* Elevation — softer shadows + subtle inner highlight */
+  --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
+  --shadow-sm:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-md:
+    0 2px 4px rgba(0, 0, 0, 0.3),
+    0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg:
+    0 4px 8px rgba(0, 0, 0, 0.35),
+    0 12px 28px rgba(0, 0, 0, 0.45);
+  --shadow-xl:
+    0 8px 16px rgba(0, 0, 0, 0.4),
+    0 24px 48px rgba(0, 0, 0, 0.55);
+  --shadow-focus: 0 0 0 var(--focus-ring-w) var(--accent-ring);
+
+  --selection-bg: var(--accent-soft);
+  --selection-fg: var(--fg-strong);
+
+  /* Graph canvas (Sigma + 3D) */
+  --graph-bg: #14110d;
+  --graph-grid: rgba(255, 245, 225, 0.04);
+  --graph-label-bg: #2d2823;
+  --graph-label-border: #463f37;
+  --graph-label-fg: #f8f4eb;
+  --graph-edge: rgba(180, 168, 150, 0.45);
+  --graph-edge-dim: rgba(120, 110, 96, 0.22);
+  --graph-edge-focus: rgba(236, 146, 104, 0.95);
+  --graph-node-dim: #4a433a;
+  --graph-node-hidden: rgba(255, 245, 225, 0.04);
+}
+
+/* OS preference fallback when no explicit data-theme is set */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #1a1714;
+    --bg-soft: #211d19;
+    --bg-elev: #26221d;
+    --bg-elev-2: #2d2823;
+    --bg-overlay: rgba(0, 0, 0, 0.6);
+    --bg-inverse: #faf7f2;
+    --fg: #ece6db;
+    --fg-strong: #f8f4eb;
+    --fg-muted: #a39c8e;
+    --fg-subtle: #756e62;
+    --fg-inverse: #1f1b16;
+    --border: #36302a;
+    --border-strong: #463f37;
+    --border-subtle: #2b2620;
+    --accent: #e08359;
+    --accent-hover-color: #ec9268;
+    --accent-active-color: #c96e4a;
+    --accent-soft: rgba(224, 131, 89, 0.14);
+    --accent-hover: rgba(224, 131, 89, 0.22);
+    --accent-ring: rgba(224, 131, 89, 0.4);
+    --success: #7aae8b;
+    --success-soft: rgba(122, 174, 139, 0.16);
+    --warning: #e0a957;
+    --warning-soft: rgba(224, 169, 87, 0.18);
+    --danger: #d97056;
+    --danger-soft: rgba(217, 112, 86, 0.16);
+    --info: #6b9fc9;
+    --info-soft: rgba(107, 159, 201, 0.16);
+    --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
+    --shadow-sm:
+      0 1px 2px rgba(0, 0, 0, 0.3),
+      0 1px 3px rgba(0, 0, 0, 0.25);
+    --shadow-md:
+      0 2px 4px rgba(0, 0, 0, 0.3),
+      0 4px 12px rgba(0, 0, 0, 0.35);
+    --shadow-lg:
+      0 4px 8px rgba(0, 0, 0, 0.35),
+      0 12px 28px rgba(0, 0, 0, 0.45);
+    --shadow-xl:
+      0 8px 16px rgba(0, 0, 0, 0.4),
+      0 24px 48px rgba(0, 0, 0, 0.55);
+    --graph-bg: #14110d;
+    --graph-grid: rgba(255, 245, 225, 0.04);
+    --graph-label-bg: #2d2823;
+    --graph-label-border: #463f37;
+    --graph-label-fg: #f8f4eb;
+    --graph-edge: rgba(180, 168, 150, 0.45);
+    --graph-edge-dim: rgba(120, 110, 96, 0.22);
+    --graph-edge-focus: rgba(236, 146, 104, 0.95);
+    --graph-node-dim: #4a433a;
+    --graph-node-hidden: rgba(255, 245, 225, 0.04);
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+    --duration-slower: 0ms;
+  }
+}

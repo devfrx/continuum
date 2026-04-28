@@ -1,0 +1,212 @@
+/**
+ * Reset + element baseline. Tiny modern reset, no third-party normalize.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    color var(--duration-base) var(--ease-standard);
+}
+
+::selection {
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+}
+
+/* Headings — clamp margins so layout owns spacing, not the text */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0 0 var(--space-4);
+  color: var(--fg-strong);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-snug);
+  line-height: var(--leading-snug);
+}
+h1 {
+  font-size: var(--text-3xl);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+h2 {
+  font-size: var(--text-2xl);
+}
+h3 {
+  font-size: var(--text-xl);
+}
+h4 {
+  font-size: var(--text-lg);
+}
+h5 {
+  font-size: var(--text-md);
+}
+h6 {
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-widest);
+  color: var(--fg-muted);
+}
+
+p {
+  margin: 0 0 var(--space-6);
+}
+small {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+a:hover {
+  color: var(--accent-hover-color);
+}
+a:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--radius-xs);
+}
+
+hr {
+  border: 0;
+  border-top: var(--border-width-1) solid var(--border);
+  margin: var(--space-8) 0;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Form base */
+/*
+ * Buttons get an unopinionated reset so component classes (UiButton,
+ * .tb-btn, .legend-btn, .sel-close, …) can fully own their look.
+ * Setting padding/background/border at the element level was clobbering
+ * 30×30 icon-only buttons (the toolbar icons disappeared because the
+ * global horizontal padding squeezed the icon to ~2px wide).
+ */
+button {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--radius-xs);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input,
+select,
+textarea {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: var(--border-width-1) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-5);
+  width: 100%;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-subtle);
+}
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--border-strong);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
+/* Scrollbars — subtle, theme-aware */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}

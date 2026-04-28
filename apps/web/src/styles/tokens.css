@@ -1,0 +1,148 @@
+﻿/**
+ * Design tokens — single source of truth for every primitive value used
+ * across the Continuum web app. These are theme-agnostic: colors live in
+ * `themes.css`, everything else (spacing, typography, motion, etc.) lives
+ * here and never changes between light and dark modes.
+ *
+ * Naming convention:
+ *   --<category>-<step>     e.g. --space-3, --radius-md, --text-lg
+ *   --<category>-<purpose>  e.g. --shadow-card, --ease-standard
+ *
+ * Steps follow a predictable, harmonic scale. Always prefer a token over a
+ * raw value. If a value is missing, add it here first.
+ */
+
+:root {
+  /* ──────────────────────────────────────────────────────────────────
+   * SPACING — 4px base, harmonic scale
+   * Use for padding, margin, gap. Avoid raw px in component styles.
+   * ────────────────────────────────────────────────────────────────── */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-14: 28px;
+  --space-16: 32px;
+  --space-20: 40px;
+  --space-24: 48px;
+  --space-28: 56px;
+  --space-32: 64px;
+  --space-40: 80px;
+  --space-48: 96px;
+
+  /* ──────────────────────────────────────────────────────────────────
+   * RADII — slightly more rounded baseline. No pill / full-radius:
+   * everything that used to be a pill now uses --radius-md so chips,
+   * badges and toggles stay coherent with the rest of the surface.
+   * --radius-circle is reserved for tiny dots / status markers only.
+   * ────────────────────────────────────────────────────────────────── */
+  --radius-none: 0;
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-circle: 50%;
+
+  /* Aliases kept for backward compatibility with legacy styles */
+  --radius: var(--radius-md);
+
+  /* ──────────────────────────────────────────────────────────────────
+   * BORDERS
+   * ────────────────────────────────────────────────────────────────── */
+  --border-width-0: 0;
+  --border-width-1: 1px;
+  --border-width-2: 2px;
+  --border-width-3: 3px;
+
+  /* ──────────────────────────────────────────────────────────────────
+   * TYPOGRAPHY
+   * ────────────────────────────────────────────────────────────────── */
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable',
+    'Segoe UI', system-ui, sans-serif;
+  --font-serif: 'Source Serif Pro', 'Iowan Old Style', Georgia, serif;
+  --font-mono:
+    'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* Type scale — modular, ~1.125 ratio above body */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13.5px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-3xl: 26px;
+  --text-4xl: 32px;
+  --text-5xl: 40px;
+
+  /* Weights */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line heights */
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* Letter spacing */
+  --tracking-tight: -0.02em;
+  --tracking-snug: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+  --tracking-widest: 0.08em;
+
+  /* ──────────────────────────────────────────────────────────────────
+   * MOTION
+   * ────────────────────────────────────────────────────────────────── */
+  --duration-instant: 80ms;
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+  --duration-slower: 420ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* ──────────────────────────────────────────────────────────────────
+   * Z-INDEX — ladder, never use raw values
+   * ────────────────────────────────────────────────────────────────── */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 1000;
+  --z-modal: 1100;
+  --z-toast: 1200;
+  --z-tooltip: 1300;
+
+  /* ──────────────────────────────────────────────────────────────────
+   * LAYOUT
+   * ────────────────────────────────────────────────────────────────── */
+  --layout-sidebar-w: 248px;
+  --layout-sidebar-w-collapsed: 64px;
+  --layout-notes-sidebar-w: 280px;
+  --layout-right-sidebar-w: 280px;
+  --layout-content-max: 880px;
+
+  --header-h: 56px;
+  --topbar-h: 48px;
+
+  /* Focus ring width (color comes from theme) */
+  --focus-ring-w: 3px;
+}

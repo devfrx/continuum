@@ -1,0 +1,33 @@
+﻿{
+  "name": "continuum",
+  "version": "0.0.1",
+  "private": true,
+  "description": "AI-first knowledge base for worldbuilding, lore, documentation and more.",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "bootstrap": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup.ps1",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start.ps1",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop.ps1",
+    "check": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/check.ps1",
+    "bootstrap:sh": "bash ./scripts/setup.sh",
+    "start:sh": "bash ./scripts/start.sh",
+    "dev": "turbo run dev --parallel",
+    "dev:web": "pnpm --filter @continuum/web dev",
+    "dev:server": "pnpm --filter @continuum/server dev",
+    "dev:desktop": "pnpm --filter @continuum/desktop dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  }
+}

@@ -1,0 +1,11 @@
+/**
+ * Single entrypoint for the entire styles layer.
+ * Order matters: tokens → themes → reset/base → components → layout.
+ */
+
+@import './tokens.css';
+@import './themes.css';
+@import './fonts.css';
+@import './base.css';
+@import './components.css';
+@import './layout.css';
