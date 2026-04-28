@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '@/api';
 import type { AiHealthResponse, AiChatMessage } from '@continuum/shared';

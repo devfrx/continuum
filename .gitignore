@@ -39,3 +39,5 @@ server/drizzle/meta/_journal.json.tmp
 
 # Docker volumes
 .docker-data/
+
+/.github/*

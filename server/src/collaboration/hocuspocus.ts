@@ -1,4 +1,4 @@
-﻿import {
+import {
   Server,
   type onLoadDocumentPayload,
   type onStoreDocumentPayload,

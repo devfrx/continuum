@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Curated catalogue of icons available when creating / editing a category.
  *
  * Uses the **Lucide** icon set (prefix `lucide:*`) — the same collection

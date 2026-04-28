@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { api } from '@/api';
 import type {

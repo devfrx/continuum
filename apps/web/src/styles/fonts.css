@@ -1,15 +1,15 @@
 /**
- * Brand typography — Hanley Pro Sans is used for the wordmark "cont\nuum",
- * where the backslash glyph is shaped like a stylized "i" in this typeface.
+ * Brand typography — Kaluar Demo Semi Bold is used as the global UI font
+ * and for the wordmark "cont\nuum", where the backslash glyph is shaped
+ * like a stylized "i" in this typeface.
  *
- * The font file ships in /public/fonts/HanleyProSans.otf and is served from
- * the web app root. It is also adopted as the global UI sans (--font-sans
- * override below) per project branding guidelines.
+ * The font file ships in /public/fonts/kaluar-demo.semi-bold.ttf and is
+ * served from the web app root.
  */
 @font-face {
-  font-family: 'Hanley Pro Sans';
-  src: url('/fonts/HanleyProSans.otf') format('opentype');
-  font-weight: 400 700;
+  font-family: 'Kaluar Demo';
+  src: url('/fonts/kaluar-demo.semi-bold.ttf') format('truetype');
+  font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
@@ -18,23 +18,23 @@
   /* Override the global sans stack with the brand face, while keeping
      system fallbacks so the UI remains legible if the font fails to load. */
   --font-sans:
-    'Hanley Pro Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Kaluar Demo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
   /* Dedicated stack for the wordmark only, in case --font-sans is later
      changed without affecting the brand mark. */
   --font-brand:
-    'Hanley Pro Sans', 'Segoe UI', system-ui, sans-serif;
+    'Kaluar Demo', 'Segoe UI', system-ui, sans-serif;
 }
 
 /**
  * .brand-wordmark — renders the literal text "cont\nuum". The backslash
- * is intentional: in Hanley Pro Sans its glyph reads as the stylized "i"
+ * is intentional: in Kaluar Demo its glyph reads as the stylized "i"
  * of "continuum". Always insert via plain text in HTML/templates (not
  * via JS string literals where "\n" would be interpreted as a newline).
  */
 .brand-wordmark {
   font-family: var(--font-brand);
-  font-weight: var(--font-weight-semibold);
+  font-weight: 600;
   letter-spacing: 0.01em;
   font-feature-settings: normal;
 }

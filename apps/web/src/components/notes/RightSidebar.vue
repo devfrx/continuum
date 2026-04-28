@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { UiButton, UiEmpty, Icon } from '@/components/ui';
 import BacklinksPanel from './BacklinksPanel.vue';
 import LinkedNotesPanel from './LinkedNotesPanel.vue';

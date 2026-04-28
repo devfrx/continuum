@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { UiButton, UiInput, UiSegmented, UiBadge, Icon } from '@/components/ui';
 import { useKinds } from '@/composables/useKinds';

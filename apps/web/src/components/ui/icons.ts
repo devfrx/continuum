@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Centralized icon registry for Continuum.
  *
  * All icons share the same visual language: rounded corners + solid fill,

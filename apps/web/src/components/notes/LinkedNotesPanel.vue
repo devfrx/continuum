@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue';
 import { colorForKind } from '@continuum/graph';
 import { UiSection, UiChip, UiEmpty } from '@/components/ui';

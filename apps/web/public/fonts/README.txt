@@ -1,1 +1,1 @@
-﻿Place 'HanleyProSans.otf' in this folder.
+﻿Place 'kaluar-demo.semi-bold.ttf' in this folder.

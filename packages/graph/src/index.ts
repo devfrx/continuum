@@ -1,4 +1,4 @@
-﻿import Graph from 'graphology';
+import Graph from 'graphology';
 import type { GraphEdge, GraphNode } from '@continuum/shared';
 import {
   applyDegreeSizing,

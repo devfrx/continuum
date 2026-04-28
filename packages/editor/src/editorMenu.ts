@@ -1,5 +1,5 @@
-﻿/**
- * Builds a Notion-equivalent right-click menu for the LoreEditor from the
+/**
+ * Builds a Notion-equivalent right-click menu for the ContinuumEditor from the
  * current Tiptap editor instance.
  *
  * Items are produced eagerly with snapshot `active` flags reflecting the

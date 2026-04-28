@@ -1,5 +1,5 @@
 /**
- * Tiptap extension factory for LoreEditor.
+ * Tiptap extension factory for ContinuumEditor.
  *
  * Centralises the (large) extension list so the main component file stays
  * focused on UI concerns. Built lazily so collaboration mode can swap the

@@ -1,4 +1,4 @@
-﻿import Fastify from 'fastify';
+import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import { env } from './config.js';
@@ -6,6 +6,7 @@ import { aiRoutes } from './ai/routes.js';
 import { noteRoutes } from './routes/notes.js';
 import { linkRoutes } from './routes/links.js';
 import { kindRoutes } from './routes/kinds.js';
+import { seedKinds } from './db/seed.js';
 import { startHocuspocus } from './collaboration/hocuspocus.js';
 
 async function start() {
@@ -34,6 +35,8 @@ async function start() {
   await app.register(kindRoutes, { prefix: '/api/kinds' });
 
   try {
+    const { inserted } = await seedKinds();
+    if (inserted > 0) app.log.info(`Seeded ${inserted} default kinds`);
     await app.listen({ host: env.SERVER_HOST, port: env.SERVER_PORT });
     await startHocuspocus();
     app.log.info(`Hocuspocus listening on ws://${env.HOCUSPOCUS_HOST}:${env.HOCUSPOCUS_PORT}`);

@@ -1,4 +1,4 @@
-﻿import { ref, computed, type ComputedRef, type Ref } from 'vue';
+import { ref, computed, type ComputedRef, type Ref } from 'vue';
 import { api } from '@/api';
 import type { KindDefinition } from '@continuum/shared';
 

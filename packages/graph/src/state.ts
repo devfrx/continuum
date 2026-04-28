@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Layout helpers and graph utilities for the Continuum knowledge graph.
  *
  * Layouts:

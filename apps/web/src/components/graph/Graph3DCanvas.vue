@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 /**
  * 3D knowledge-graph renderer (the "neural-network" view).
  *

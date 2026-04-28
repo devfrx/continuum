@@ -1,4 +1,4 @@
-﻿import { ProviderManager, type ProviderConfig } from '@continuum/ai-client';
+import { ProviderManager, type ProviderConfig } from '@continuum/ai-client';
 import { env } from '../config.js';
 
 const providers: ProviderConfig[] = [

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Theme system — light / dark / system, with persistence.
  *
  * `initTheme()` applies the saved preference (or system default) to the

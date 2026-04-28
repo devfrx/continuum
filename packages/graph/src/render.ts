@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Visual constants and Sigma program factories for the Continuum knowledge
  * graph. Colors are tuned to the warm cream / terracotta palette defined in
  * `apps/web/src/styles.css`.

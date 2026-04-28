@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue';
 import { RouterLink, RouterView } from 'vue-router';
 import { Icon, type IconName } from '@/components/ui';

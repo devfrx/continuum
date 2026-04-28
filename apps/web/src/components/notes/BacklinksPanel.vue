@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { colorForKind } from '@continuum/graph';
 import { UiSection, UiCard, UiBadge, UiEmpty, Icon } from '@/components/ui';
 import type { BacklinkEntry } from '@/api';

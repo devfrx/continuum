@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onBeforeUnmount, watch, computed, ref, markRaw } from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import Collaboration from '@tiptap/extension-collaboration';
@@ -51,7 +51,7 @@ const isMarkdown = computed(() => props.mode === 'markdown');
 const collab = computed<CollaborationConfig | null>(() => {
   if (isMarkdown.value && props.collaboration) {
     // eslint-disable-next-line no-console
-    console.warn('[LoreEditor] collaboration ignored in markdown mode');
+    console.warn('[ContinuumEditor] collaboration ignored in markdown mode');
     return null;
   }
   return props.collaboration ?? null;

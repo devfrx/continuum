@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Bootstrap Iconify with offline icon collections.
  *
  * Iconify normally fetches icon data lazily from its API. We bundle the
