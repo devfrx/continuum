@@ -12,16 +12,23 @@
   font-weight: 600;
   font-style: normal;
   font-display: swap;
+  /* Restrict the brand face to glyphs it actually contains: basic Latin,
+     Latin-1 supplement, common punctuation and the backslash used for the
+     stylized "i" in the wordmark. Anything outside this range (emoji,
+     symbols, box-drawing, CJK, etc.) falls back automatically to the
+     system stack defined in --font-sans, avoiding "tofu" boxes. */
+  unicode-range: U+0020-007E, U+00A0-00FF, U+2010-2027, U+2030-205E;
 }
 
 :root {
-  /* Override the global sans stack with the brand face, while keeping
-     system fallbacks so the UI remains legible if the font fails to load. */
+  /* Use system UI fonts as the actual body face, with Apple Color Emoji /
+     Segoe UI Emoji available so emoji always render. Kaluar Demo is NOT
+     in --font-sans because it lacks glyphs for most non-Latin content. */
   --font-sans:
-    'Kaluar Demo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
-  /* Dedicated stack for the wordmark only, in case --font-sans is later
-     changed without affecting the brand mark. */
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+  /* Dedicated stack for the wordmark only — Kaluar Demo first, with
+     system fallbacks if the font fails to load. */
   --font-brand:
     'Kaluar Demo', 'Segoe UI', system-ui, sans-serif;
 }

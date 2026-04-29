@@ -42,7 +42,7 @@ const themeIcon = computed<IconName>(() => (isDark.value ? 'kind-sun' : 'kind-mo
     <aside class="sidebar">
       <header class="sidebar-header">
         <div class="sidebar-brand">
-          <div class="sidebar-wordmark brand-wordmark">cont\nuum</div>
+          <div class="sidebar-wordmark brand-wordmark">CONT\NUUM</div>
           <div class="sidebar-tagline">knowledge base</div>
         </div>
       </header>
