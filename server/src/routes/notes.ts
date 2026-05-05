@@ -2,16 +2,18 @@ import type { FastifyPluginAsync, FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { eq, and, sql as dsql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { notes, embeddings, links } from '../db/schema.js';
+import { notes, embeddings, links, folders } from '../db/schema.js';
 import { aiManager } from '../ai/manager.js';
 import { extractWikilinks } from '../lib/wikilinks.js';
+import { descendantIds } from '../services/folder-tree.js';
 
 const upsertSchema = z.object({
-  title: z.string().min(1),
-  kind: z.string().default('note'),
+  title: z.string().trim().min(1),
+  kind: z.string().trim().min(1).default('note'),
   content: z.string().default(''),
   contentJson: z.unknown().optional(),
   tags: z.array(z.string()).default([]),
+  folderId: z.string().uuid().nullable().optional(),
 });
 
 /**
@@ -19,16 +21,27 @@ const upsertSchema = z.object({
  * the title without resetting content/kind/tags to their defaults.
  */
 const partialUpdateSchema = z.object({
-  title: z.string().min(1).optional(),
-  kind: z.string().optional(),
+  title: z.string().trim().min(1).optional(),
+  kind: z.string().trim().min(1).optional(),
   content: z.string().optional(),
   contentJson: z.unknown().optional(),
   tags: z.array(z.string()).optional(),
+  folderId: z.string().uuid().nullable().optional(),
 });
 
 const searchSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(50).default(20),
+  /**
+   * Optional folder scope. When set, only notes inside this folder (and,
+   * by default, all its descendants) are searched. `null` is treated as
+   * "no scope" rather than "root only" because the root folder doesn't
+   * exist as a row — root notes live with `folder_id IS NULL` and would
+   * need a separate boolean to express. Use the lexical fallback for that.
+   */
+  folderId: z.string().uuid().nullable().optional(),
+  /** When `folderId` is set, include notes in descendant folders. */
+  recursive: z.boolean().default(true),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -42,6 +55,15 @@ interface SearchHit {
   mode: 'semantic' | 'lexical';
 }
 
+async function folderExists(folderId: string): Promise<boolean> {
+  const [target] = await db
+    .select({ id: folders.id })
+    .from(folders)
+    .where(eq(folders.id, folderId))
+    .limit(1);
+  return !!target;
+}
+
 export const noteRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async () => db.select().from(notes).orderBy(notes.updatedAt));
 
@@ -52,21 +74,32 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     return n;
   });
 
-  app.post('/', async (req) => {
+  app.post('/', async (req, reply) => {
     const body = upsertSchema.parse(req.body);
+    if (body.folderId && !(await folderExists(body.folderId))) {
+      return reply.notFound('Folder not found');
+    }
     const [created] = await db.insert(notes).values(body).returning();
 
     // fire-and-forget embedding generation
     void embedNote(created, app.log).catch((e) => {
       const msg = e instanceof Error ? e.message : String(e);
+      // Treat "no provider reachable" and "no embedding model loaded" as
+      // expected on chat-only installs (e.g. LM Studio with only a chat
+      // model) — warn rather than error so logs stay clean.
       if (/unreachable/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no AI provider)');
+      else if (/no embedding model/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no embedding model loaded)');
       else app.log.error({ err: e }, 'embed failed');
     });
 
-    // fire-and-forget wikilink synchronisation
-    void syncWikilinks(created.id, created.content, app.log).catch((err) => {
+    // Wikilink sync is awaited so the client immediately sees the new
+    // outgoing edges in subsequent graph reads (see PATCH handler for
+    // the full rationale).
+    try {
+      await syncWikilinks(created.id, created.content, app.log);
+    } catch (err) {
       app.log.warn({ err }, 'wikilink sync failed');
-    });
+    }
 
     return created;
   });
@@ -75,6 +108,9 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     const { id } = idParamSchema.parse(req.params);
     const body = partialUpdateSchema.parse(req.body);
     if (Object.keys(body).length === 0) return reply.badRequest('Empty update');
+    if (body.folderId && !(await folderExists(body.folderId))) {
+      return reply.notFound('Folder not found');
+    }
     const [updated] = await db
       .update(notes)
       .set({ ...body, updatedAt: new Date() })
@@ -88,15 +124,24 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
       void embedNote(updated, app.log).catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
         if (/unreachable/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no AI provider)');
+        else if (/no embedding model/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no embedding model loaded)');
         else app.log.error({ err: e }, 'embed failed');
       });
     }
 
-    // refresh wikilinks only when content changed
+    // Refresh wikilink edges synchronously so the client sees the updated
+    // graph topology on its next read. Embeddings stay async (slow / network
+    // bound) but wikilinks are pure SQL and must be in place before the
+    // PATCH response returns — otherwise downstream `GET /api/links/graph`
+    // calls (e.g. graph reload after "Link to note") race with the writer
+    // and miss the new edges, leaving the user's link "invisible" until a
+    // manual refresh.
     if (body.content !== undefined) {
-      void syncWikilinks(id, updated.content, app.log).catch((err) => {
+      try {
+        await syncWikilinks(id, updated.content, app.log);
+      } catch (err) {
         app.log.warn({ err }, 'wikilink sync failed');
-      });
+      }
     }
 
     return updated;
@@ -114,7 +159,25 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
    * stored vectors no longer reflect the current logic. Runs sequentially
    * to avoid hammering the local AI provider.
    */
-  app.post('/reindex', async () => {
+  app.post('/reindex', async (_req, reply) => {
+    // Pre-flight: refuse to wipe & re-embed every note when no provider has
+    // an embedding model loaded. Without this guard the loop below would
+    // delete all stored vectors and then fail one note at a time, leaving
+    // the user with an empty index and a wall of error logs. The frontend
+    // already disables the button, but the API must stay safe if hit
+    // directly (curl, integrations, race conditions during model unload).
+    const health = await aiManager.health();
+    const hasEmbedModel = health.providers.some(
+      (p) => p.reachable && (p.models ?? []).some((m) => /embed|embedding/i.test(m.id)),
+    );
+    if (!hasEmbedModel) {
+      return reply.code(503).send({
+        error: 'no-embedding-model',
+        message:
+          'No reachable provider has an embedding model loaded. Load one (e.g. nomic-embed-text) in your provider UI and try again.',
+      });
+    }
+
     const all = await db.select({ id: notes.id, title: notes.title, content: notes.content, tags: notes.tags, kind: notes.kind }).from(notes);
     await db.delete(embeddings);
     let ok = 0;
@@ -129,6 +192,60 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
       }
     }
     return { total: all.length, ok, failed };
+  });
+
+  /**
+   * Move a single note to a folder (or to root with `folderId: null`).
+   * Cheap operation: only touches the `folder_id` column, no embedding
+   * recompute, no wikilink rescan.
+   */
+  app.patch('/:id/move', async (req, reply) => {
+    const { id } = idParamSchema.parse(req.params);
+    const { folderId } = z
+      .object({ folderId: z.string().uuid().nullable() })
+      .parse(req.body);
+    if (folderId) {
+      const [target] = await db
+        .select({ id: folders.id })
+        .from(folders)
+        .where(eq(folders.id, folderId))
+        .limit(1);
+      if (!target) return reply.notFound('Folder not found');
+    }
+    const [updated] = await db
+      .update(notes)
+      .set({ folderId, updatedAt: new Date() })
+      .where(eq(notes.id, id))
+      .returning();
+    if (!updated) return reply.notFound('Note not found');
+    return updated;
+  });
+
+  /**
+   * Move many notes at once. Returns the count actually updated. Used by
+   * drag-and-drop multi-select in the sidebar tree.
+   */
+  app.post('/bulk-move', async (req, reply) => {
+    const { ids, folderId } = z
+      .object({
+        ids: z.array(z.string().uuid()).min(1).max(500),
+        folderId: z.string().uuid().nullable(),
+      })
+      .parse(req.body);
+    if (folderId) {
+      const [target] = await db
+        .select({ id: folders.id })
+        .from(folders)
+        .where(eq(folders.id, folderId))
+        .limit(1);
+      if (!target) return reply.notFound('Folder not found');
+    }
+    const updated = await db
+      .update(notes)
+      .set({ folderId, updatedAt: new Date() })
+      .where(dsql`${notes.id} = ANY(${`{${ids.join(',')}}`}::uuid[])`)
+      .returning({ id: notes.id });
+    return { moved: updated.length };
   });
 
   // Backlinks: notes that link TO :id (any link type, wikilink or related).
@@ -158,8 +275,23 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
   // small lexical bonus when the literal query string appears in the
   // title or a tag. Falls back to pure ILIKE when no provider is reachable.
   app.post('/search', async (req) => {
-    const { query, limit } = searchSchema.parse(req.body);
+    const { query, limit, folderId, recursive } = searchSchema.parse(req.body);
     const qLower = query.toLowerCase();
+
+    // Resolve folder scope to a concrete set of folder ids (or null = no scope).
+    // Done once per request so both the semantic and lexical paths reuse it.
+    let scopeIds: string[] | null = null;
+    if (folderId) {
+      if (recursive) {
+        const all = await db.select().from(folders);
+        scopeIds = descendantIds(folderId, all);
+      } else {
+        scopeIds = [folderId];
+      }
+    }
+    const scopeSql = scopeIds
+      ? dsql`AND n.folder_id = ANY(${`{${scopeIds.join(',')}}`}::uuid[])`
+      : dsql``;
 
     let semanticHits: SearchHit[] = [];
     try {
@@ -184,6 +316,7 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
             e.embedding <=> ${vecLiteral}::vector AS dist
           FROM ${embeddings} e
           JOIN ${notes} n ON n.id = e.note_id
+          WHERE 1 = 1 ${scopeSql}
           ORDER BY n.id, dist ASC
         ) s
         ORDER BY score DESC
@@ -249,8 +382,9 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     const lexRows = await db.execute(dsql`
       SELECT id, title, kind, substring(content, 1, 240) AS snippet,
              0::float AS score
-      FROM ${notes}
-      WHERE title ILIKE '%' || ${query} || '%' OR content ILIKE '%' || ${query} || '%'
+      FROM ${notes} n
+      WHERE (title ILIKE '%' || ${query} || '%' OR content ILIKE '%' || ${query} || '%')
+            ${scopeSql}
       ORDER BY (CASE WHEN title ILIKE '%' || ${query} || '%' THEN 0 ELSE 1 END), updated_at DESC
       LIMIT ${limit}
     `);

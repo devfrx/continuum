@@ -37,6 +37,8 @@ export interface Note {
   content: string; // markdown / JSON depending on editor mode
   contentJson?: unknown; // TipTap JSON
   tags: string[];
+  /** Optional parent folder. `null` = root ("Inbox"). */
+  folderId?: UUID | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -121,4 +123,66 @@ export interface ContextMenuItem {
   swatch?: string;
   children?: ContextMenuItem[];
   onSelect?: () => void;
+}
+
+// ===== Folders =====
+
+/**
+ * Hierarchical folder used to organise notes. Folders form a tree (single
+ * parent) and propagate three optional defaults to their descendants:
+ *
+ * - `defaultKind` — the `EntityKind` newly-created notes inherit when no
+ *   explicit kind is chosen.
+ * - `icon` — icon shown next to the folder name and used as fallback for
+ *   notes that don't override it.
+ * - `color` — hex colour used in the sidebar tree, breadcrumb, and graph.
+ *
+ * Inheritance follows **Modality B** (parent inheritance with override):
+ * if a field is `null` on a folder, its effective value is resolved by
+ * walking up the tree to the nearest ancestor that defines it. Setting a
+ * field at any depth overrides the inherited value for that subtree.
+ */
+export interface Folder {
+  id: UUID;
+  /** Parent folder id; `null` for top-level folders. */
+  parentId: UUID | null;
+  /** Display name. */
+  name: string;
+  /** URL-safe slug, unique per parent. */
+  slug: string;
+  /**
+   * LexoRank-style fractional rank used for stable ordering within the same
+   * parent. Stored as text so inserts between two siblings never require a
+   * full re-numbering.
+   */
+  position: string;
+  /** Default kind newly-created notes inherit. `null` = inherit from parent. */
+  defaultKind: EntityKind | null;
+  /** Icon name. `null` = inherit from parent. */
+  icon: string | null;
+  /** Hex colour `#RRGGBB`. `null` = inherit from parent. */
+  color: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Folder enriched with its children for tree rendering. The server returns
+ * a forest of `FolderNode` rooted at top-level folders.
+ */
+export interface FolderNode extends Folder {
+  children: FolderNode[];
+  /** Number of notes directly contained (not including descendants). */
+  noteCount: number;
+}
+
+/**
+ * Effective (inherited) values for a folder, computed by walking up the
+ * tree. Every field is non-null and represents what the UI should actually
+ * show / what new notes should default to.
+ */
+export interface FolderEffective {
+  defaultKind: EntityKind;
+  icon: string;
+  color: string;
 }

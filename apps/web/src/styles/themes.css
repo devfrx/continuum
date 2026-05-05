@@ -1,13 +1,12 @@
 /**
  * Theme palette for Continuum.
  *
- * Alice is the source of truth: dark charcoal surfaces, warm off-white text,
- * subtle white borders, and the cream "Panna" accent. Continuum's semantic
- * names remain as aliases so the app keeps working without component churn.
+ * Alice is the color source of truth. Every base color token below mirrors
+ * `alice/frontend/src/renderer/src/assets/styles/theme.css`; Continuum-only
+ * names are aliases layered on top so existing components keep working.
  */
 
 :root,
-:root[data-theme='light'],
 :root[data-theme='dark'] {
   color-scheme: dark;
 
@@ -18,7 +17,7 @@
   --bg-input: rgba(237, 227, 213, 0.04);
   --bg-tool: rgba(35, 35, 35, 0.8);
 
-  /* Alice surfaces */
+  /* Alice surface elevation system */
   --surface-0: #161616;
   --surface-1: #1C1C1C;
   --surface-2: #232323;
@@ -33,8 +32,15 @@
   --text-primary: #EDEDE9;
   --text-secondary: #A09B90;
   --text-muted: #5F5B53;
+  --text-tertiary: var(--text-muted);
+  --text-disabled: rgba(237, 227, 213, 0.28);
+  --text-inverse: #161616;
+  --text-on-accent: #161616;
+  --text-link: var(--accent);
+  --text-link-hover: var(--accent-hover);
+  --selection-bg: rgba(232, 220, 200, 0.20);
 
-  /* Alice accent */
+  /* Alice accent: warm cream Panna */
   --accent: #E8DCC8;
   --accent-hover: #F5EDE0;
   --accent-dim: rgba(232, 220, 200, 0.10);
@@ -79,6 +85,10 @@
   --approve-border: rgba(74, 222, 128, 0.3);
   --approve-bg-hover: rgba(74, 222, 128, 0.2);
   --approve-border-hover: rgba(74, 222, 128, 0.5);
+  --info: #5C8AB8;
+  --info-bg: rgba(92, 138, 184, 0.10);
+  --info-border: rgba(92, 138, 184, 0.25);
+  --info-glow: rgba(92, 138, 184, 0.35);
 
   /* Alice overlays */
   --white-faint: rgba(255, 255, 255, 0.02);
@@ -96,6 +106,10 @@
   /* Alice borders and shadows */
   --border: rgba(255, 255, 255, 0.06);
   --border-hover: rgba(255, 255, 255, 0.10);
+  --border-subtle: var(--white-subtle);
+  --border-default: var(--border);
+  --border-strong: var(--border-hover);
+  --border-focus: var(--focus-ring-color);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25);
@@ -109,7 +123,7 @@
   --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-floating: 0 12px 36px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.05);
 
-  /* Alice glass, gradients, and interaction */
+  /* Alice glass, gradients, state, and focus */
   --glass-bg: rgba(28, 28, 28, 0.8);
   --glass-bg-light: rgba(28, 28, 28, 0.5);
   --glass-border: rgba(255, 255, 255, 0.06);
@@ -121,15 +135,180 @@
   --gradient-crimson: linear-gradient(135deg, rgba(184, 92, 92, 0.08), rgba(184, 92, 92, 0.02));
   --gradient-emerald: linear-gradient(135deg, rgba(92, 154, 110, 0.08), rgba(92, 154, 110, 0.02));
   --gradient-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 100%);
+  --listening: #ae4141;
+  --listening-dim: rgba(224, 96, 96, 0.10);
+  --listening-border: rgba(224, 96, 96, 0.20);
+  --speaking: #376744;
+  --speaking-dim: rgba(92, 154, 110, 0.10);
+  --speaking-border: rgba(92, 154, 110, 0.20);
+  --thinking: #E8DCC8;
+  --thinking-dim: rgba(232, 220, 200, 0.10);
+  --thinking-border: rgba(232, 220, 200, 0.20);
   --focus-ring-color: rgba(232, 220, 200, 0.5);
   --focus-ring: var(--focus-ring-width) solid var(--focus-ring-color);
   --focus-ring-shadow: 0 0 0 var(--focus-ring-offset) var(--surface-0), 0 0 0 calc(var(--focus-ring-offset) + var(--focus-ring-width)) var(--focus-ring-color);
-  --interactive-normal: var(--text-secondary);
-  --interactive-hover: var(--text-primary);
-  --interactive-active: var(--accent);
-  --interactive-muted: var(--text-muted);
+  --color-background-mute: #232323;
 
-  /* Continuum semantic aliases */
+  --graph-bg: #161616;
+  --graph-grid: rgba(232, 220, 200, 0.03);
+  --graph-label-bg: #232323;
+  --graph-label-border: rgba(255, 255, 255, 0.06);
+  --graph-label-fg: #EDEDE9;
+  --graph-edge: rgba(160, 155, 144, 0.45);
+  --graph-edge-dim: rgba(95, 91, 83, 0.28);
+  --graph-edge-focus: rgba(232, 220, 200, 0.95);
+  --graph-node-dim: #323232;
+  --graph-node-hidden: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* Alice light backgrounds */
+  --bg-primary: #FAFAF7;
+  --bg-secondary: #F3EFE9;
+  --bg-tertiary: #EAE4DB;
+  --bg-input: rgba(60, 45, 30, 0.04);
+  --bg-tool: rgba(224, 215, 202, 0.85);
+
+  /* Alice light surface elevation system */
+  --surface-0: #FAFAF7;
+  --surface-1: #F3EFE9;
+  --surface-2: #EAE4DB;
+  --surface-3: #DFD7CB;
+  --surface-4: #D2C9BA;
+  --surface-hover: rgba(60, 45, 30, 0.04);
+  --surface-active: rgba(60, 45, 30, 0.06);
+  --surface-selected: rgba(60, 45, 30, 0.09);
+  --surface-inset: rgba(0, 0, 0, 0.05);
+
+  /* Alice light typography */
+  --text-primary: #1E1B18;
+  --text-secondary: #5C5349;
+  --text-muted: #9E9890;
+  --text-disabled: rgba(30, 27, 24, 0.32);
+  --text-inverse: #FAFAF7;
+  --text-on-accent: #FAFAF7;
+  --text-link: var(--accent);
+  --text-link-hover: var(--accent-hover);
+  --selection-bg: rgba(122, 85, 64, 0.18);
+
+  /* Alice light accent: warm espresso / cedar */
+  --accent: #7A5540;
+  --accent-hover: #613D2A;
+  --accent-dim: rgba(122, 85, 64, 0.10);
+  --accent-border: rgba(122, 85, 64, 0.25);
+  --accent-glow: rgba(122, 85, 64, 0.08);
+  --accent-faint: rgba(122, 85, 64, 0.04);
+  --accent-subtle: rgba(122, 85, 64, 0.06);
+  --accent-light: rgba(122, 85, 64, 0.10);
+  --accent-medium: rgba(122, 85, 64, 0.18);
+  --accent-strong: rgba(122, 85, 64, 0.25);
+  --accent-vivid: rgba(122, 85, 64, 0.38);
+  --accent-text-glow: 0 0 20px rgba(122, 85, 64, 0.12);
+
+  /* Alice light semantic colors */
+  --danger: #B85C5C;
+  --danger-hover: rgba(184, 92, 92, 0.15);
+  --danger-faint: rgba(184, 92, 92, 0.04);
+  --danger-light: rgba(184, 92, 92, 0.1);
+  --danger-medium: rgba(184, 92, 92, 0.18);
+  --danger-border: rgba(184, 92, 92, 0.30);
+  --danger-strong: rgba(184, 92, 92, 0.35);
+  --danger-glow: rgba(184, 92, 92, 0.4);
+  --success: #5C9A6E;
+  --success-glow: rgba(92, 154, 110, 0.4);
+  --success-faint: rgba(92, 154, 110, 0.03);
+  --success-light: rgba(92, 154, 110, 0.1);
+  --success-medium: rgba(92, 154, 110, 0.12);
+  --success-border: rgba(92, 154, 110, 0.25);
+  --warning: #D4A72C;
+  --warning-bg: rgba(212, 167, 44, 0.1);
+  --warning-border: rgba(212, 167, 44, 0.25);
+  --error: #E06060;
+  --error-bg: rgba(224, 96, 96, 0.1);
+  --error-border: rgba(224, 96, 96, 0.25);
+  --error-bg-hover: rgba(224, 96, 96, 0.15);
+  --error-border-hover: rgba(224, 96, 96, 0.4);
+  --error-severe: #DC3545;
+  --error-severe-bg: rgba(220, 53, 69, 0.12);
+  --error-severe-border: rgba(220, 53, 69, 0.4);
+  --approve: #4ade80;
+  --approve-bg: rgba(74, 222, 128, 0.12);
+  --approve-border: rgba(74, 222, 128, 0.3);
+  --approve-bg-hover: rgba(74, 222, 128, 0.2);
+  --approve-border-hover: rgba(74, 222, 128, 0.5);
+  --info: #3B6FA0;
+  --info-bg: rgba(59, 111, 160, 0.08);
+  --info-border: rgba(59, 111, 160, 0.28);
+  --info-glow: rgba(59, 111, 160, 0.30);
+
+  /* Alice light overlays */
+  --white-faint: rgba(60, 45, 30, 0.02);
+  --white-subtle: rgba(60, 45, 30, 0.04);
+  --white-light: rgba(60, 45, 30, 0.06);
+  --white-medium: rgba(60, 45, 30, 0.08);
+  --white-strong: rgba(60, 45, 30, 0.12);
+  --white-heavy: rgba(60, 45, 30, 0.16);
+  --white-dim: rgba(60, 45, 30, 0.24);
+  --black-light: rgba(0, 0, 0, 0.06);
+  --black-medium: rgba(0, 0, 0, 0.14);
+  --black-heavy: rgba(0, 0, 0, 0.38);
+  --black-overlay: rgba(0, 0, 0, 0.58);
+
+  /* Alice light borders and shadows */
+  --border: rgba(60, 45, 30, 0.12);
+  --border-hover: rgba(60, 45, 30, 0.22);
+  --border-subtle: var(--white-subtle);
+  --border-default: var(--border);
+  --border-strong: var(--border-hover);
+  --border-focus: var(--focus-ring-color);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --shadow-glow: 0 0 12px rgba(0, 0, 0, 0.04);
+  --shadow-dropdown: 0 4px 14px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(60, 45, 30, 0.06);
+  --shadow-sidebar: 1px 0 6px rgba(0, 0, 0, 0.05);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-accent: 0 0 0 1px var(--accent-border), 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-focus: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--focus-ring-color);
+  --shadow-elevated: 0 6px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(60, 45, 30, 0.05);
+  --shadow-floating: 0 10px 30px rgba(0, 0, 0, 0.09), 0 0 0 1px rgba(60, 45, 30, 0.06);
+
+  /* Alice light glass, gradients, state, and focus */
+  --glass-bg: rgba(250, 250, 247, 0.88);
+  --glass-bg-light: rgba(250, 250, 247, 0.65);
+  --glass-border: rgba(60, 45, 30, 0.12);
+  --glass-border-hover: rgba(60, 45, 30, 0.22);
+  --gradient-gold: linear-gradient(135deg, rgba(122, 85, 64, 0.06), rgba(122, 85, 64, 0.02));
+  --gradient-gold-strong: linear-gradient(135deg, rgba(122, 85, 64, 0.12), rgba(122, 85, 64, 0.04));
+  --gradient-crimson: linear-gradient(135deg, rgba(184, 92, 92, 0.08), rgba(184, 92, 92, 0.02));
+  --gradient-emerald: linear-gradient(135deg, rgba(92, 154, 110, 0.08), rgba(92, 154, 110, 0.02));
+  --gradient-surface: linear-gradient(180deg, rgba(0, 0, 0, 0.01) 0%, transparent 100%);
+  --thinking: var(--accent);
+  --thinking-dim: var(--accent-dim);
+  --thinking-border: var(--accent-border);
+  --focus-ring-color: rgba(122, 85, 64, 0.50);
+  --focus-ring-shadow: 0 0 0 var(--focus-ring-offset) var(--surface-0), 0 0 0 calc(var(--focus-ring-offset) + var(--focus-ring-width)) var(--focus-ring-color);
+  --color-background-mute: #EAE4DB;
+
+  --graph-bg: #FAFAF7;
+  --graph-grid: rgba(122, 85, 64, 0.04);
+  --graph-label-bg: #EAE4DB;
+  --graph-label-border: rgba(60, 45, 30, 0.12);
+  --graph-label-fg: #1E1B18;
+  --graph-edge: rgba(92, 83, 73, 0.45);
+  --graph-edge-dim: rgba(158, 152, 144, 0.28);
+  --graph-edge-focus: rgba(122, 85, 64, 0.95);
+  --graph-node-dim: #D2C9BA;
+  --graph-node-hidden: rgba(60, 45, 30, 0.04);
+}
+
+/* Continuum semantic compatibility aliases. Values resolve to Alice tokens. */
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
   --bg: var(--bg-primary);
   --bg-soft: var(--bg-secondary);
   --bg-elev: var(--bg-tertiary);
@@ -137,13 +316,11 @@
   --bg-overlay: var(--black-heavy);
   --bg-inverse: var(--text-primary);
   --fg: var(--text-primary);
-  --fg-strong: var(--accent-hover);
+  --fg-strong: var(--text-primary);
   --fg-muted: var(--text-secondary);
   --fg-subtle: var(--text-muted);
-  --fg-on-accent: var(--bg-primary);
-  --fg-inverse: var(--bg-primary);
-  --border-strong: var(--border-hover);
-  --border-subtle: var(--white-subtle);
+  --fg-on-accent: var(--text-on-accent);
+  --fg-inverse: var(--text-inverse);
   --accent-hover-color: var(--accent-hover);
   --accent-active-color: var(--accent);
   --accent-soft: var(--accent-dim);
@@ -151,34 +328,26 @@
   --success-soft: var(--success-medium);
   --warning-soft: var(--warning-bg);
   --danger-soft: var(--danger-light);
-  --info: var(--text-secondary);
-  --info-soft: var(--white-subtle);
+  --info-soft: var(--info-bg);
   --shadow-xl: var(--shadow-floating);
-  --selection-bg: var(--accent-dim);
   --selection-fg: var(--text-primary);
-  --color-background-mute: var(--surface-2);
 
-  /* Graph canvas colors */
-  --graph-bg: var(--surface-0);
-  --graph-grid: var(--accent-faint);
-  --graph-label-bg: var(--surface-2);
-  --graph-label-border: var(--border);
-  --graph-label-fg: var(--text-primary);
-  --graph-edge: rgba(160, 155, 144, 0.45);
-  --graph-edge-dim: rgba(95, 91, 83, 0.28);
-  --graph-edge-focus: rgba(232, 220, 200, 0.95);
-  --graph-node-dim: var(--surface-4);
-  --graph-node-hidden: var(--white-subtle);
+  --state-success: var(--success);
+  --state-warning: var(--warning);
+  --state-danger: var(--danger);
+  --state-error: var(--error);
+  --state-info: var(--info);
+}
+
+:root[data-theme='light'] ::selection {
+  background: rgba(122, 85, 64, 0.18);
+  color: var(--text-primary);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root {
-    --duration-instant: 0ms;
-    --duration-fast: 0ms;
-    --duration-normal: 0ms;
-    --duration-base: 0ms;
-    --duration-moderate: 0ms;
-    --duration-slow: 0ms;
-    --duration-slower: 0ms;
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
   }
 }

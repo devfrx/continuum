@@ -2,7 +2,6 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { api } from '@/api';
 import type {
-  AiHealthResponse,
   AiProviderName,
   EntityKind,
   KindDefinition,
@@ -22,6 +21,8 @@ import {
   Icon,
 } from '@/components/ui';
 import { useKinds } from '@/composables/useKinds';
+import { useAiHealth } from '@/composables/useAiHealth';
+import ProviderStatusPanel from '@/components/settings/ProviderStatusPanel.vue';
 
 interface Settings {
   primary: AiProviderName | '';
@@ -60,8 +61,7 @@ function loadSettings(): Settings {
   return { ...DEFAULTS };
 }
 
-const health = ref<AiHealthResponse | null>(null);
-const loading = ref(false);
+const { health, loading, embeddingsAvailable, refresh: refreshHealth } = useAiHealth();
 const settings = ref<Settings>(loadSettings());
 const saved = ref(false);
 const clearError = ref('');
@@ -190,14 +190,9 @@ const EDITOR_MODE_OPTIONS: { label: string; value: string }[] = [
 ];
 
 async function refresh() {
-  loading.value = true;
-  try {
-    health.value = await api.ai.health();
-    if (!settings.value.primary && health.value) {
-      settings.value.primary = health.value.primary;
-    }
-  } finally {
-    loading.value = false;
+  await refreshHealth();
+  if (!settings.value.primary && health.value) {
+    settings.value.primary = health.value.primary;
   }
 }
 
@@ -261,6 +256,7 @@ async function executeClearAllNotes(): Promise<void> {
 const reindexing = ref(false);
 const reindexResult = ref<string>('');
 async function reindexEmbeddings(): Promise<void> {
+  if (!embeddingsAvailable.value) return;
   reindexing.value = true;
   reindexResult.value = '';
   try {
@@ -274,6 +270,8 @@ async function reindexEmbeddings(): Promise<void> {
 }
 
 onMounted(() => {
+  // Sync the saved primary with the health snapshot once it's available;
+  // `useAiHealth` already kicked off the fetch lazily on first import.
   void refresh();
   void kindStore.load();
 });
@@ -294,6 +292,10 @@ onMounted(() => {
       </UiButton>
     </header>
 
+    <UiSection title="Provider status" description="Status of locally-configured AI runtimes.">
+      <ProviderStatusPanel :health="health" :loading="loading" />
+    </UiSection>
+
     <UiSection title="AI Providers" description="Choose which models drive chat and embeddings.">
       <UiCard>
         <div class="field">
@@ -301,8 +303,16 @@ onMounted(() => {
           <UiSelect :modelValue="settings.chatModel" :options="modelOptions" @update:modelValue="selectChatModel" />
         </div>
         <div class="field">
-          <label class="field__label">Embedding model</label>
-          <UiSelect :modelValue="settings.embedModel" :options="modelOptions" @update:modelValue="selectEmbedModel" />
+          <label class="field__label">
+            Embedding model
+            <UiBadge v-if="!embeddingsAvailable" tone="neutral">No embedding model loaded</UiBadge>
+          </label>
+          <UiSelect :modelValue="settings.embedModel" :options="modelOptions" :disabled="!embeddingsAvailable"
+            @update:modelValue="selectEmbedModel" />
+          <p v-if="!embeddingsAvailable" class="field__desc">
+            Load an embedding model in your provider (e.g. <code>nomic-embed-text</code>) to enable
+            semantic search and re-indexing.
+          </p>
         </div>
         <div class="field">
           <label class="field__label">
@@ -420,7 +430,10 @@ onMounted(() => {
             </p>
           </div>
           <div class="danger__action">
-            <UiButton variant="primary" :loading="reindexing" @click="reindexEmbeddings">
+            <UiBadge v-if="!embeddingsAvailable" tone="neutral">No embedding model loaded</UiBadge>
+            <UiButton variant="primary" :loading="reindexing" :disabled="!embeddingsAvailable"
+              :title="!embeddingsAvailable ? 'Load an embedding model in your provider to enable re-indexing' : ''"
+              @click="reindexEmbeddings">
               <template #icon-left>
                 <Icon name="refresh" :size="14" />
               </template>

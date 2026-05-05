@@ -11,11 +11,11 @@
  *   3. Cache the resolved Image per icon-name forever — icons are static.
  *
  * Two icon name shapes are supported:
- *   - `lucide:user` / `ph:sword-fill` → resolved via Iconify's offline
+ *   - `solar:user-bold` (any iconify id) → resolved via Iconify's offline
  *     registry (loaded by `iconify.ts`).
- *   - Any local registry key from `components/ui/icons.ts` (e.g.
- *     `kind-character`, `kind-location`) → wrapped in a synthetic SVG
- *     using the existing inner-SVG markup.
+ *   - Any local registry key from `@/assets/icons` (e.g. `kind-character`,
+ *     `kind-location`) → either delegated to its iconify id, or wrapped
+ *     in a synthetic SVG using the registry's inline markup.
  */
 import { getIcon } from '@iconify/vue';
 import { ICONS, type IconName } from '@/components/ui/icons';
@@ -26,17 +26,26 @@ const cache = new Map<string, CacheEntry>();
 
 /** Build an SVG string with `fill="white"` for the given icon name. */
 function buildSvg(name: string): string | null {
-  if (name.includes(':')) {
-    const data = getIcon(name);
-    if (!data) return null;
-    const w = data.width ?? 24;
-    const h = data.height ?? 24;
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" fill="white">${data.body}</svg>`;
-  }
-  const local = (ICONS as Record<string, { content: string; viewBox?: string }>)[name];
+  // Direct iconify id (`prefix:slug`).
+  if (name.includes(':')) return buildIconifySvg(name);
+
+  // Registry name — resolve through the central registry.
+  const local = (ICONS as Record<string, { icon?: string; inner?: string; viewBox?: string }>)[name];
   if (!local) return null;
-  const viewBox = local.viewBox ?? '0 0 24 24';
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" fill="white">${local.content}</svg>`;
+  if (local.inner) {
+    const viewBox = local.viewBox ?? '0 0 24 24';
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" fill="white">${local.inner}</svg>`;
+  }
+  if (local.icon) return buildIconifySvg(local.icon);
+  return null;
+}
+
+function buildIconifySvg(id: string): string | null {
+  const data = getIcon(id);
+  if (!data) return null;
+  const w = data.width ?? 24;
+  const h = data.height ?? 24;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" fill="white">${data.body}</svg>`;
 }
 
 /**

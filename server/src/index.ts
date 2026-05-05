@@ -6,6 +6,7 @@ import { aiRoutes } from './ai/routes.js';
 import { noteRoutes } from './routes/notes.js';
 import { linkRoutes } from './routes/links.js';
 import { kindRoutes } from './routes/kinds.js';
+import { folderRoutes } from './routes/folders.js';
 import { seedKinds } from './db/seed.js';
 import { startHocuspocus } from './collaboration/hocuspocus.js';
 
@@ -33,6 +34,7 @@ async function start() {
   await app.register(noteRoutes, { prefix: '/api/notes' });
   await app.register(linkRoutes, { prefix: '/api/links' });
   await app.register(kindRoutes, { prefix: '/api/kinds' });
+  await app.register(folderRoutes, { prefix: '/api/folders' });
 
   try {
     const { inserted } = await seedKinds();

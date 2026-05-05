@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { UiButton, UiChip, UiSegmented, UiSelect, Icon } from '@/components/ui';
+import { UiChip, UiSegmented, UiSelect, Icon } from '@/components/ui';
+import { FolderBreadcrumb } from '@/components/folders';
 import { useKinds } from '@/composables/useKinds';
 import type { EntityKind } from '@continuum/shared';
 
@@ -10,6 +11,8 @@ const props = defineProps<{
     title: string;
     kind: EntityKind;
     tags: string[];
+    /** Folder this note lives in; `null` = root ("Inbox"). */
+    folderId: string | null;
     editorMode: EditorMode;
     savedAt: number | null;
     saving: boolean;
@@ -21,6 +24,7 @@ const emit = defineEmits<{
     (e: 'update:kind', value: EntityKind): void;
     (e: 'update:tags', value: string[]): void;
     (e: 'update:editorMode', value: EditorMode): void;
+    (e: 'navigate-folder', folderId: string | null): void;
     (e: 'delete'): void;
 }>();
 
@@ -62,18 +66,19 @@ function removeTag(tag: string): void {
 
 <template>
     <header class="editor-header">
+        <FolderBreadcrumb :folder-id="folderId" class="header-breadcrumb"
+            @select="(id) => emit('navigate-folder', id)" />
+
         <input class="title-input" :value="title" placeholder="Untitled" spellcheck="false"
             @input="emit('update:title', ($event.target as HTMLInputElement).value)" />
 
         <div class="meta-row">
             <div class="meta-left">
                 <div class="kind-chip" :style="{ '--kind-color': kindStore.colorOf(kind) }">
-                    <span class="dot" :style="{ background: kindStore.colorOf(kind) }" />
-                    <UiSelect :model-value="kind" :options="kindOptions" class="kind-select"
+                    <span class="kind-dot" :style="{ background: kindStore.colorOf(kind) }" />
+                    <UiSelect :model-value="kind" :options="kindOptions" variant="bare" class="kind-select"
                         @update:model-value="(v: string | number) => emit('update:kind', String(v) as EntityKind)" />
                 </div>
-
-                <span class="meta-divider" aria-hidden="true" />
 
                 <div class="tags-inline">
                     <UiChip v-for="t in tags" :key="t" closable @close="removeTag(t)">#{{ t }}</UiChip>
@@ -83,31 +88,46 @@ function removeTag(tag: string): void {
             </div>
 
             <div class="meta-right">
-                <span class="status" :class="{ saving }">
-                    <span class="status-dot" />{{ savedLabel }}
+                <span class="status" :class="{ saving }" :title="savedLabel">
+                    <span class="status-dot" />
+                    <span class="status-label">{{ savedLabel }}</span>
                 </span>
 
+                <span class="meta-divider" aria-hidden="true" />
+
                 <UiSegmented :model-value="editorMode" :options="modeOptions" aria-label="Editor mode"
+                    class="mode-segmented"
                     @update:model-value="(v: string) => emit('update:editorMode', v as EditorMode)" />
 
-                <UiButton variant="ghost" size="sm" class="delete-btn" @click="emit('delete')" aria-label="Delete note">
-                    <template #icon-left>
-                        <Icon name="trash" :size="14" />
-                    </template>
-                    Delete
-                </UiButton>
+                <button type="button" class="delete-btn" :title="'Delete note'" aria-label="Delete note"
+                    @click="emit('delete')">
+                    <Icon name="trash" :size="15" />
+                </button>
             </div>
         </div>
     </header>
 </template>
 
 <style scoped>
+/**
+ * Editor header.
+ *
+ * Layout principle: every control in the meta-row is normalised to a single
+ * shared height (`--ctrl-h: 28px`) so the dot, kind chip, tag chips, status
+ * pill, segmented toggle, and delete button all sit on the same baseline.
+ * The left cluster groups identity (kind + tags); the right cluster groups
+ * editor state (save status + mode + destructive action) with one slim
+ * divider between status and the segmented control.
+ */
 .editor-header {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
     padding-bottom: var(--space-5);
     border-bottom: var(--border-width-1) solid var(--border);
+
+    /* Single source of truth for control height in this header. */
+    --ctrl-h: 28px;
 }
 
 .title-input {
@@ -123,6 +143,10 @@ function removeTag(tag: string): void {
     width: 100%;
 }
 
+.header-breadcrumb {
+    margin-bottom: calc(var(--space-1) * -1);
+}
+
 .title-input::placeholder {
     color: var(--fg-subtle);
 }
@@ -135,7 +159,8 @@ function removeTag(tag: string): void {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-4);
+    gap: var(--space-3);
+    min-height: var(--ctrl-h);
 }
 
 .meta-left,
@@ -152,10 +177,12 @@ function removeTag(tag: string): void {
 
 .meta-divider {
     width: 1px;
-    height: 18px;
+    height: 16px;
     background: var(--border);
+    flex-shrink: 0;
 }
 
+/* ── Kind chip ───────────────────────────────────────────────────── */
 .kind-chip {
     display: inline-flex;
     align-items: center;
@@ -163,29 +190,58 @@ function removeTag(tag: string): void {
     background: var(--bg-soft);
     border: var(--border-width-1) solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 2px var(--space-3) 2px var(--space-3);
+    padding: 0 var(--space-1) 0 var(--space-3);
+    height: var(--ctrl-h);
     font-size: var(--text-sm);
-    height: 26px;
-    transition: border-color var(--duration-fast) var(--ease-standard);
+    transition: border-color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard);
 }
 
-.kind-chip:hover {
+.kind-chip:hover,
+.kind-chip:focus-within {
     border-color: var(--border-strong);
+    background: var(--bg-elevated);
 }
 
-.dot {
-    width: 8px;
-    height: 8px;
+.kind-dot {
+    width: 6px;
+    height: 6px;
     border-radius: var(--radius-circle);
     display: inline-block;
     flex-shrink: 0;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--kind-color, var(--accent)) 18%, transparent);
 }
 
+/**
+ * The kind selector is a `bare` UiSelect embedded in the chip. The chip
+ * provides border + bg; the trigger inside should add only its own
+ * label + chevron padding so the two surfaces don't double up.
+ */
+.kind-select {
+    width: auto;
+}
+
+.kind-select :deep(.ui-select__trigger) {
+    padding: 0 var(--space-2) 0 0;
+    height: calc(var(--ctrl-h) - 4px);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--fg-strong);
+    text-transform: capitalize;
+}
+
+.kind-select :deep(.ui-select__trigger:hover),
+.kind-select :deep(.ui-select.is-open .ui-select__trigger) {
+    background: transparent;
+}
+
+/* ── Tags ────────────────────────────────────────────────────────── */
 .tags-inline {
     display: inline-flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
+    min-height: var(--ctrl-h);
 }
 
 .tag-input {
@@ -196,38 +252,37 @@ function removeTag(tag: string): void {
     font-size: var(--text-sm);
     color: var(--fg);
     width: 110px;
-    padding: 2px 0;
+    height: var(--ctrl-h);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-sm);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.tag-input:hover {
+    background: var(--bg-soft);
+}
+
+.tag-input:focus {
+    background: var(--bg-soft);
 }
 
 .tag-input::placeholder {
     color: var(--fg-subtle);
 }
 
-.kind-select {
-    width: auto;
-    border: none;
-    background: transparent;
-    box-shadow: none;
-}
-
-.kind-select :deep(select) {
-    padding: 0 var(--space-7) 0 0;
-    font-size: var(--text-sm);
-    text-transform: capitalize;
-    background: transparent;
-    border: none;
-    height: 22px;
-    font-weight: var(--font-weight-medium);
-}
-
+/* ── Save status ─────────────────────────────────────────────────── */
 .status {
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
+    height: var(--ctrl-h);
+    padding: 0 var(--space-2);
     font-size: var(--text-xs);
-    color: var(--fg-subtle);
+    color: var(--fg-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--tracking-wide);
 }
 
 .status-dot {
@@ -235,18 +290,29 @@ function removeTag(tag: string): void {
     height: 6px;
     border-radius: var(--radius-circle);
     background: var(--success);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 22%, transparent);
+    flex-shrink: 0;
+}
+
+.status.saving {
+    color: var(--accent);
 }
 
 .status.saving .status-dot {
     background: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
     animation: pulse 1.2s ease-in-out infinite;
+}
+
+.status-label {
+    line-height: 1;
 }
 
 @keyframes pulse {
 
     0%,
     100% {
-        opacity: 0.4;
+        opacity: 0.45;
     }
 
     50% {
@@ -254,11 +320,40 @@ function removeTag(tag: string): void {
     }
 }
 
+/* ── Segmented toggle ────────────────────────────────────────────── */
+.mode-segmented {
+    /* Drive UiSegmented's intrinsic height via its public custom prop. */
+    --ui-seg-h: var(--ctrl-h);
+}
+
+/* ── Delete (icon-only ghost) ────────────────────────────────────── */
 .delete-btn {
-    color: var(--fg-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--ctrl-h);
+    height: var(--ctrl-h);
+    padding: 0;
+    background: transparent;
+    border: var(--border-width-1) solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--fg-subtle);
+    cursor: pointer;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
 }
 
 .delete-btn:hover {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+    color: var(--danger);
+}
+
+.delete-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
     color: var(--danger);
 }
 </style>

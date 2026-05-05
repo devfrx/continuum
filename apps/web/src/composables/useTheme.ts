@@ -1,92 +1,63 @@
 /**
- * Theme system — light / dark / system, with persistence.
+ * Theme system for Continuum.
  *
- * `initTheme()` applies the saved preference (or system default) to the
- * <html> element before Vue mounts so there's no flash of wrong colors.
- *
- * `useTheme()` is the reactive Vue composable used by components such as
- * the theme toggle in the sidebar.
- *
- * Storage key: `continuum:theme` — value is one of `'light' | 'dark' | 'system'`.
+ * Applies a persisted `light` / `dark` preference to the document root before
+ * Vue mounts, then exposes a small reactive API for the sidebar toggle.
  */
 
-import { ref, computed, watch, type Ref, type ComputedRef } from 'vue';
+import { computed, ref, watch, type ComputedRef, type Ref } from 'vue';
 
-export type ThemeMode = 'light' | 'dark' | 'system';
-export type ResolvedTheme = 'light' | 'dark';
+export type ThemeMode = 'light' | 'dark';
 
 const STORAGE_KEY = 'continuum:theme';
-const DARK_MQ = '(prefers-color-scheme: dark)';
 
-const mode: Ref<ThemeMode> = ref<ThemeMode>(loadStoredMode());
+const mode: Ref<ThemeMode> = ref(loadStoredMode());
 
 function loadStoredMode(): ThemeMode {
-  if (typeof window === 'undefined') return 'system';
+  if (typeof window === 'undefined') return 'dark';
   const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (raw === 'light' || raw === 'dark' || raw === 'system') return raw;
-  return 'system';
+  return raw === 'light' || raw === 'dark' ? raw : 'dark';
 }
 
-function systemPrefersDark(): boolean {
-  if (typeof window === 'undefined' || !window.matchMedia) return false;
-  return window.matchMedia(DARK_MQ).matches;
-}
-
-function applyToDom(resolved: ResolvedTheme): void {
+function applyToDom(next: ThemeMode): void {
   if (typeof document === 'undefined') return;
-  document.documentElement.setAttribute('data-theme', resolved);
+  document.documentElement.setAttribute('data-theme', next);
 }
 
-function resolve(m: ThemeMode): ResolvedTheme {
-  if (m === 'system') return systemPrefersDark() ? 'dark' : 'light';
-  return m;
-}
-
-/**
- * Bootstrap — call once before app mount.
- * Also wires a listener so 'system' mode reacts to OS theme changes.
- */
+/** Apply the persisted theme before the app mounts. */
 export function initTheme(): void {
-  applyToDom(resolve(mode.value));
-
-  if (typeof window !== 'undefined' && window.matchMedia) {
-    const mq = window.matchMedia(DARK_MQ);
-    const handler = (): void => {
-      if (mode.value === 'system') applyToDom(resolve('system'));
-    };
-    mq.addEventListener?.('change', handler);
-  }
+  applyToDom(mode.value);
 }
 
-interface UseThemeReturn {
+export interface ThemeHandle {
+  /** Persisted theme mode. */
   mode: Ref<ThemeMode>;
-  resolved: ComputedRef<ResolvedTheme>;
+  /** True when the active mode is dark. */
   isDark: ComputedRef<boolean>;
+  /** Set and persist an explicit mode. */
   setMode: (next: ThemeMode) => void;
+  /** Toggle between light and dark. */
   toggle: () => void;
 }
 
-export function useTheme(): UseThemeReturn {
-  const resolved = computed<ResolvedTheme>(() => resolve(mode.value));
-  const isDark = computed<boolean>(() => resolved.value === 'dark');
+/** Access the shared theme state used by app chrome. */
+export function useTheme(): ThemeHandle {
+  const isDark = computed<boolean>(() => mode.value === 'dark');
 
   function setMode(next: ThemeMode): void {
     mode.value = next;
   }
 
   function toggle(): void {
-    // Cycle through the most useful binary: dark ↔ light.
-    // 'system' is set explicitly via the picker.
-    mode.value = resolved.value === 'dark' ? 'light' : 'dark';
+    mode.value = mode.value === 'dark' ? 'light' : 'dark';
   }
 
-  return { mode, resolved, isDark, setMode, toggle };
+  return { mode, isDark, setMode, toggle };
 }
 
-// Persist + apply on every change.
-watch(mode, (m) => {
+watch(mode, (next) => {
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem(STORAGE_KEY, m);
+    window.localStorage.setItem(STORAGE_KEY, next);
   }
-  applyToDom(resolve(m));
+  applyToDom(next);
 });

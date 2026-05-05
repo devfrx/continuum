@@ -7,14 +7,10 @@
  * This is required by Continuum's "everything runs locally" constraint.
  *
  * Collections registered:
- *   - `ph:*` — Phosphor Icons (used for the kind/category picker; the
- *     `-fill` variants give us the rounded + filled style that matches
- *     Continuum's hand-authored icon set).
- *   - `lucide:*` — kept loaded as a secondary set for future use.
+ *   - `solar:*` — Solar Bold (rounded filled). Single source of truth for
+ *     every icon rendered by `<Icon>` and the kind picker.
  */
 import { addCollection } from '@iconify/vue';
-import phosphor from '@iconify-json/ph/icons.json';
-import lucide from '@iconify-json/lucide/icons.json';
+import { icons as solarIcons } from '@iconify-json/solar';
 
-addCollection(phosphor as Parameters<typeof addCollection>[0]);
-addCollection(lucide as Parameters<typeof addCollection>[0]);
+addCollection(solarIcons);

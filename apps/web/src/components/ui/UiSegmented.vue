@@ -29,13 +29,28 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 </template>
 
 <style scoped>
+/**
+ * Segmented control.
+ *
+ * The track has an intrinsic height (defaults to 32px / 28px for `sm`) that
+ * the parent can override via the `--ui-seg-h` custom property. Buttons
+ * stretch to fill the track height with `padding-block: 0`, so the active
+ * pill never grows beyond the track regardless of its `box-shadow`.
+ */
 .ui-seg {
     display: inline-flex;
+    align-items: stretch;
     background: var(--bg-soft);
-    padding: var(--space-2);
+    padding: 2px;
     border-radius: var(--radius-sm);
     border: var(--border-width-1) solid var(--border);
-    gap: var(--space-1);
+    gap: 2px;
+    height: var(--ui-seg-h, 32px);
+    box-sizing: border-box;
+}
+
+.ui-seg--sm {
+    height: var(--ui-seg-h, 28px);
 }
 
 .ui-seg__btn {
@@ -45,8 +60,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
     color: var(--fg-muted);
     font: inherit;
     cursor: pointer;
-    padding: var(--space-3) var(--space-6);
-    border-radius: var(--radius-xs);
+    padding: 0 var(--space-5);
+    border-radius: calc(var(--radius-sm) - 2px);
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     transition:
         background-color var(--duration-fast) var(--ease-standard),
         color var(--duration-fast) var(--ease-standard),
@@ -55,12 +74,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 }
 
 .ui-seg--sm .ui-seg__btn {
-    padding: var(--space-2) var(--space-5);
+    padding: 0 var(--space-4);
     font-size: var(--text-sm);
 }
 
 .ui-seg--md .ui-seg__btn {
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
 }
 
 .ui-seg__btn:hover {
@@ -68,7 +87,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 }
 
 .ui-seg__btn.is-active {
-    background: var(--bg-elev);
+    background: var(--bg-elev, var(--bg-elevated, var(--bg)));
     color: var(--fg-strong);
     box-shadow: var(--shadow-sm);
 }

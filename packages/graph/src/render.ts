@@ -70,7 +70,15 @@ export function buildSigmaProgramSettings(): Partial<Settings> {
     nodeProgramClasses: {
       bordered: createNodeBorderProgram({
         borders: [
-          { color: { value: NODE_BORDER_COLOR }, size: { value: NODE_BORDER_PIXELS, mode: 'pixels' } },
+          // Outer border colour is attribute-driven so per-node reducers
+          // can paint a vivid ring on user-highlighted / selected nodes
+          // (the reducer sets `borderColor` on the node attributes).
+          // Falls back to the muted default so untouched nodes keep their
+          // current look.
+          {
+            color: { attribute: 'borderColor', defaultValue: NODE_BORDER_COLOR },
+            size: { value: NODE_BORDER_PIXELS, mode: 'pixels' },
+          },
           { color: { attribute: 'color' }, size: { fill: true } },
         ],
       }),

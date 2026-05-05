@@ -41,9 +41,10 @@ import type { IconName } from '@/components/ui/icons';
 import { getIconImage } from '@/components/graph/iconRasterizer';
 import Graph3DCanvas from '@/components/graph/Graph3DCanvas.vue';
 import type { SelectedInfo as Graph3DSelected } from '@/components/graph/Graph3DCanvas.vue';
+import NoteCreateModal from '@/components/notes/NoteCreateModal.vue';
 import { useKinds } from '@/composables/useKinds';
 import { useGraphPalette } from '@/composables/useGraphPalette';
-import type { GraphEdge, GraphNode, KindDefinition } from '@continuum/shared';
+import type { EntityKind, GraphEdge, GraphNode, KindDefinition } from '@continuum/shared';
 
 interface SelectedInfo {
   id: string;
@@ -59,8 +60,15 @@ interface ContextMenuState {
   visible: boolean;
   x: number;
   y: number;
+  /** Node id when right-clicking a node; `null` when right-clicking empty stage. */
   nodeId: string | null;
   highlighted: boolean;
+  /**
+   * Where the right-click landed on the Sigma stage in graph coordinates.
+   * Captured for the empty-stage "Create note here" action so a future
+   * iteration can persist the position. `null` for node menus.
+   */
+  stage: { x: number; y: number } | null;
 }
 
 type LayoutMode = 'force' | 'circular';
@@ -104,7 +112,7 @@ const highlightedIds = shallowRef<Set<string>>(new Set<string>());
 const graph3dRef = ref<{
   zoom: (direction: 1 | -1) => void;
   zoomToFit: () => void;
-  reheat: () => void;
+  homeView: () => void;
 } | null>(null);
 
 const stats = ref({ nodes: 0, edges: 0 });
@@ -120,7 +128,7 @@ const searchQuery = ref('');
 const hiddenKinds = reactive<Set<string>>(new Set());
 const matchedNodes = shallowRef<Set<string>>(new Set());
 const contextMenu = reactive<ContextMenuState>({
-  visible: false, x: 0, y: 0, nodeId: null, highlighted: false,
+  visible: false, x: 0, y: 0, nodeId: null, highlighted: false, stage: null,
 });
 
 // Modal state for Rename / Delete (replaces native window.prompt/confirm).
@@ -150,8 +158,16 @@ const linkModal = reactive({
   entries: [] as Array<{ id: string; label: string; kind?: string; disabled?: boolean }>,
 });
 const linkBusy = ref(false);
+const graphCreateOpen = ref(false);
+const graphCreateBusy = ref(false);
+const graphCreateError = ref('');
+const graphCreateStage = ref<{ x: number; y: number } | null>(null);
 
 const isEmpty = computed(() => !loading.value && stats.value.nodes === 0);
+const viewLabel = computed(() => {
+  if (viewMode.value === '3d') return '3D spatial';
+  return layoutMode.value === 'force' ? '2D live' : '2D ring';
+});
 
 const activeFilters = computed<KindDefinition[]>(() =>
   kindStore.kinds.value.filter((k) => hiddenKinds.has(k.id)),
@@ -254,11 +270,12 @@ function applyReducers(sigma: Sigma, graph: Graph) {
 
     // 4. Persistent user highlight — toggled from the context menu.
     //    Renders an accent border + bumped size that survives focus mode
-    //    and search dimming.
+    //    and search dimming. The border colour is read by the bordered
+    //    Sigma program via the `borderColor` attribute (configured to be
+    //    attribute-driven in `buildSigmaProgramSettings`).
     if (isUserHighlighted) {
-      res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.2);
-      res.zIndex = Math.max(Number(res.zIndex ?? 0), 2);
-      // Sigma's bordered program reads `borderColor` if present.
+      res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.45);
+      res.zIndex = Math.max(Number(res.zIndex ?? 0), 3);
       (res as { borderColor?: string }).borderColor = pal.accent;
     }
 
@@ -651,7 +668,26 @@ function bindInteractions(sigma: Sigma, graph: Graph) {
     contextMenu.x = orig.clientX;
     contextMenu.y = orig.clientY;
     contextMenu.nodeId = node;
+    contextMenu.stage = null;
     contextMenu.highlighted = Boolean(graph.getNodeAttribute(node, 'userHighlight'));
+  });
+
+  // Right-click on empty stage → "Create note here" menu. We snapshot the
+  // graph-space coordinates so a future iteration can persist the position
+  // (currently the new note simply opens in the editor — the position is
+  // captured but not yet stored).
+  sigma.on('rightClickStage', ({ event }) => {
+    event.preventSigmaDefault();
+    event.original.preventDefault();
+    event.original.stopPropagation();
+    const orig = event.original as MouseEvent;
+    const graphCoords = sigma.viewportToGraph({ x: event.x, y: event.y });
+    contextMenu.visible = true;
+    contextMenu.x = orig.clientX;
+    contextMenu.y = orig.clientY;
+    contextMenu.nodeId = null;
+    contextMenu.stage = { x: graphCoords.x, y: graphCoords.y };
+    contextMenu.highlighted = false;
   });
   // NOTE: do NOT bind a generic `rightClick` handler that closes the menu —
   // it would fire immediately after `rightClickNode` and dismiss it.
@@ -722,6 +758,15 @@ function on3DContextMenu(evt: { id: string; clientX: number; clientY: number; hi
   contextMenu.highlighted = evt.highlighted;
 }
 
+function on3DStageContextMenu(evt: { clientX: number; clientY: number }) {
+  contextMenu.visible = true;
+  contextMenu.x = evt.clientX;
+  contextMenu.y = evt.clientY;
+  contextMenu.nodeId = null;
+  contextMenu.stage = null;
+  contextMenu.highlighted = false;
+}
+
 function zoom(direction: 1 | -1) {
   if (viewMode.value === '3d') {
     graph3dRef.value?.zoom(direction);
@@ -736,6 +781,14 @@ function zoom(direction: 1 | -1) {
 function fitToView() {
   if (viewMode.value === '3d') {
     graph3dRef.value?.zoomToFit();
+    return;
+  }
+  sigmaInstance.value?.getCamera().animatedReset({ duration: 400 });
+}
+
+function homeView() {
+  if (viewMode.value === '3d') {
+    graph3dRef.value?.homeView();
     return;
   }
   sigmaInstance.value?.getCamera().animatedReset({ duration: 400 });
@@ -768,6 +821,43 @@ function clearSearch() {
 
 function openNote(id: string) {
   router.push({ path: '/', query: { note: id } });
+}
+
+/**
+ * Stage right-click action: open the structured creation flow and then
+ * load the created note. The graph-space coordinates captured by the
+ * right-click handler aren't yet persisted (would require a
+ * `note_positions` table); tracked here for that future migration.
+ */
+async function ctxCreateNoteHere(): Promise<void> {
+  graphCreateStage.value = contextMenu.stage;
+  graphCreateError.value = '';
+  closeContextMenu();
+  graphCreateOpen.value = true;
+}
+
+async function submitGraphCreate(payload: {
+  title: string;
+  kind: EntityKind;
+  content: string;
+  folderId: string | null;
+}): Promise<void> {
+  const stage = graphCreateStage.value;
+  graphCreateBusy.value = true;
+  graphCreateError.value = '';
+  try {
+    const created = await api.notes.create(payload);
+    graphCreateOpen.value = false;
+    void stage; // intentional: not yet persisted, see docstring above
+    await load();
+    openNote(created.id);
+  } catch (err) {
+    graphCreateError.value = err instanceof Error ? err.message : String(err);
+    console.error('Failed to create note from graph stage', err);
+  } finally {
+    graphCreateBusy.value = false;
+    graphCreateStage.value = null;
+  }
 }
 
 // ---------- Context menu ----------
@@ -948,10 +1038,11 @@ async function submitLinks(targetIds: string[]) {
 
 function onKeydown(e: KeyboardEvent) {
   const target = e.target as HTMLElement | null;
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+  if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName))) return;
   if (e.key === '+' || e.key === '=') { zoom(1); e.preventDefault(); }
   else if (e.key === '-' || e.key === '_') { zoom(-1); e.preventDefault(); }
   else if (e.key === '0') { fitToView(); e.preventDefault(); }
+  else if (e.key === 'h' || e.key === 'H') { homeView(); e.preventDefault(); }
   else if (e.key === 'f' || e.key === 'F') { toggleFocusMode(); e.preventDefault(); }
   else if (e.key === 'Escape') {
     closeContextMenu();
@@ -1056,7 +1147,7 @@ onBeforeUnmount(() => {
     <Graph3DCanvas v-show="viewMode === '3d'" ref="graph3dRef" :payload="payload"
       :color-of="(k) => kindStore.colorOf(k)" :hidden-kinds="hiddenKinds" :highlighted-ids="highlightedIds"
       :search-query="searchQuery" :selected-id="selected?.id ?? null" :focus-mode="focusMode" @select="on3DSelect"
-      @open-note="on3DOpenNote" @context-menu="on3DContextMenu" />
+      @open-note="on3DOpenNote" @context-menu="on3DContextMenu" @stage-context-menu="on3DStageContextMenu" />
 
     <!-- Top-left: floating toolbar -->
     <div class="panel toolbar" @click.stop>
@@ -1073,13 +1164,13 @@ onBeforeUnmount(() => {
         @click="setViewMode('2d')">
         <Icon name="grid" size="16" />
       </button>
-      <span class="tb-sep" />
-      <button class="tb-btn" :class="{ active: layoutMode === 'force' }" :disabled="viewMode === '3d'"
-        title="Live physics — nodes float and self-organise (2D only)" @click="setLayout('force')">
+      <span v-if="viewMode === '2d'" class="tb-sep" />
+      <button v-if="viewMode === '2d'" class="tb-btn" :class="{ active: layoutMode === 'force' }"
+        title="Live physics — nodes float and self-organise" @click="setLayout('force')">
         <Icon name="activity" size="16" />
       </button>
-      <button class="tb-btn" :class="{ active: layoutMode === 'circular' }" :disabled="viewMode === '3d'"
-        title="Freeze layout — pin nodes on a static ring (2D only)" @click="setLayout('circular')">
+      <button v-if="viewMode === '2d'" class="tb-btn" :class="{ active: layoutMode === 'circular' }"
+        title="Freeze layout — pin nodes on a static ring" @click="setLayout('circular')">
         <Icon name="snowflake" size="16" />
       </button>
       <span class="tb-sep" />
@@ -1091,6 +1182,9 @@ onBeforeUnmount(() => {
       </button>
       <button class="tb-btn" title="Fit to view (0)" @click="fitToView">
         <Icon name="fit-screen" size="16" />
+      </button>
+      <button class="tb-btn" title="Home orientation (H)" @click="homeView">
+        <Icon name="cube" size="16" />
       </button>
       <span class="tb-sep" />
       <button class="tb-btn" :class="{ active: focusMode }" title="Focus selected/hovered neighborhood (F)"
@@ -1109,6 +1203,10 @@ onBeforeUnmount(() => {
     <!-- Top-right: stacked rail (stats / legend / active filters) -->
     <div class="right-rail">
       <div class="panel stats-row" @click.stop>
+        <span class="view-pill">
+          <Icon :name="viewMode === '3d' ? 'cube' : 'grid'" :size="12" />
+          {{ viewLabel }}
+        </span>
         <span class="stats-pill">
           {{ stats.nodes }} nodes · {{ stats.edges }} edges
         </span>
@@ -1187,6 +1285,7 @@ onBeforeUnmount(() => {
       <div v-if="helpOpen" class="help-pop">
         <div><b>+ / −</b> zoom in / out</div>
         <div><b>0</b> fit to view</div>
+        <div><b>H</b> home orientation</div>
         <div><b>F</b> focus selected neighborhood</div>
         <div><b>Esc</b> clear selection</div>
         <div><b>Drag</b> move node</div>
@@ -1197,26 +1296,33 @@ onBeforeUnmount(() => {
 
     <!-- Right-click context menu -->
     <div v-if="contextMenu.visible" class="ctx-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
-      <button @click="ctxOpenNote">
-        <Icon name="node" size="14" /> Open note
-      </button>
-      <button @click="ctxRenameNote">
-        <Icon name="edit" size="14" /> Rename…
-      </button>
-      <button @click="ctxToggleHighlight">
-        <Icon name="sparkles" size="14" />
-        {{ contextMenu.highlighted ? 'Remove highlight' : 'Highlight node' }}
-      </button>
-      <button @click="ctxLinkNote">
-        <Icon name="link" size="14" /> Link to note(s)…
-      </button>
-      <button @click="ctxHideOtherKinds">
-        <Icon name="eye-off" size="14" /> Hide other kinds
-      </button>
-      <div class="ctx-sep" />
-      <button class="danger" @click="ctxDeleteNote">
-        <Icon name="trash" size="14" /> Delete note
-      </button>
+      <template v-if="contextMenu.nodeId">
+        <button @click="ctxOpenNote">
+          <Icon name="node" size="14" /> Open note
+        </button>
+        <button @click="ctxRenameNote">
+          <Icon name="edit" size="14" /> Rename…
+        </button>
+        <button @click="ctxToggleHighlight">
+          <Icon name="sparkles" size="14" />
+          {{ contextMenu.highlighted ? 'Remove highlight' : 'Highlight node' }}
+        </button>
+        <button @click="ctxLinkNote">
+          <Icon name="link" size="14" /> Link to note(s)…
+        </button>
+        <button @click="ctxHideOtherKinds">
+          <Icon name="eye-off" size="14" /> Hide other kinds
+        </button>
+        <div class="ctx-sep" />
+        <button class="danger" @click="ctxDeleteNote">
+          <Icon name="trash" size="14" /> Delete note
+        </button>
+      </template>
+      <template v-else>
+        <button @click="ctxCreateNoteHere">
+          <Icon name="plus" size="14" /> Create note here
+        </button>
+      </template>
     </div>
 
     <!-- Empty state -->
@@ -1246,6 +1352,9 @@ onBeforeUnmount(() => {
     <UiNotePickerModal v-model="linkModal.open"
       :title="linkModal.sourceLabel ? `Link “${linkModal.sourceLabel}” to…` : 'Link notes'" :entries="linkModal.entries"
       :confirm-label="linkBusy ? 'Linking…' : 'Create links'" @submit="submitLinks" />
+
+    <NoteCreateModal v-model="graphCreateOpen" :busy="graphCreateBusy" :error="graphCreateError" context="graph"
+      @submit="submitGraphCreate" />
   </div>
 </template>
 
@@ -1396,8 +1505,24 @@ onBeforeUnmount(() => {
 .stats-row {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
   padding: var(--space-3) var(--space-5);
+}
+
+.view-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
 }
 
 .stats-pill {

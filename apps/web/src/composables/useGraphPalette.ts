@@ -52,7 +52,7 @@ function snapshot(): GraphPalette {
 
 /**
  * Returns a reactive palette ref that re-snapshots whenever the
- * `data-theme` attribute on `<html>` changes (driven by `useTheme`).
+ * `data-theme` attribute on `<html>` changes.
  */
 export function useGraphPalette(): ShallowRef<GraphPalette> {
   const palette = shallowRef<GraphPalette>(snapshot());

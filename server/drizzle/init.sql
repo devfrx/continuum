@@ -71,3 +71,42 @@ CREATE TABLE IF NOT EXISTS "kinds" (
 INSERT INTO "kinds" (id, label, color, icon, builtin)
 VALUES ('note', 'Note', '#8C7B6A', 'kind-note', true)
 ON CONFLICT (id) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Folders: hierarchical organisation of notes with Modality B
+-- inheritance for default_kind / icon / color (NULL = inherit from parent).
+-- ─────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS "folders" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+        "parent_id" uuid,
+        "name" text NOT NULL,
+        "slug" text NOT NULL,
+        "position" text NOT NULL,
+        "default_kind" text,
+        "icon" text,
+        "color" text,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+DO $$ BEGIN
+ ALTER TABLE "folders" ADD CONSTRAINT "folders_parent_id_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."folders"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+
+CREATE INDEX IF NOT EXISTS "folders_parent_idx" ON "folders" USING btree ("parent_id");
+CREATE INDEX IF NOT EXISTS "folders_position_idx" ON "folders" USING btree ("parent_id", "position");
+CREATE UNIQUE INDEX IF NOT EXISTS "folders_parent_slug_uniq" ON "folders" ("parent_id", "slug");
+
+-- Add notes.folder_id column + FK + index (idempotent).
+ALTER TABLE "notes" ADD COLUMN IF NOT EXISTS "folder_id" uuid;
+
+DO $$ BEGIN
+ ALTER TABLE "notes" ADD CONSTRAINT "notes_folder_id_folders_id_fk" FOREIGN KEY ("folder_id") REFERENCES "public"."folders"("id") ON DELETE set null ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+
+CREATE INDEX IF NOT EXISTS "notes_folder_idx" ON "notes" USING btree ("folder_id");

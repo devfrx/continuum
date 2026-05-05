@@ -1,25 +1,83 @@
 <script setup lang="ts">
-import { UiButton, UiEmpty } from '@/components/ui';
+import { Icon, UiButton } from '@/components/ui';
 
 const emit = defineEmits<{ (e: 'create'): void }>();
 </script>
 
 <template>
     <div class="empty-editor">
-        <UiEmpty title="Select or create a note"
-            description="Pick a note from the sidebar, or start a new one to begin writing.">
-            <template #action>
-                <UiButton variant="primary" @click="emit('create')">+ New note</UiButton>
-            </template>
-        </UiEmpty>
+        <section class="empty-editor__surface" aria-label="No note selected">
+            <div class="empty-editor__mark">
+                <Icon name="notes" :size="24" />
+            </div>
+            <div class="empty-editor__copy">
+                <span class="empty-editor__eyebrow">Notebook</span>
+                <h2>Start with a named note.</h2>
+                <p>Choose its kind and destination first, then write into a clean editor.</p>
+            </div>
+            <UiButton variant="primary" @click="emit('create')">
+                <template #icon-left>
+                    <Icon name="plus" :size="14" />
+                </template>
+                New note
+            </UiButton>
+        </section>
     </div>
 </template>
 
 <style scoped>
 .empty-editor {
-    display: grid;
-    place-items: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     height: 100%;
     padding: var(--space-16);
+}
+
+.empty-editor__surface {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-6);
+    max-width: 420px;
+    text-align: center;
+}
+
+.empty-editor__mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-md);
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: var(--border-width-1) solid var(--border);
+}
+
+.empty-editor__copy {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.empty-editor__eyebrow {
+    color: var(--fg-subtle);
+    font-size: var(--text-xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+.empty-editor__copy h2 {
+    margin: 0;
+    color: var(--fg-strong);
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-semibold);
+}
+
+.empty-editor__copy p {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: var(--text-base);
+    line-height: var(--leading-relaxed);
 }
 </style>

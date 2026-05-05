@@ -1,13 +1,13 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { eq, or } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { links, notes } from '../db/schema.js';
 
 const upsertSchema = z.object({
   sourceId: z.string().uuid(),
   targetId: z.string().uuid(),
-  type: z.string().default('related'),
+  type: z.string().trim().min(1).default('related'),
 });
 
 const listQuerySchema = z.object({
@@ -27,8 +27,27 @@ export const linkRoutes: FastifyPluginAsync = async (app) => {
     return type ? base.where(eq(links.type, type)) : base;
   });
 
-  app.post('/', async (req) => {
+  app.post('/', async (req, reply) => {
     const body = upsertSchema.parse(req.body);
+    if (body.sourceId === body.targetId) return reply.badRequest('Self-links are not allowed');
+
+    const endpoints = await db
+      .select({ id: notes.id })
+      .from(notes)
+      .where(or(eq(notes.id, body.sourceId), eq(notes.id, body.targetId)));
+    if (endpoints.length !== 2) return reply.notFound('Source or target note not found');
+
+    const [existing] = await db
+      .select()
+      .from(links)
+      .where(and(
+        eq(links.sourceId, body.sourceId),
+        eq(links.targetId, body.targetId),
+        eq(links.type, body.type),
+      ))
+      .limit(1);
+    if (existing) return existing;
+
     const [created] = await db.insert(links).values(body).returning();
     return created;
   });
@@ -46,17 +65,20 @@ export const linkRoutes: FastifyPluginAsync = async (app) => {
    */
   app.get('/graph', async () => {
     const [nodeRows, edgeRows] = await Promise.all([
-      db.select({ id: notes.id, title: notes.title, kind: notes.kind }).from(notes),
-      db.select().from(links),
+      db.select({ id: notes.id, title: notes.title, kind: notes.kind }).from(notes).orderBy(notes.updatedAt),
+      db.select().from(links).orderBy(links.createdAt),
     ]);
+    const nodeIds = new Set(nodeRows.map((n) => n.id));
     return {
       nodes: nodeRows.map((n) => ({ id: n.id, label: n.title, kind: n.kind })),
-      edges: edgeRows.map((e) => ({
-        id: e.id,
-        source: e.sourceId,
-        target: e.targetId,
-        type: e.type,
-      })),
+      edges: edgeRows
+        .filter((e) => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId) && e.sourceId !== e.targetId)
+        .map((e) => ({
+          id: e.id,
+          source: e.sourceId,
+          target: e.targetId,
+          type: e.type,
+        })),
     };
   });
 

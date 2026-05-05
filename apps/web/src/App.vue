@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { RouterLink, RouterView } from 'vue-router';
 import { Icon, type IconName } from '@/components/ui';
 import { useTheme } from '@/composables/useTheme';
+import { useSidebar } from '@/composables/useSidebar';
 
 interface NavItem {
   to: string;
@@ -20,26 +21,51 @@ const navGroups: NavGroup[] = [
     items: [
       { to: '/', label: 'Notes', icon: 'notes' },
       { to: '/graph', label: 'Graph', icon: 'graph' },
-      { to: '/search', label: 'Search', icon: 'search' },
     ],
   },
   {
     label: 'Tools',
     items: [
-      { to: '/ai', label: 'AI', icon: 'ai' },
       { to: '/settings', label: 'Settings', icon: 'settings' },
     ],
   },
 ];
 
-const { isDark, toggle } = useTheme();
+const { isDark, toggle: toggleTheme } = useTheme();
 const themeLabel = computed(() => (isDark.value ? 'Switch to light mode' : 'Switch to dark mode'));
-const themeIcon = computed<IconName>(() => (isDark.value ? 'kind-sun' : 'kind-moon'));
+const themeIcon = computed<IconName>(() => (isDark.value ? 'theme-light' : 'theme-dark'));
+
+const { open, hide, toggle } = useSidebar();
+const toggleLabel = computed(() => (open.value ? 'Close sidebar' : 'Open sidebar'));
+const toggleIcon = computed<IconName>(() => (open.value ? 'close' : 'menu'));
+
+/** Esc closes the sidebar (useful when it's open and covering content). */
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && open.value) hide();
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown));
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 </script>
 
 <template>
-  <div class="layout">
-    <aside class="sidebar">
+  <div class="layout" :class="{ 'sidebar-open': open }">
+    <!--
+      Floating toggle button — always visible in the top-left corner so the
+      sidebar can be opened from anywhere without hovering or pinning.
+    -->
+    <button type="button" class="sidebar-toggle" :class="{ 'is-active': open }" :aria-label="toggleLabel"
+      :aria-expanded="open" :aria-controls="'app-sidebar'" :title="toggleLabel" @click="toggle">
+      <Icon :name="toggleIcon" :size="18" />
+    </button>
+
+    <!--
+      Backdrop scrim — clicking outside the sidebar closes it. Only active
+      while the sidebar is open; transparent so it doesn't darken content.
+    -->
+    <div v-if="open" class="sidebar-scrim" aria-hidden="true" @click="hide" />
+
+    <aside id="app-sidebar" class="app-sidebar" :class="{ 'is-open': open }" :aria-hidden="!open">
       <header class="sidebar-header">
         <div class="sidebar-brand">
           <div class="sidebar-wordmark brand-wordmark">CONT\NUUM</div>
@@ -49,7 +75,7 @@ const themeIcon = computed<IconName>(() => (isDark.value ? 'kind-sun' : 'kind-mo
 
       <nav v-for="group in navGroups" :key="group.label" class="nav-section" :aria-label="group.label">
         <div class="nav-section-label">{{ group.label }}</div>
-        <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="nav-link">
+        <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="nav-link" @click="hide">
           <Icon :name="item.icon" :size="16" />
           <span>{{ item.label }}</span>
         </RouterLink>
@@ -57,7 +83,7 @@ const themeIcon = computed<IconName>(() => (isDark.value ? 'kind-sun' : 'kind-mo
 
       <footer class="sidebar-footer">
         <span class="sidebar-footer__hint">Theme</span>
-        <button type="button" class="theme-toggle" :aria-label="themeLabel" :title="themeLabel" @click="toggle">
+        <button type="button" class="theme-toggle" :aria-label="themeLabel" :title="themeLabel" @click="toggleTheme">
           <Icon :name="themeIcon" :size="16" />
         </button>
       </footer>
@@ -97,7 +123,7 @@ const themeIcon = computed<IconName>(() => (isDark.value ? 'kind-sun' : 'kind-mo
 
 .theme-toggle:hover {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover-color);
 }
 
 .theme-toggle:focus-visible {

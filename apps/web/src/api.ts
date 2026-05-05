@@ -1,6 +1,9 @@
 import type {
   AiHealthResponse,
   AiSearchHit,
+  Folder,
+  FolderEffective,
+  FolderNode,
   GraphEdge,
   GraphNode,
   KindDefinition,
@@ -52,15 +55,35 @@ export const api = {
     remove: (id: string) => http<{ ok: true }>(`/notes/${id}`, { method: 'DELETE' }),
     search: (query: string) =>
       http<unknown[]>(`/notes/search`, { method: 'POST', body: JSON.stringify({ query }) }),
-    semanticSearch: (query: string, signal?: AbortSignal) =>
+    semanticSearch: (
+      query: string,
+      signal?: AbortSignal,
+      options?: { folderId?: string | null; recursive?: boolean },
+    ) =>
       http<AiSearchHit[]>(`/notes/search`, {
         method: 'POST',
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({
+          query,
+          ...(options?.folderId !== undefined ? { folderId: options.folderId } : {}),
+          ...(options?.recursive !== undefined ? { recursive: options.recursive } : {}),
+        }),
         signal,
       }),
     backlinks: (id: string) => http<BacklinkEntry[]>(`/notes/${id}/backlinks`),
     reindex: () =>
       http<{ total: number; ok: number; failed: number }>(`/notes/reindex`, { method: 'POST' }),
+    /** Move a single note into a folder (or root with `folderId: null`). */
+    move: (id: string, folderId: string | null) =>
+      http<Note>(`/notes/${id}/move`, {
+        method: 'PATCH',
+        body: JSON.stringify({ folderId }),
+      }),
+    /** Move many notes at once; returns the count actually moved. */
+    bulkMove: (ids: string[], folderId: string | null) =>
+      http<{ moved: number }>(`/notes/bulk-move`, {
+        method: 'POST',
+        body: JSON.stringify({ ids, folderId }),
+      }),
   },
   links: {
     list: () => http<{ id: string; sourceId: string; targetId: string; type: string }[]>('/links'),
@@ -71,11 +94,6 @@ export const api = {
   },
   ai: {
     health: () => http<AiHealthResponse>('/ai/health'),
-    chat: (messages: { role: string; content: string }[], model?: string) =>
-      http<unknown>('/ai/chat', {
-        method: 'POST',
-        body: JSON.stringify({ messages, model }),
-      }),
   },
   kinds: {
     list: () => http<KindDefinition[]>('/kinds'),
@@ -85,5 +103,34 @@ export const api = {
       http<KindDefinition>(`/kinds/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id: string) =>
       http<{ ok: true }>(`/kinds/${id}`, { method: 'DELETE' }),
+  },
+  folders: {
+    /** Forest of `FolderNode` rooted at top-level folders. */
+    tree: () => http<FolderNode[]>('/folders'),
+    /** Single folder + its inherited (effective) values. */
+    get: (id: string) => http<Folder & { effective: FolderEffective }>(`/folders/${id}`),
+    create: (data: {
+      name: string;
+      parentId?: string | null;
+      slug?: string;
+      defaultKind?: string | null;
+      icon?: string | null;
+      color?: string | null;
+    }) => http<Folder>('/folders', { method: 'POST', body: JSON.stringify(data) }),
+    update: (
+      id: string,
+      data: Partial<{
+        name: string;
+        slug: string;
+        defaultKind: string | null;
+        icon: string | null;
+        color: string | null;
+      }>,
+    ) => http<Folder>(`/folders/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    move: (
+      id: string,
+      data: { parentId: string | null; before?: string | null; after?: string | null },
+    ) => http<Folder>(`/folders/${id}/move`, { method: 'POST', body: JSON.stringify(data) }),
+    remove: (id: string) => http<{ ok: true }>(`/folders/${id}`, { method: 'DELETE' }),
   },
 };

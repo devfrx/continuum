@@ -52,6 +52,36 @@ if (-not $SkipDocker) {
   }
 }
 
+# 2b. DB schema --------------------------------------------------------------
+if (-not $SkipDocker) {
+  Write-Step "Ensuring Postgres is ready"
+  $ready = $false
+  for ($i = 1; $i -le 30; $i++) {
+    docker exec continuum-postgres pg_isready -U continuum -d continuum *> $null
+    if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+    Start-Sleep -Seconds 1
+    Write-Host "    ... waiting ($i/30)"
+  }
+  if (-not $ready) {
+    Write-Bad "Postgres did not become ready in time"
+    exit 1
+  }
+  Write-Ok "Postgres ready"
+
+  Write-Step "Ensuring database schema"
+  $sqlPath = Join-Path $PSScriptRoot '..\server\drizzle\init.sql'
+  if (-not (Test-Path $sqlPath)) {
+    Write-Warn2 "init.sql not found at $sqlPath; skipping schema apply"
+  } else {
+    Get-Content -Raw $sqlPath | docker exec -i continuum-postgres psql -U continuum -d continuum -v ON_ERROR_STOP=1 | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+      Write-Bad "Schema apply failed"
+      exit 1
+    }
+    Write-Ok "Schema ready"
+  }
+}
+
 # 3. Decide which filters to run --------------------------------------------
 $filters = @()
 if ($ServerOnly) {

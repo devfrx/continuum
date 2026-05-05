@@ -6,7 +6,8 @@ import './iconify';
 import './styles/index.css';
 import { initTheme } from './composables/useTheme';
 
-// Apply persisted theme before mount to avoid a flash of incorrect colors.
+// Apply the persisted theme before mount so CSS variables resolve correctly
+// on first paint.
 initTheme();
 
 createApp(App).use(createPinia()).use(router).mount('#app');

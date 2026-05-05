@@ -1,31 +1,119 @@
 /**
  * App layout primitives: shell, sidebar, main column.
- * Pages compose against these classes.
+ *
+ * The sidebar is a *floating, button-driven* surface. A toggle button in the
+ * top-left of the viewport opens/closes it; while open it floats above the
+ * main content with rounded corners and a soft shadow, with a transparent
+ * scrim behind that closes it on outside-click. State lives in `useSidebar`.
  */
 
+:root {
+  /* Outer margin of the floating sidebar from the viewport edges. */
+  --layout-sidebar-inset: var(--space-4);
+  /* Size of the floating toggle button. */
+  --layout-toggle-size: 36px;
+}
+
 .layout {
-  display: grid;
-  grid-template-columns: var(--layout-sidebar-w) 1fr;
+  position: relative;
+  display: block;
   height: 100%;
   background: var(--bg);
 }
 
-/* ── Sidebar ─────────────────────────────────────────────────────── */
-.sidebar {
+/* ── Toggle button (always visible, top-left) ────────────────────── */
+.sidebar-toggle {
+  position: fixed;
+  top: var(--layout-sidebar-inset);
+  left: var(--layout-sidebar-inset);
+  width: var(--layout-toggle-size);
+  height: var(--layout-toggle-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-md);
   background: var(--bg-soft);
-  border-right: var(--border-width-1) solid var(--border);
+  border: var(--border-width-1) solid var(--border);
+  color: var(--fg-muted);
+  cursor: pointer;
+  z-index: 110;
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform var(--duration-normal) var(--ease-decel),
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.sidebar-toggle:hover {
+  background: var(--bg-elevated, var(--bg-soft));
+  color: var(--fg-strong);
+  border-color: var(--border-strong);
+}
+
+.sidebar-toggle.is-active {
+  /* Slide the button along with the sidebar so it visually anchors the
+     close action to the sidebar's right edge while open. */
+  transform: translateX(calc(var(--layout-sidebar-w) + var(--layout-sidebar-inset)));
+  color: var(--fg-strong);
+}
+
+.sidebar-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── Backdrop scrim (click-outside to close) ─────────────────────── */
+.sidebar-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* ── Shell sidebar (floating card) ───────────────────────────────── */
+/* Scoped to `.app-sidebar` to avoid colliding with the per-view
+   `.sidebar` class used by NotesSidebar. */
+.app-sidebar {
+  position: fixed;
+  top: var(--layout-sidebar-inset);
+  bottom: var(--layout-sidebar-inset);
+  left: var(--layout-sidebar-inset);
+  width: var(--layout-sidebar-w);
+  background: var(--bg-soft);
+  border: var(--border-width-1) solid var(--border);
+  border-radius: var(--radius-lg);
   padding: var(--space-12) var(--space-7);
   display: flex;
   flex-direction: column;
   gap: var(--space-10);
   overflow-y: auto;
   min-width: 0;
+  z-index: 100;
+  box-shadow: var(--shadow-floating);
+  /* Hidden by default: slide off-screen entirely. */
+  transform: translateX(calc(-100% - var(--layout-sidebar-inset) * 2));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--duration-normal) var(--ease-decel),
+    opacity var(--duration-fast) var(--ease-standard);
+  will-change: transform;
+}
+
+.app-sidebar.is-open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .sidebar-header {
+  /* Leave room for the toggle button (which slides next to the header). */
   padding: var(--space-2) var(--space-4) var(--space-4);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
 }
@@ -63,7 +151,7 @@
   padding: var(--space-2) var(--space-5) var(--space-3);
 }
 
-.sidebar nav a,
+.app-sidebar nav a,
 .nav-link {
   display: flex;
   align-items: center;
@@ -77,12 +165,12 @@
     background-color var(--duration-fast) var(--ease-standard),
     color var(--duration-fast) var(--ease-standard);
 }
-.sidebar nav a:hover,
+.app-sidebar nav a:hover,
 .nav-link:hover {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.sidebar nav a.router-link-active,
+.app-sidebar nav a.router-link-active,
 .nav-link.router-link-active {
   background: var(--accent-medium);
   color: var(--accent-hover);
@@ -100,15 +188,20 @@
 
 /* ── Main column ─────────────────────────────────────────────────── */
 .main {
+  /* Reserve space on the left for the always-visible toggle button so the
+     hamburger never overlaps page content. */
   padding: var(--space-16) var(--space-20);
+  padding-left: calc(var(--layout-toggle-size) + var(--layout-sidebar-inset) * 2 + var(--space-4));
   overflow: auto;
   background: var(--bg);
   min-width: 0;
+  height: 100%;
 }
 
 /* Compact main for full-bleed views like Notes / Graph */
 .main.is-flush {
   padding: 0;
+  padding-left: calc(var(--layout-toggle-size) + var(--layout-sidebar-inset) * 2);
   overflow: hidden;
 }
 

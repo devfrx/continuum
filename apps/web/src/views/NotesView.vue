@@ -1,18 +1,24 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useDebounceFn } from '@vueuse/core';
 import { ContinuumEditor } from '@continuum/editor';
 import { api, type BacklinkEntry } from '@/api';
-import type { AiSearchHit, Note, EntityKind, ContextMenuItem } from '@continuum/shared';
+import type { AiSearchHit, Note, EntityKind, FolderNode, ContextMenuItem } from '@continuum/shared';
 import NotesSidebar from '@/components/notes/NotesSidebar.vue';
 import NoteEditorHeader from '@/components/notes/NoteEditorHeader.vue';
+import NoteCreateModal from '@/components/notes/NoteCreateModal.vue';
 import RightSidebar from '@/components/notes/RightSidebar.vue';
 import EmptyEditor from '@/components/notes/EmptyEditor.vue';
+import { FolderForm } from '@/components/folders';
 import { UiConfirmModal, UiContextMenu, UiPromptModal, type ContextMenuItem as UiContextMenuItem } from '@/components/ui';
+import { useAiHealth } from '@/composables/useAiHealth';
+import { useFolders } from '@/composables/useFolders';
 
-defineProps<{ focusSearch?: boolean }>();
 const route = useRoute();
+const router = useRouter();
+const { embeddingsAvailable } = useAiHealth();
+const folders = useFolders();
 
 type SearchMode = 'filter' | 'semantic';
 type EditorMode = 'wysiwyg' | 'markdown';
@@ -31,6 +37,26 @@ const search = ref('');
 const searchMode = ref<SearchMode>('filter');
 const semanticHits = ref<AiSearchHit[]>([]);
 const semanticBusy = ref(false);
+const createNoteOpen = ref(false);
+const createNoteBusy = ref(false);
+const createNoteError = ref('');
+
+/**
+ * Currently scoped folder. `null` = "All notes / Inbox".
+ *
+ * Single source of truth for:
+ *   - filtering of the sidebar list (recursive include of descendants)
+ *   - default `folderId` for newly created notes
+ *   - default `kind` (via folder inheritance)
+ *   - server-side scoping of semantic search
+ *
+ * Synced both ways with the `?folder=` query param so deep-links work.
+ */
+const selectedFolderId = ref<string | null>(null);
+
+/** Always recurse for v1 — flat-folder UX is more intuitive than per-folder
+ *  scoping. We can expose a per-search toggle later if users ask for it. */
+const semanticRecursive = ref(true);
 
 const editorMode = ref<EditorMode>('wysiwyg');
 
@@ -119,11 +145,99 @@ function selectById(id: string): void {
   if (n) applyDraft(n);
 }
 
-async function createNew(): Promise<void> {
-  const created = await api.notes.create({ title: 'Untitled', kind: 'note', content: '' });
-  await load();
-  applyDraft(created);
+function openCreateNote(): void {
+  createNoteError.value = '';
+  createNoteOpen.value = true;
 }
+
+async function createNew(payload: {
+  title: string;
+  kind: EntityKind;
+  content: string;
+  folderId: string | null;
+}): Promise<void> {
+  createNoteBusy.value = true;
+  createNoteError.value = '';
+  try {
+    const created = await api.notes.create(payload);
+    createNoteOpen.value = false;
+    await load();
+    void folders.refresh();
+    applyDraft(created);
+  } catch (err) {
+    createNoteError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    createNoteBusy.value = false;
+  }
+}
+
+// --- Folder CRUD wiring ---
+const folderFormOpen = ref(false);
+const folderFormMode = ref<'create' | 'edit'>('create');
+const folderFormParentId = ref<string | null>(null);
+const folderFormTarget = ref<FolderNode | null>(null);
+
+function openCreateFolder(parentId: string | null): void {
+  folderFormMode.value = 'create';
+  folderFormParentId.value = parentId;
+  folderFormTarget.value = null;
+  folderFormOpen.value = true;
+}
+
+function openEditFolder(folder: FolderNode): void {
+  folderFormMode.value = 'edit';
+  folderFormTarget.value = folder;
+  folderFormParentId.value = folder.parentId;
+  folderFormOpen.value = true;
+}
+
+const folderDeleteTarget = ref<FolderNode | null>(null);
+const folderDeleteMessage = computed(() =>
+  folderDeleteTarget.value
+    ? `Delete folder "${folderDeleteTarget.value.name}"? Notes inside will move to the parent folder (or root). This cannot be undone.`
+    : '',
+);
+
+function requestDeleteFolder(folder: FolderNode): void {
+  folderDeleteTarget.value = folder;
+}
+
+async function confirmDeleteFolder(): Promise<void> {
+  const f = folderDeleteTarget.value;
+  folderDeleteTarget.value = null;
+  if (!f) return;
+  await folders.remove(f.id);
+  // If the user was scoped inside the deleted folder, jump back to root so
+  // the sidebar list isn't pointing at a phantom selection.
+  if (selectedFolderId.value === f.id) selectedFolderId.value = null;
+  await load(); // refresh notes list — server's ON DELETE SET NULL frees them
+}
+
+async function moveNoteToFolder(payload: { noteId: string; folderId: string | null }): Promise<void> {
+  await api.notes.move(payload.noteId, payload.folderId);
+  await load();
+  void folders.refresh(); // note counts changed
+}
+
+// --- URL ↔ folder scope sync ---
+//
+// `?folder=<id>` is the canonical state; `selectedFolderId` is its in-memory
+// mirror. Each side updates the other only when actually different to avoid
+// router-loops.
+watch(selectedFolderId, (id) => {
+  const current = typeof route.query.folder === 'string' ? route.query.folder : null;
+  const next = id ?? undefined;
+  if ((current ?? null) === (id ?? null)) return;
+  void router.replace({ query: { ...route.query, folder: next } });
+});
+
+watch(
+  () => route.query.folder,
+  (qid) => {
+    const id = typeof qid === 'string' && qid ? qid : null;
+    if (id !== selectedFolderId.value) selectedFolderId.value = id;
+  },
+);
 
 // Custom in-app delete confirmation (replaces native window.confirm so the
 // dialog matches the rest of the design system).
@@ -205,7 +319,7 @@ const runSemanticSearch = useDebounceFn(async () => {
   // Cancel any in-flight request — its results would be stale anyway.
   semanticAbort?.abort();
 
-  if (q.length < SEMANTIC_MIN_LEN) {
+  if (!embeddingsAvailable.value || q.length < SEMANTIC_MIN_LEN) {
     semanticHits.value = [];
     semanticBusy.value = false;
     semanticAbort = null;
@@ -215,7 +329,10 @@ const runSemanticSearch = useDebounceFn(async () => {
   const ctrl = new AbortController();
   semanticAbort = ctrl;
   try {
-    const hits = await api.notes.semanticSearch(q, ctrl.signal);
+    const hits = await api.notes.semanticSearch(q, ctrl.signal, {
+      folderId: selectedFolderId.value,
+      recursive: semanticRecursive.value,
+    });
     if (myToken !== semanticToken) return; // a newer request superseded us
     semanticHits.value = hits;
   } catch (err) {
@@ -230,7 +347,7 @@ const runSemanticSearch = useDebounceFn(async () => {
   }
 }, 500);
 
-watch([search, searchMode], () => {
+watch([search, searchMode, selectedFolderId, semanticRecursive], () => {
   if (searchMode.value !== 'semantic') {
     semanticHits.value = [];
     semanticBusy.value = false;
@@ -241,12 +358,20 @@ watch([search, searchMode], () => {
   // Flip busy on synchronously so the spinner shows during the debounce
   // window. Only do so when the query is long enough to actually trigger
   // a search — otherwise we'd be lying to the user.
-  if (search.value.trim().length >= SEMANTIC_MIN_LEN) {
+  if (embeddingsAvailable.value && search.value.trim().length >= SEMANTIC_MIN_LEN) {
     semanticBusy.value = true;
   } else {
     semanticBusy.value = false;
   }
   void runSemanticSearch();
+});
+
+// If the embedding model disappears (e.g. provider went offline), force the
+// sidebar back to filter mode so the user isn't stuck on a disabled tab.
+watch(embeddingsAvailable, (available) => {
+  if (!available && searchMode.value === 'semantic') {
+    searchMode.value = 'filter';
+  }
 });
 
 // --- Backlinks ---
@@ -271,14 +396,11 @@ watch(selectedId, () => {
 // --- Lifecycle ---
 onMounted(() => {
   void (async () => {
-    await load();
+    await Promise.all([load(), folders.load()]);
+    const folderParam = route.query.folder;
+    if (typeof folderParam === 'string' && folderParam) selectedFolderId.value = folderParam;
     const noteParam = route.query.note;
     if (typeof noteParam === 'string' && noteParam) selectById(noteParam);
-    if (route.name === 'search' || route.query.focus === 'search') {
-      await nextTick();
-      const el = document.querySelector<HTMLInputElement>('.notes-layout input');
-      el?.focus();
-    }
   })();
   tickHandle = setInterval(() => { nowTick.value = Date.now(); }, 5000);
 });
@@ -297,23 +419,27 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="notes-layout" :class="{ 'right-collapsed': rightCollapsed }">
-    <NotesSidebar class="pane left" :notes="notes" :selected-id="selectedId" :search-query="search"
-      :search-mode="searchMode" :semantic-hits="semanticHits" :semantic-busy="semanticBusy"
-      @update:search-query="(v: string) => (search = v)" @update:search-mode="(v: SearchMode) => (searchMode = v)"
-      @select="selectById" @create="createNew" @delete="remove" @run-semantic="runSemanticSearch" />
+    <NotesSidebar class="pane left" :notes="notes" :selected-id="selectedId" :selected-folder-id="selectedFolderId"
+      :search-query="search" :search-mode="searchMode" :semantic-hits="semanticHits" :semantic-busy="semanticBusy"
+      :semantic-available="embeddingsAvailable" @update:search-query="(v: string) => (search = v)"
+      @update:search-mode="(v: SearchMode) => (searchMode = v)"
+      @update:selected-folder-id="(v: string | null) => (selectedFolderId = v)" @select="selectById"
+      @create="openCreateNote" @delete="remove" @run-semantic="runSemanticSearch" @create-folder="openCreateFolder"
+      @edit-folder="openEditFolder" @delete-folder="requestDeleteFolder" @move-note="moveNoteToFolder" />
 
     <section v-if="selected" class="pane center">
-      <NoteEditorHeader :title="draftTitle" :kind="draftKind" :tags="draftTags" :editor-mode="editorMode"
-        :saved-at="lastSavedAt" :saving="saving" :now-tick="nowTick" @update:title="(v: string) => (draftTitle = v)"
-        @update:kind="(v: EntityKind) => (draftKind = v)" @update:tags="(v: string[]) => (draftTags = v)"
-        @update:editor-mode="(v: EditorMode) => (editorMode = v)" @delete="remove(selected!.id)" />
+      <NoteEditorHeader :title="draftTitle" :kind="draftKind" :tags="draftTags" :folder-id="selected.folderId ?? null"
+        :editor-mode="editorMode" :saved-at="lastSavedAt" :saving="saving" :now-tick="nowTick"
+        @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
+        @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
+        @navigate-folder="(id: string | null) => (selectedFolderId = id)" @delete="remove(selected!.id)" />
 
       <ContinuumEditor v-model="draftContent" v-model:json="draftJson" :mode="editorMode"
         placeholder="Write lore, character notes, anything…" @request-context-menu="onEditorContextMenu"
         @request-prompt="onEditorPrompt" />
     </section>
 
-    <EmptyEditor v-else class="pane center" @create="createNew" />
+    <EmptyEditor v-else class="pane center" @create="openCreateNote" />
 
     <RightSidebar class="pane right" :note="selected" :notes="notes" :backlinks="backlinks"
       :backlinks-loading="backlinksLoading" :collapsed="rightCollapsed"
@@ -328,6 +454,16 @@ onBeforeUnmount(() => {
     <UiConfirmModal :model-value="deleteTargetId !== null" title="Delete note" :message="deleteMessage"
       confirm-label="Delete" confirm-variant="danger" @confirm="confirmDeleteNote" @cancel="deleteTargetId = null"
       @update:model-value="(v) => { if (!v) deleteTargetId = null; }" />
+
+    <NoteCreateModal v-model="createNoteOpen" :default-folder-id="selectedFolderId" :busy="createNoteBusy"
+      :error="createNoteError" context="notes" @submit="createNew" />
+
+    <FolderForm v-model="folderFormOpen" :mode="folderFormMode" :parent-id="folderFormParentId"
+      :folder="folderFormTarget" @saved="() => { void folders.refresh(); }" />
+
+    <UiConfirmModal :model-value="folderDeleteTarget !== null" title="Delete folder" :message="folderDeleteMessage"
+      confirm-label="Delete" confirm-variant="danger" @confirm="confirmDeleteFolder" @cancel="folderDeleteTarget = null"
+      @update:model-value="(v) => { if (!v) folderDeleteTarget = null; }" />
   </div>
 </template>
 

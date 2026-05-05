@@ -4,7 +4,7 @@
  * with a search input that filters across the flat list. Emits the
  * picked icon id via `update:modelValue`.
  *
- * Defaults to the curated Lucide-based catalogue used for note kinds,
+ * Defaults to the curated Solar Bold catalogue used for note kinds,
  * but consumers can pass any list of `{label, icons[]}` groups so the
  * component can be reused for other pickers (toolbars, custom widgets,
  * etc.).
@@ -12,7 +12,7 @@
 import { computed, ref } from 'vue';
 import Icon from './Icon.vue';
 import UiInput from './UiInput.vue';
-import { KIND_ICON_GROUPS, type KindIconGroup } from './kindIcons';
+import { KIND_ICON_GROUPS, DEFAULT_KIND_ICON, type KindIconGroup } from './kindIcons';
 
 const props = withDefaults(
     defineProps<{
@@ -61,7 +61,7 @@ function pick(name: string): void {
         <div v-if="searchable || showPreview" class="ui-icon-picker__head">
             <UiInput v-if="searchable" v-model="query" size="sm" placeholder="Search icons…" />
             <div v-if="showPreview" class="ui-icon-picker__preview" :title="modelValue || 'No icon'">
-                <Icon :name="modelValue || 'lucide:tag'" :size="22" />
+                <Icon :name="modelValue || DEFAULT_KIND_ICON" :size="22" />
             </div>
         </div>
 
