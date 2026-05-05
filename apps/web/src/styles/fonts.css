@@ -21,16 +21,12 @@
 }
 
 :root {
-  /* Use system UI fonts as the actual body face, with Apple Color Emoji /
-     Segoe UI Emoji available so emoji always render. Kaluar Demo is NOT
-     in --font-sans because it lacks glyphs for most non-Latin content. */
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
-    Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
-  /* Dedicated stack for the wordmark only — Kaluar Demo first, with
-     system fallbacks if the font fails to load. */
-  --font-brand:
-    'Kaluar Demo', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: 'Geist Variable', 'Geist', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, Oxygen, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+  --font-display: 'Kaluar Demo', var(--font-sans);
+  --font-brand: var(--font-display);
 }
 
 /**

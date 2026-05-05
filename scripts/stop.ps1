@@ -19,7 +19,7 @@ Set-Location $repo
 . "$PSScriptRoot/_lib.ps1"
 
 # 1. Kill processes on our ports --------------------------------------------
-$ports = @(3001, 5173, 1235)
+$ports = @(3001, 5174, 1235)
 $portList = $ports -join ", "
 Write-Step "Releasing ports: $portList"
 foreach ($port in $ports) {

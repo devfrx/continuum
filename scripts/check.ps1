@@ -48,7 +48,7 @@ if (-not (Initialize-Docker)) {
 Write-Step "HTTP services"
 Test-Url 'Server   '  'http://localhost:3001/health'        | Out-Null
 Test-Url 'AI health'  'http://localhost:3001/api/ai/health' | Out-Null
-Test-Url 'Web (vite)' 'http://localhost:5173'               | Out-Null
+Test-Url 'Web (vite)' 'http://localhost:5174'               | Out-Null
 Test-Url 'MinIO     ' 'http://localhost:9000/minio/health/live' | Out-Null
 Test-Url 'LM Studio ' 'http://localhost:1234/v1/models'     | Out-Null
 Test-Url 'Ollama    ' 'http://localhost:11434/v1/models'    | Out-Null

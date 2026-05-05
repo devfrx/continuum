@@ -16,13 +16,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
-  ACCENT_EDGE_COLOR,
   buildGraph,
   buildSigmaProgramSettings,
-  DIM_EDGE_COLOR,
-  DIM_NODE_COLOR,
-  HIDDEN_EDGE_COLOR,
-  HIDDEN_NODE_COLOR,
   highlightNeighbors,
   runCircularLayout,
   Sigma,
@@ -187,75 +182,84 @@ function recomputeMatches(): void {
   matchedNodes.value = matches;
 }
 
+function activeFocusId(): string | null {
+  return focusMode.value ? selected.value?.id ?? hoveredNode.value : hoveredNode.value;
+}
+
 function applyReducers(sigma: Sigma, graph: Graph) {
   sigma.setSetting('nodeReducer', (node, data) => {
     const res: Record<string, unknown> = { ...data };
     const kind = String((data as { kind?: string }).kind ?? 'custom');
+    const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 14);
+    const pal = palette.value;
 
-    // 1. Hidden kind → near-invisible
+    // 1. Hidden kind → near-invisible micro dot, no label, no icon.
     if (hiddenKinds.has(kind)) {
-      res.color = HIDDEN_NODE_COLOR;
+      res.color = pal.nodeHidden;
+      res.size = baseSize * 0.35;
       res.label = '';
       res.zIndex = 0;
+      (res as { dimmed?: boolean }).dimmed = true;
       return res;
     }
 
-    // 2. Search filter — dim non-matches when there is an active query
+    // 2. Search filter — dim non-matches into background dots.
     const matches = matchedNodes.value;
     const hasQuery = matches.size > 0 || searchQuery.value.trim().length > 0;
     if (hasQuery && !matches.has(node)) {
-      res.color = DIM_NODE_COLOR;
+      res.color = pal.nodeDim;
+      res.size = baseSize * 0.55;
       res.label = '';
+      (res as { dimmed?: boolean }).dimmed = true;
     } else if (hasQuery && matches.has(node)) {
-      res.highlighted = true;
       res.zIndex = 2;
     }
 
-    // 3. Selection / hover focus
-    const focusId = selected.value?.id ?? hoveredNode.value;
+    // 3. Selection / hover focus — vivid focus subgraph, dim background.
+    const focusId = activeFocusId();
     const isUserHighlighted = Boolean((data as { userHighlight?: boolean }).userHighlight);
     if (focusId) {
       const { nodes } = highlightNeighbors(graph, focusId);
       const inSet = nodes.has(node);
       if (!inSet) {
-        // Focus mode no longer ghosts non-neighbours into invisibility —
-        // the user found that "blurry". A single dim level keeps the
-        // canvas readable while still emphasising the focus subgraph.
-        // User-highlighted nodes are immune to dimming.
+        // Background nodes fade to small dark dots — the focus subgraph
+        // becomes the only thing the eye reaches for. User-highlighted
+        // nodes stay vivid so they're never lost.
         if (!isUserHighlighted) {
-          res.color = DIM_NODE_COLOR;
+          res.color = pal.nodeDim;
+          res.size = baseSize * 0.55;
           res.label = '';
+          (res as { dimmed?: boolean }).dimmed = true;
         }
+      } else if (node === focusId) {
+        // Focused node — gentle size bump + top zIndex. We deliberately
+        // do NOT set `highlighted = true`: that would move the node to
+        // Sigma's hovers canvas, where the labels-canvas icon overlay
+        // would no longer paint. The custom hover renderer redraws the
+        // icon + label card on the hovers layer instead.
+        res.size = baseSize * 1.22;
+        res.zIndex = 3;
       } else {
-        const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 14);
-        if (node === focusId) {
-          // Selected/hovered node: gentle size bump + top zIndex.
-          // We deliberately do NOT set `highlighted = true` here — that
-          // would move the node to Sigma's hovers canvas, where the
-          // labels-canvas icon overlay no longer paints, making the
-          // glyph vanish on selection. Size + zIndex convey focus.
-          res.size = baseSize * 1.18;
-          res.zIndex = 3;
-        } else {
-          // Neighbours: subtle bump only.
-          res.size = baseSize * 1.04;
-          res.zIndex = 2;
-        }
+        // Neighbours: subtle bump only.
+        res.size = baseSize * 1.06;
+        res.zIndex = 2;
       }
     }
-    // Note: focus mode without a selection no longer fades the whole
-    // canvas — the toolbar button itself is the active-mode indicator.
+
+    if (!focusMode.value && selected.value?.id === node) {
+      res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.14);
+      res.zIndex = Math.max(Number(res.zIndex ?? 0), 2);
+      (res as { borderColor?: string }).borderColor = pal.edgeFocus;
+    }
 
     // 4. Persistent user highlight — toggled from the context menu.
-    //    Renders an accent ring + bumped size that survives focus mode
-    //    and search dimming, so users can mark important nodes.
+    //    Renders an accent border + bumped size that survives focus mode
+    //    and search dimming.
     if (isUserHighlighted) {
-      const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 14);
       res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.2);
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 2);
-      res.highlighted = true;
       // Sigma's bordered program reads `borderColor` if present.
-      (res as { borderColor?: string }).borderColor = palette.value.edgeFocus;
+      (res as { borderColor?: string }).borderColor = pal.accent;
     }
 
     return res;
@@ -263,9 +267,9 @@ function applyReducers(sigma: Sigma, graph: Graph) {
 
   sigma.setSetting('edgeReducer', (edge, data) => {
     const res: Record<string, unknown> = { ...data };
-    const baseColor = String((data as { baseColor?: string }).baseColor ?? data.color ?? DIM_EDGE_COLOR);
+    const pal = palette.value;
     const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 1);
-    res.color = baseColor;
+    res.color = pal.edge;
     res.size = baseSize;
 
     // Hide edges connecting hidden-kind endpoints
@@ -273,26 +277,25 @@ function applyReducers(sigma: Sigma, graph: Graph) {
     const srcKind = String(graph.getNodeAttribute(src, 'kind') ?? 'custom');
     const tgtKind = String(graph.getNodeAttribute(tgt, 'kind') ?? 'custom');
     if (hiddenKinds.has(srcKind) || hiddenKinds.has(tgtKind)) {
-      res.color = HIDDEN_EDGE_COLOR;
+      res.color = 'rgba(0,0,0,0)';
+      res.size = 0;
       return res;
     }
 
-    const focusId = selected.value?.id ?? hoveredNode.value;
+    const focusId = activeFocusId();
     if (focusId) {
       const { edges } = highlightNeighbors(graph, focusId);
       if (edges.has(edge)) {
-        res.color = ACCENT_EDGE_COLOR;
+        res.color = pal.edgeFocus;
         res.size = baseSize * 1.6;
         res.zIndex = 2;
       } else {
-        // Same single dim level regardless of focus mode — no extra
-        // ghosting. Keeps the graph legible at all times.
-        res.color = DIM_EDGE_COLOR;
+        res.color = pal.edgeDim;
       }
     }
 
     if (hoveredEdge.value && hoveredEdge.value === edge) {
-      res.color = ACCENT_EDGE_COLOR;
+      res.color = pal.edgeFocus;
       res.size = baseSize * 1.8;
     }
 
@@ -359,6 +362,13 @@ async function load() {
 
     const sigma = new Sigma(g, container.value, {
       ...buildSigmaProgramSettings(),
+      // Sigma's WebGL `hoverNodes` layer falls back to the regular bordered
+      // program when no hover-specific class is provided here, repainting the
+      // hovered node above our 2D `hovers` canvas. The regular `nodes` layer
+      // already shows the disc, so we defang this by hiding the `hoverNodes`
+      // canvas via CSS (`canvas.sigma-hoverNodes { display: none }`). The
+      // empty mapping below documents the intent.
+      nodeHoverProgramClasses: {},
       // The 2D container is `v-show`-hidden while the user stays in 3D
       // mode — width is 0 at construction time. Without this flag Sigma
       // throws "Container has no width". We refresh the renderer when
@@ -436,35 +446,62 @@ type NodeRenderData = {
   y: number;
   size: number;
   kind?: string;
+  color?: string;
   highlighted?: boolean;
+  dimmed?: boolean;
 };
 type RenderSettings = { labelSize: number; labelFont: string };
 type NodeRenderFn = (ctx: CanvasRenderingContext2D, data: NodeRenderData, settings: RenderSettings) => void;
 
-/** Draw the kind icon centred on the node, then a card-style label pill below it. */
+/**
+ * Draw the kind icon centred on the node, then a card-style label pill
+ * below it. Hover variant additionally paints a soft accent halo around
+ * the node so the focus is unmistakeable without burying the glyph.
+ */
 function drawIconAndLabel(
   ctx: CanvasRenderingContext2D,
   data: NodeRenderData,
   settings: RenderSettings,
   img: HTMLImageElement | null,
-  bold: boolean,
+  variant: 'label' | 'hover',
 ) {
-  if (img && data.size >= 8) {
+  const pal = palette.value;
+  const isHover = variant === 'hover';
+
+  // Hover halo — soft accent ring that frames the node without covering
+  // the icon. Drawn under the icon so the glyph stays crisp on top.
+  if (isHover) {
+    const r = data.size + 4;
+    const grad = ctx.createRadialGradient(data.x, data.y, data.size * 0.6, data.x, data.y, r * 1.4);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.55, pal.accentSoft);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(data.x, data.y, r * 1.4, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Crisp 1px accent ring exactly on the node edge.
+    ctx.beginPath();
+    ctx.arc(data.x, data.y, data.size + 1.5, 0, Math.PI * 2);
+    ctx.lineWidth = 1.25;
+    ctx.strokeStyle = pal.edgeFocus;
+    ctx.stroke();
+  }
+
+  if (img && data.size >= 6) {
     const px = data.size * 1.15;
     const half = px / 2;
     ctx.drawImage(img, data.x - half, data.y - half, px, px);
   }
   if (!data.label) return;
 
-  const pal = palette.value;
-  const weight = bold ? '600' : '500';
+  const weight = isHover ? '600' : '500';
   const fontPx = settings.labelSize;
   ctx.font = `${weight} ${fontPx}px ${settings.labelFont}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Card pill behind the label — keeps text readable on dark backgrounds
-  // and matches the visual language of the 3D label sprites.
   const padX = 8;
   const padY = 4;
   const radius = 6;
@@ -472,7 +509,7 @@ function drawIconAndLabel(
   const w = Math.ceil(textW + padX * 2);
   const h = Math.ceil(fontPx + padY * 2);
   const x = data.x - w / 2;
-  const y = data.y + data.size + 4;
+  const y = data.y + data.size + 6;
 
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
@@ -488,7 +525,7 @@ function drawIconAndLabel(
   ctx.fillStyle = pal.labelBg;
   ctx.fill();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = bold ? pal.edgeFocus : pal.labelBorder;
+  ctx.strokeStyle = isHover ? pal.edgeFocus : pal.labelBorder;
   ctx.stroke();
 
   ctx.fillStyle = pal.labelFg;
@@ -497,33 +534,31 @@ function drawIconAndLabel(
 
 /**
  * Label renderer — called for every node that needs a visible label.
- * Draws the icon glyph first, then the title text below.
- * Using this callback (instead of `afterRender`) ensures `data.x/y/size`
- * are already in the labels-canvas coordinate system so icons stay
- * perfectly anchored regardless of pan/zoom/drag.
+ * Dimmed nodes are background dots: no icon, no pill. Foreground nodes
+ * get the icon glyph + title pill.
  */
 function makeLabelRenderer(sigma: Sigma): NodeRenderFn {
   const refresh = () => sigma.refresh({ skipIndexation: true });
   return (ctx, data, settings) => {
-    if (!data.label) return;
+    if (data.dimmed || !data.label) return;
     const kind = String(data.kind ?? 'custom');
     const img = getIconImage(kindStore.iconOf(kind), refresh);
-    drawIconAndLabel(ctx, data, settings, img, data.highlighted ?? false);
+    drawIconAndLabel(ctx, data, settings, img, 'label');
   };
 }
 
 /**
- * Hover renderer — called for the single hovered node on the `hovers` canvas.
- * Sigma's default draws a white circle that buries the icon; we skip the
- * background entirely (the WebGL node layer already signals hover via its
- * reducer) and just redraw the icon + bold label so the glyph stays visible.
+ * Hover renderer — called for the single hovered node on the `hovers`
+ * canvas. Sigma's default draws an opaque white circle that buries the
+ * icon; we replace it with a soft accent halo + the same icon/label
+ * pair so the glyph survives the hover state.
  */
 function makeHoverRenderer(sigma: Sigma): NodeRenderFn {
   const refresh = () => sigma.refresh({ skipIndexation: true });
   return (ctx, data, settings) => {
     const kind = String(data.kind ?? 'custom');
     const img = getIconImage(kindStore.iconOf(kind), refresh);
-    drawIconAndLabel(ctx, data, settings, img, /* bold */ true);
+    drawIconAndLabel(ctx, data, settings, img, 'hover');
   };
 }
 
@@ -718,7 +753,12 @@ function showAllKinds() {
 }
 
 function toggleFocusMode() {
-  focusMode.value = !focusMode.value;
+  const next = !focusMode.value;
+  const g = graphRef.value;
+  if (next && !selected.value && hoveredNode.value && g?.hasNode(hoveredNode.value)) {
+    selected.value = buildSelected(g, hoveredNode.value);
+  }
+  focusMode.value = next;
   sigmaInstance.value?.refresh();
 }
 
@@ -948,7 +988,11 @@ watch(searchQuery, () => {
 });
 
 watch(focusMode, () => {
-  sigmaInstance.value?.refresh();
+  sigmaInstance.value?.refresh({ skipIndexation: true });
+});
+
+watch([() => selected.value?.id, hoveredNode, hoveredEdge], () => {
+  sigmaInstance.value?.refresh({ skipIndexation: true });
 });
 
 /**
@@ -1011,8 +1055,8 @@ onBeforeUnmount(() => {
     <div v-show="viewMode === '2d'" ref="container" class="canvas" />
     <Graph3DCanvas v-show="viewMode === '3d'" ref="graph3dRef" :payload="payload"
       :color-of="(k) => kindStore.colorOf(k)" :hidden-kinds="hiddenKinds" :highlighted-ids="highlightedIds"
-      :search-query="searchQuery" :selected-id="selected?.id ?? null" @select="on3DSelect" @open-note="on3DOpenNote"
-      @context-menu="on3DContextMenu" />
+      :search-query="searchQuery" :selected-id="selected?.id ?? null" :focus-mode="focusMode" @select="on3DSelect"
+      @open-note="on3DOpenNote" @context-menu="on3DContextMenu" />
 
     <!-- Top-left: floating toolbar -->
     <div class="panel toolbar" @click.stop>
@@ -1049,7 +1093,8 @@ onBeforeUnmount(() => {
         <Icon name="fit-screen" size="16" />
       </button>
       <span class="tb-sep" />
-      <button class="tb-btn" :class="{ active: focusMode }" title="Focus mode (F)" @click="toggleFocusMode">
+      <button class="tb-btn" :class="{ active: focusMode }" title="Focus selected/hovered neighborhood (F)"
+        @click="toggleFocusMode">
         <Icon :name="focusMode ? 'eye-off' : 'eye'" size="16" />
       </button>
       <span class="tb-sep" />
@@ -1142,7 +1187,7 @@ onBeforeUnmount(() => {
       <div v-if="helpOpen" class="help-pop">
         <div><b>+ / −</b> zoom in / out</div>
         <div><b>0</b> fit to view</div>
-        <div><b>F</b> focus mode</div>
+        <div><b>F</b> focus selected neighborhood</div>
         <div><b>Esc</b> clear selection</div>
         <div><b>Drag</b> move node</div>
         <div><b>Right-click</b> node menu</div>
@@ -1224,6 +1269,16 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-md);
 }
 
+/*
+ * Sigma's `hoverNodes` WebGL layer redraws the hovered node's disc on top of
+ * the `hovers` 2D canvas where our icon overlay lives — burying the glyph.
+ * The regular `nodes` WebGL layer beneath already paints the disc, so hiding
+ * `hoverNodes` is safe and lets our halo + icon + label pill sit above it.
+ */
+.canvas :deep(canvas.sigma-hoverNodes) {
+  display: none !important;
+}
+
 .panel {
   position: absolute;
   background: var(--bg-elev);
@@ -1246,6 +1301,11 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
+  /* Wrap to a second row before colliding with the right-rail (~280px) so
+   * neither panel ever overlaps the other on narrow viewports. */
+  max-width: calc(100% - 320px - var(--space-7) * 2);
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
 }
 
 .tb-btn {
@@ -1292,7 +1352,8 @@ onBeforeUnmount(() => {
 .tb-search {
   display: flex;
   align-items: center;
-  width: 200px;
+  flex: 0 0 160px;
+  min-width: 0;
   padding-left: var(--space-3);
   position: relative;
 }

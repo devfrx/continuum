@@ -33,7 +33,7 @@
 
 .btn-danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--text-primary);
   border-color: var(--danger);
 }
 .btn-danger:hover {
@@ -48,7 +48,7 @@
   border-radius: var(--radius-sm);
   padding: var(--space-4) var(--space-6) var(--space-4) var(--space-12);
   color: var(--fg);
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239A9286' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235F5B53' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
   background-repeat: no-repeat;
   background-position: var(--space-5) center;
   background-size: 16px 16px;

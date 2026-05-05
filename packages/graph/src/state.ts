@@ -128,22 +128,22 @@ export interface LiveSimulationHandle {
 
 export interface LiveSimulationOptions {
   /**
-   * Link force ("rubber band" stiffness) — Obsidian's "Link force".
-   * Per-edge attractive spring strength. Default 0.18.
+  * Link force ("rubber band" stiffness) - Obsidian's "Link force".
+  * Per-edge attractive spring strength. Default 0.038.
    */
   linkStrength?: number;
-  /** Natural rest distance for edges. Obsidian "Link distance". Default 80. */
+  /** Natural rest distance for edges. Obsidian "Link distance". Default 68. */
   linkDistance?: number;
   /**
    * Repel force — Obsidian "Repel force". Negative means push apart.
    * Applied as `repelStrength / (dist*dist)` and capped at `repelMaxDist`.
-   * Default 220 (kept low to avoid the "exploding" feel).
+  * Default 360: enough spacing to breathe without pushing small graphs to the edges.
    */
   repelStrength?: number;
   /**
    * Distance beyond which repulsion is ignored. Mimics Obsidian/d3-force
    * Barnes-Hut θ-cutoff and prevents far nodes from moving the world.
-   * Default 280.
+  * Default 220.
    */
   repelMaxDist?: number;
   /**
@@ -155,20 +155,22 @@ export interface LiveSimulationOptions {
    */
   centerStrength?: number;
   /**
-   * Velocity decay (friction). d3-force default is 0.4 → keep 60% of v.
-   * Higher = more friction, smoother, less jitter. Default 0.4.
+  * Velocity decay (friction). d3-force default is 0.4 -> keep 60% of v.
+  * Higher = more friction, smoother, less jitter. Default 0.64.
    */
   velocityDecay?: number;
-  /** Hard clamp on per-frame displacement (graph units). Default 6. */
+  /** Hard clamp on per-frame displacement (graph units). Default 3.0. */
   maxStep?: number;
   /** Callback after every frame — usually `sigma.refresh({ skipIndexation: true })`. */
   onTick?: () => void;
   /**
    * Baseline alpha — force multiplier that NEVER fully decays. Keeps the
-   * simulation gently alive forever. Kept low (default 0.04) so motion
+  * simulation gently alive forever. Kept low (default 0.045) so motion
    * is a barely-perceptible breathing rather than a return-to-center.
    */
   alphaTarget?: number;
+  /** Tiny centroid nudge that keeps the cluster framed without snap-back. Default 0.01. */
+  centroidStrength?: number;
 }
 
 interface NodeState {
@@ -195,22 +197,23 @@ export function startLiveSimulation(
   graph: Graph,
   opts: LiveSimulationOptions = {},
 ): LiveSimulationHandle {
-  const linkStrength = opts.linkStrength ?? 0.05;
-  const linkDistance = opts.linkDistance ?? 4;
-  const repelStrength = opts.repelStrength ?? 50;
-  const repelMaxDist = opts.repelMaxDist ?? 30;
+  const linkStrength = opts.linkStrength ?? 0.038;
+  const linkDistance = opts.linkDistance ?? 68;
+  const repelStrength = opts.repelStrength ?? 360;
+  const repelMaxDist = opts.repelMaxDist ?? 220;
   const repelMaxDist2 = repelMaxDist * repelMaxDist;
   // Per-node center pull — disabled by default. The previous 0.04 created
   // a visible "return to origin" after every drag, which the user found
   // annoying. Centroid framing is now handled by a much gentler nudge.
   const centerStrength = opts.centerStrength ?? 0;
-  const velocityDecay = opts.velocityDecay ?? 0.55;
+  const velocityDecay = opts.velocityDecay ?? 0.64;
   const velocityKeep = 1 - velocityDecay;
-  const maxStep = opts.maxStep ?? 6;
+  const maxStep = opts.maxStep ?? 3.0;
   // Very low baseline α: keeps the graph subtly alive without enough
   // energy to noticeably move nodes back after a drag.
-  const alphaTarget = opts.alphaTarget ?? 0.04;
+  const alphaTarget = opts.alphaTarget ?? 0.045;
   const alphaDecay = 0.04; // per-frame decay of the *transient* boost on top of alphaTarget
+  const centroidStrength = opts.centroidStrength ?? 0.01;
 
   const states = new Map<string, NodeState>();
   let rafId: number | null = null;
@@ -332,10 +335,9 @@ export function startLiveSimulation(
     let cx = 0, cy = 0;
     for (let k = 0; k < n; k++) { cx += xs[k]; cy += ys[k]; }
     cx /= n; cy /= n;
-    const recenter = 0.015;
     for (let k = 0; k < n; k++) {
-      xs[k] -= cx * recenter;
-      ys[k] -= cy * recenter;
+      xs[k] -= cx * centroidStrength;
+      ys[k] -= cy * centroidStrength;
       if (centerStrength > 0) {
         fxs[k] -= xs[k] * centerStrength * alpha;
         fys[k] -= ys[k] * centerStrength * alpha;

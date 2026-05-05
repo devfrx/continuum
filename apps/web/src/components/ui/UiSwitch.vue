@@ -43,18 +43,20 @@ function toggle() {
 
 .ui-switch__track {
     position: relative;
-    width: 36px;
-    height: 20px;
-    border-radius: var(--radius-md);
-    border: none;
+    width: 34px;
+    height: 18px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-subtle);
     padding: 0;
     background: var(--border-strong);
     cursor: pointer;
-    transition: background-color var(--duration-fast) var(--ease-standard);
+    transition: background-color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
 }
 
 .ui-switch__track.is-on {
     background: var(--accent);
+    border-color: var(--accent);
 }
 
 .ui-switch__track:focus-visible {
@@ -66,16 +68,18 @@ function toggle() {
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: var(--radius-sm);
-    background: #fff;
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-full);
+    background: var(--bg);
     box-shadow: var(--shadow-sm);
-    transition: transform var(--duration-fast) var(--ease-standard);
+    transition: transform var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard);
 }
 
 .ui-switch__track.is-on .ui-switch__knob {
     transform: translateX(16px);
+    background: var(--bg);
 }
 
 .ui-switch__label {

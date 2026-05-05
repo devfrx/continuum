@@ -84,8 +84,8 @@
 }
 .sidebar nav a.router-link-active,
 .nav-link.router-link-active {
-  background: var(--accent-hover);
-  color: var(--accent);
+  background: var(--accent-medium);
+  color: var(--accent-hover);
 }
 
 .sidebar-footer {

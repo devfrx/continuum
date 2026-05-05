@@ -1,236 +1,183 @@
 /**
- * Theme palettes — light & dark.
+ * Theme palette for Continuum.
  *
- * Tokens here are *semantic* (what they're for) rather than literal
- * (what color they are). Components reference them by purpose so
- * dark mode requires zero component changes.
- *
- * Activation:
- *   <html data-theme="light">  → light mode
- *   <html data-theme="dark">   → dark mode
- *   no attribute               → follows OS via prefers-color-scheme
+ * Alice is the source of truth: dark charcoal surfaces, warm off-white text,
+ * subtle white borders, and the cream "Panna" accent. Continuum's semantic
+ * names remain as aliases so the app keeps working without component churn.
  */
 
-/* ────────────────────────────────────────────────────────────────────
- * LIGHT — Anthropic-inspired warm cream palette
- * ──────────────────────────────────────────────────────────────────── */
 :root,
-:root[data-theme='light'] {
-  color-scheme: light;
-
-  /* Surfaces — base → elevated */
-  --bg: #faf7f2;
-  --bg-soft: #f5f1ea;
-  --bg-elev: #ffffff;
-  --bg-elev-2: #ffffff;
-  --bg-overlay: rgba(31, 27, 22, 0.45);
-  --bg-inverse: #1f1b16;
-
-  /* Text */
-  --fg: #1f1b16;
-  --fg-strong: #14110d;
-  --fg-muted: #6b645a;
-  --fg-subtle: #9a9286;
-  --fg-on-accent: #ffffff;
-  --fg-inverse: #faf7f2;
-
-  /* Borders */
-  --border: #e8e1d5;
-  --border-strong: #d6cdbe;
-  --border-subtle: #f0ebe2;
-
-  /* Accent — terracotta */
-  --accent: #c96e4a;
-  --accent-hover-color: #b85e3c;
-  --accent-active-color: #a04e30;
-  --accent-soft: rgba(201, 110, 74, 0.1);
-  --accent-hover: rgba(201, 110, 74, 0.18);
-  --accent-ring: rgba(201, 110, 74, 0.32);
-
-  /* Status */
-  --success: #5c8a6b;
-  --success-soft: rgba(92, 138, 107, 0.12);
-  --warning: #c98a2b;
-  --warning-soft: rgba(201, 138, 43, 0.14);
-  --danger: #b5563e;
-  --danger-soft: rgba(181, 86, 62, 0.12);
-  --info: #4a7ba6;
-  --info-soft: rgba(74, 123, 166, 0.12);
-
-  /* Elevation — composed shadows */
-  --shadow-xs: 0 1px 1px rgba(31, 27, 22, 0.04);
-  --shadow-sm:
-    0 1px 2px rgba(31, 27, 22, 0.04),
-    0 1px 3px rgba(31, 27, 22, 0.04);
-  --shadow-md:
-    0 2px 4px rgba(31, 27, 22, 0.04),
-    0 4px 12px rgba(31, 27, 22, 0.06);
-  --shadow-lg:
-    0 4px 8px rgba(31, 27, 22, 0.04),
-    0 12px 28px rgba(31, 27, 22, 0.08);
-  --shadow-xl:
-    0 8px 16px rgba(31, 27, 22, 0.05),
-    0 24px 48px rgba(31, 27, 22, 0.12);
-  --shadow-focus: 0 0 0 var(--focus-ring-w) var(--accent-ring);
-
-  /* Selection */
-  --selection-bg: var(--accent-soft);
-  --selection-fg: var(--fg);
-
-  /* Graph canvas (Sigma + 3D) — semantic, theme-reactive */
-  --graph-bg: #faf7f2;
-  --graph-grid: rgba(31, 27, 22, 0.05);
-  --graph-label-bg: #ffffff;
-  --graph-label-border: #e8e1d5;
-  --graph-label-fg: #1f1b16;
-  --graph-edge: rgba(120, 110, 96, 0.55);
-  --graph-edge-dim: rgba(155, 144, 130, 0.22);
-  --graph-edge-focus: rgba(201, 110, 74, 0.95);
-  --graph-node-dim: #d9d2c6;
-  --graph-node-hidden: rgba(31, 27, 22, 0.06);
-}
-
-/* ────────────────────────────────────────────────────────────────────
- * DARK — warm midnight, same hue family as light
- * ──────────────────────────────────────────────────────────────────── */
+:root[data-theme='light'],
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  /* Surfaces */
-  --bg: #1a1714;
-  --bg-soft: #211d19;
-  --bg-elev: #26221d;
-  --bg-elev-2: #2d2823;
-  --bg-overlay: rgba(0, 0, 0, 0.6);
-  --bg-inverse: #faf7f2;
+  /* Alice backgrounds */
+  --bg-primary: #161616;
+  --bg-secondary: #1C1C1C;
+  --bg-tertiary: #232323;
+  --bg-input: rgba(237, 227, 213, 0.04);
+  --bg-tool: rgba(35, 35, 35, 0.8);
 
-  /* Text */
-  --fg: #ece6db;
-  --fg-strong: #f8f4eb;
-  --fg-muted: #a39c8e;
-  --fg-subtle: #756e62;
-  --fg-on-accent: #ffffff;
-  --fg-inverse: #1f1b16;
+  /* Alice surfaces */
+  --surface-0: #161616;
+  --surface-1: #1C1C1C;
+  --surface-2: #232323;
+  --surface-3: #2A2A2A;
+  --surface-4: #323232;
+  --surface-hover: rgba(237, 227, 213, 0.04);
+  --surface-active: rgba(237, 227, 213, 0.06);
+  --surface-selected: rgba(237, 227, 213, 0.08);
+  --surface-inset: rgba(0, 0, 0, 0.2);
 
-  /* Borders */
-  --border: #36302a;
-  --border-strong: #463f37;
-  --border-subtle: #2b2620;
+  /* Alice typography colors */
+  --text-primary: #EDEDE9;
+  --text-secondary: #A09B90;
+  --text-muted: #5F5B53;
 
-  /* Accent — slightly lifted for dark contrast */
-  --accent: #e08359;
-  --accent-hover-color: #ec9268;
-  --accent-active-color: #c96e4a;
-  --accent-soft: rgba(224, 131, 89, 0.14);
-  --accent-hover: rgba(224, 131, 89, 0.22);
-  --accent-ring: rgba(224, 131, 89, 0.4);
+  /* Alice accent */
+  --accent: #E8DCC8;
+  --accent-hover: #F5EDE0;
+  --accent-dim: rgba(232, 220, 200, 0.10);
+  --accent-border: rgba(232, 220, 200, 0.20);
+  --accent-glow: rgba(232, 220, 200, 0.06);
+  --accent-faint: rgba(232, 220, 200, 0.03);
+  --accent-subtle: rgba(232, 220, 200, 0.05);
+  --accent-light: rgba(232, 220, 200, 0.08);
+  --accent-medium: rgba(232, 220, 200, 0.15);
+  --accent-strong: rgba(232, 220, 200, 0.20);
+  --accent-vivid: rgba(232, 220, 200, 0.30);
+  --accent-text-glow: 0 0 20px rgba(232, 220, 200, 0.08);
 
-  /* Status */
-  --success: #7aae8b;
-  --success-soft: rgba(122, 174, 139, 0.16);
-  --warning: #e0a957;
-  --warning-soft: rgba(224, 169, 87, 0.18);
-  --danger: #d97056;
-  --danger-soft: rgba(217, 112, 86, 0.16);
-  --info: #6b9fc9;
-  --info-soft: rgba(107, 159, 201, 0.16);
+  /* Alice semantic colors */
+  --danger: #B85C5C;
+  --danger-hover: rgba(184, 92, 92, 0.15);
+  --danger-faint: rgba(184, 92, 92, 0.04);
+  --danger-light: rgba(184, 92, 92, 0.1);
+  --danger-medium: rgba(184, 92, 92, 0.18);
+  --danger-border: rgba(184, 92, 92, 0.30);
+  --danger-strong: rgba(184, 92, 92, 0.35);
+  --danger-glow: rgba(184, 92, 92, 0.4);
+  --success: #5C9A6E;
+  --success-glow: rgba(92, 154, 110, 0.4);
+  --success-faint: rgba(92, 154, 110, 0.03);
+  --success-light: rgba(92, 154, 110, 0.1);
+  --success-medium: rgba(92, 154, 110, 0.12);
+  --success-border: rgba(92, 154, 110, 0.25);
+  --warning: #D4A72C;
+  --warning-bg: rgba(212, 167, 44, 0.1);
+  --warning-border: rgba(212, 167, 44, 0.25);
+  --error: #E06060;
+  --error-bg: rgba(224, 96, 96, 0.1);
+  --error-border: rgba(224, 96, 96, 0.25);
+  --error-bg-hover: rgba(224, 96, 96, 0.15);
+  --error-border-hover: rgba(224, 96, 96, 0.4);
+  --error-severe: #DC3545;
+  --error-severe-bg: rgba(220, 53, 69, 0.12);
+  --error-severe-border: rgba(220, 53, 69, 0.4);
+  --approve: #4ade80;
+  --approve-bg: rgba(74, 222, 128, 0.12);
+  --approve-border: rgba(74, 222, 128, 0.3);
+  --approve-bg-hover: rgba(74, 222, 128, 0.2);
+  --approve-border-hover: rgba(74, 222, 128, 0.5);
 
-  /* Elevation — softer shadows + subtle inner highlight */
-  --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
-  --shadow-sm:
-    0 1px 2px rgba(0, 0, 0, 0.3),
-    0 1px 3px rgba(0, 0, 0, 0.25);
-  --shadow-md:
-    0 2px 4px rgba(0, 0, 0, 0.3),
-    0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-lg:
-    0 4px 8px rgba(0, 0, 0, 0.35),
-    0 12px 28px rgba(0, 0, 0, 0.45);
-  --shadow-xl:
-    0 8px 16px rgba(0, 0, 0, 0.4),
-    0 24px 48px rgba(0, 0, 0, 0.55);
-  --shadow-focus: 0 0 0 var(--focus-ring-w) var(--accent-ring);
+  /* Alice overlays */
+  --white-faint: rgba(255, 255, 255, 0.02);
+  --white-subtle: rgba(255, 255, 255, 0.04);
+  --white-light: rgba(255, 255, 255, 0.06);
+  --white-medium: rgba(255, 255, 255, 0.08);
+  --white-strong: rgba(255, 255, 255, 0.10);
+  --white-heavy: rgba(255, 255, 255, 0.14);
+  --white-dim: rgba(255, 255, 255, 0.20);
+  --black-light: rgba(0, 0, 0, 0.25);
+  --black-medium: rgba(0, 0, 0, 0.4);
+  --black-heavy: rgba(0, 0, 0, 0.6);
+  --black-overlay: rgba(0, 0, 0, 0.8);
 
-  --selection-bg: var(--accent-soft);
-  --selection-fg: var(--fg-strong);
+  /* Alice borders and shadows */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-hover: rgba(255, 255, 255, 0.10);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 12px rgba(0, 0, 0, 0.15);
+  --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-sidebar: 1px 0 8px rgba(0, 0, 0, 0.25);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-accent: 0 0 0 1px var(--accent-border), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-focus: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--focus-ring-color);
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-floating: 0 12px 36px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.05);
 
-  /* Graph canvas (Sigma + 3D) */
-  --graph-bg: #14110d;
-  --graph-grid: rgba(255, 245, 225, 0.04);
-  --graph-label-bg: #2d2823;
-  --graph-label-border: #463f37;
-  --graph-label-fg: #f8f4eb;
-  --graph-edge: rgba(180, 168, 150, 0.45);
-  --graph-edge-dim: rgba(120, 110, 96, 0.22);
-  --graph-edge-focus: rgba(236, 146, 104, 0.95);
-  --graph-node-dim: #4a433a;
-  --graph-node-hidden: rgba(255, 245, 225, 0.04);
+  /* Alice glass, gradients, and interaction */
+  --glass-bg: rgba(28, 28, 28, 0.8);
+  --glass-bg-light: rgba(28, 28, 28, 0.5);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-border-hover: rgba(255, 255, 255, 0.10);
+  --glass-blur: 12px;
+  --glass-blur-heavy: 16px;
+  --gradient-gold: linear-gradient(135deg, rgba(232, 220, 200, 0.06), rgba(232, 220, 200, 0.02));
+  --gradient-gold-strong: linear-gradient(135deg, rgba(232, 220, 200, 0.12), rgba(232, 220, 200, 0.04));
+  --gradient-crimson: linear-gradient(135deg, rgba(184, 92, 92, 0.08), rgba(184, 92, 92, 0.02));
+  --gradient-emerald: linear-gradient(135deg, rgba(92, 154, 110, 0.08), rgba(92, 154, 110, 0.02));
+  --gradient-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 100%);
+  --focus-ring-color: rgba(232, 220, 200, 0.5);
+  --focus-ring: var(--focus-ring-width) solid var(--focus-ring-color);
+  --focus-ring-shadow: 0 0 0 var(--focus-ring-offset) var(--surface-0), 0 0 0 calc(var(--focus-ring-offset) + var(--focus-ring-width)) var(--focus-ring-color);
+  --interactive-normal: var(--text-secondary);
+  --interactive-hover: var(--text-primary);
+  --interactive-active: var(--accent);
+  --interactive-muted: var(--text-muted);
+
+  /* Continuum semantic aliases */
+  --bg: var(--bg-primary);
+  --bg-soft: var(--bg-secondary);
+  --bg-elev: var(--bg-tertiary);
+  --bg-elev-2: var(--surface-3);
+  --bg-overlay: var(--black-heavy);
+  --bg-inverse: var(--text-primary);
+  --fg: var(--text-primary);
+  --fg-strong: var(--accent-hover);
+  --fg-muted: var(--text-secondary);
+  --fg-subtle: var(--text-muted);
+  --fg-on-accent: var(--bg-primary);
+  --fg-inverse: var(--bg-primary);
+  --border-strong: var(--border-hover);
+  --border-subtle: var(--white-subtle);
+  --accent-hover-color: var(--accent-hover);
+  --accent-active-color: var(--accent);
+  --accent-soft: var(--accent-dim);
+  --accent-ring: var(--focus-ring-color);
+  --success-soft: var(--success-medium);
+  --warning-soft: var(--warning-bg);
+  --danger-soft: var(--danger-light);
+  --info: var(--text-secondary);
+  --info-soft: var(--white-subtle);
+  --shadow-xl: var(--shadow-floating);
+  --selection-bg: var(--accent-dim);
+  --selection-fg: var(--text-primary);
+  --color-background-mute: var(--surface-2);
+
+  /* Graph canvas colors */
+  --graph-bg: var(--surface-0);
+  --graph-grid: var(--accent-faint);
+  --graph-label-bg: var(--surface-2);
+  --graph-label-border: var(--border);
+  --graph-label-fg: var(--text-primary);
+  --graph-edge: rgba(160, 155, 144, 0.45);
+  --graph-edge-dim: rgba(95, 91, 83, 0.28);
+  --graph-edge-focus: rgba(232, 220, 200, 0.95);
+  --graph-node-dim: var(--surface-4);
+  --graph-node-hidden: var(--white-subtle);
 }
 
-/* OS preference fallback when no explicit data-theme is set */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    color-scheme: dark;
-    --bg: #1a1714;
-    --bg-soft: #211d19;
-    --bg-elev: #26221d;
-    --bg-elev-2: #2d2823;
-    --bg-overlay: rgba(0, 0, 0, 0.6);
-    --bg-inverse: #faf7f2;
-    --fg: #ece6db;
-    --fg-strong: #f8f4eb;
-    --fg-muted: #a39c8e;
-    --fg-subtle: #756e62;
-    --fg-inverse: #1f1b16;
-    --border: #36302a;
-    --border-strong: #463f37;
-    --border-subtle: #2b2620;
-    --accent: #e08359;
-    --accent-hover-color: #ec9268;
-    --accent-active-color: #c96e4a;
-    --accent-soft: rgba(224, 131, 89, 0.14);
-    --accent-hover: rgba(224, 131, 89, 0.22);
-    --accent-ring: rgba(224, 131, 89, 0.4);
-    --success: #7aae8b;
-    --success-soft: rgba(122, 174, 139, 0.16);
-    --warning: #e0a957;
-    --warning-soft: rgba(224, 169, 87, 0.18);
-    --danger: #d97056;
-    --danger-soft: rgba(217, 112, 86, 0.16);
-    --info: #6b9fc9;
-    --info-soft: rgba(107, 159, 201, 0.16);
-    --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
-    --shadow-sm:
-      0 1px 2px rgba(0, 0, 0, 0.3),
-      0 1px 3px rgba(0, 0, 0, 0.25);
-    --shadow-md:
-      0 2px 4px rgba(0, 0, 0, 0.3),
-      0 4px 12px rgba(0, 0, 0, 0.35);
-    --shadow-lg:
-      0 4px 8px rgba(0, 0, 0, 0.35),
-      0 12px 28px rgba(0, 0, 0, 0.45);
-    --shadow-xl:
-      0 8px 16px rgba(0, 0, 0, 0.4),
-      0 24px 48px rgba(0, 0, 0, 0.55);
-    --graph-bg: #14110d;
-    --graph-grid: rgba(255, 245, 225, 0.04);
-    --graph-label-bg: #2d2823;
-    --graph-label-border: #463f37;
-    --graph-label-fg: #f8f4eb;
-    --graph-edge: rgba(180, 168, 150, 0.45);
-    --graph-edge-dim: rgba(120, 110, 96, 0.22);
-    --graph-edge-focus: rgba(236, 146, 104, 0.95);
-    --graph-node-dim: #4a433a;
-    --graph-node-hidden: rgba(255, 245, 225, 0.04);
-  }
-}
-
-/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --duration-instant: 0ms;
     --duration-fast: 0ms;
+    --duration-normal: 0ms;
     --duration-base: 0ms;
+    --duration-moderate: 0ms;
     --duration-slow: 0ms;
     --duration-slower: 0ms;
   }

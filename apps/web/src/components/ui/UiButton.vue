@@ -113,7 +113,7 @@ const isDisabled = computed(() => props.disabled || props.loading);
 
 .ui-btn--danger {
     background: var(--danger);
-    color: #fff;
+    color: var(--text-primary);
     border-color: var(--danger);
 }
 

@@ -24,7 +24,7 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   SERVER_HOST: z.string().default('0.0.0.0'),
   SERVER_PORT: z.coerce.number().default(3001),
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  CORS_ORIGIN: z.string().default('http://localhost:5174'),
 
   DATABASE_URL: z.string(),
 

@@ -174,7 +174,7 @@ function submit(): void {
     height: 18px;
     border-radius: var(--radius-xs);
     border: 1.5px solid var(--border-strong);
-    color: #fff;
+    color: var(--fg-on-accent);
     flex-shrink: 0;
 }
 

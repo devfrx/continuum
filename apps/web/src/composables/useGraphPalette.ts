@@ -35,18 +35,18 @@ function readVar(name: string, fallback: string): string {
 
 function snapshot(): GraphPalette {
   return {
-    bg: readVar('--graph-bg', '#faf7f2'),
-    grid: readVar('--graph-grid', 'rgba(31,27,22,0.05)'),
-    labelBg: readVar('--graph-label-bg', '#ffffff'),
-    labelBorder: readVar('--graph-label-border', '#e8e1d5'),
-    labelFg: readVar('--graph-label-fg', '#1f1b16'),
-    edge: readVar('--graph-edge', 'rgba(120,110,96,0.55)'),
-    edgeDim: readVar('--graph-edge-dim', 'rgba(155,144,130,0.22)'),
-    edgeFocus: readVar('--graph-edge-focus', 'rgba(201,110,74,0.95)'),
-    nodeDim: readVar('--graph-node-dim', '#d9d2c6'),
-    nodeHidden: readVar('--graph-node-hidden', 'rgba(31,27,22,0.06)'),
-    accent: readVar('--accent', '#c96e4a'),
-    accentSoft: readVar('--accent-soft', 'rgba(201,110,74,0.14)'),
+    bg: readVar('--graph-bg', '#161616'),
+    grid: readVar('--graph-grid', 'rgba(232,220,200,0.03)'),
+    labelBg: readVar('--graph-label-bg', '#232323'),
+    labelBorder: readVar('--graph-label-border', 'rgba(255,255,255,0.06)'),
+    labelFg: readVar('--graph-label-fg', '#EDEDE9'),
+    edge: readVar('--graph-edge', 'rgba(160,155,144,0.45)'),
+    edgeDim: readVar('--graph-edge-dim', 'rgba(95,91,83,0.28)'),
+    edgeFocus: readVar('--graph-edge-focus', 'rgba(232,220,200,0.95)'),
+    nodeDim: readVar('--graph-node-dim', '#323232'),
+    nodeHidden: readVar('--graph-node-hidden', 'rgba(255,255,255,0.04)'),
+    accent: readVar('--accent', '#E8DCC8'),
+    accentSoft: readVar('--accent-soft', 'rgba(232,220,200,0.10)'),
   };
 }
 

@@ -110,7 +110,7 @@ Next steps:
   - Open LM Studio (load chat + embedding models) on http://localhost:1234
   - Optional: start Ollama on http://localhost:11434
   - Run:   pnpm start
-  - Web:   http://localhost:5173
+  - Web:   http://localhost:5174
   - API:   http://localhost:3001/health
   - Check: pnpm check
   Note: use 'pnpm bootstrap' (not 'pnpm setup') to re-run this script.

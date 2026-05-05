@@ -86,7 +86,7 @@ const draftError = ref('');
 const draftBusy = ref(false);
 
 function emptyDraft(): KindDraft {
-  return { id: '', label: '', color: '#9A9286', icon: DEFAULT_KIND_ICON, description: '' };
+  return { id: '', label: '', color: '#A09B90', icon: DEFAULT_KIND_ICON, description: '' };
 }
 
 /** Mirror the server slugify rule for the live id preview. */

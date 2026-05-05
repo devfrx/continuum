@@ -61,7 +61,7 @@ cd ..
 pnpm dev
 ```
 
-The web app is served at <http://localhost:5173>, the API at <http://localhost:3001>.
+The web app is served at <http://localhost:5174>, the API at <http://localhost:3001>.
 
 ## AI configuration
 
