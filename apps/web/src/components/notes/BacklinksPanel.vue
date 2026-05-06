@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { colorForKind } from '@continuum/graph';
 import { UiSection, UiCard, UiBadge, UiEmpty, Icon } from '@/components/ui';
+import { graphDisplayLabel } from '@/utils/graphLabels';
 import type { BacklinkEntry } from '@/api';
 
 defineProps<{
@@ -9,6 +10,10 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{ (e: 'select', id: string): void }>();
+
+function displayTitle(title: string): string {
+    return graphDisplayLabel(title || 'Untitled', 42);
+}
 </script>
 
 <template>
@@ -20,7 +25,7 @@ const emit = defineEmits<{ (e: 'select', id: string): void }>();
                     <div class="row">
                         <span class="dot" :style="{ background: colorForKind(b.kind) }" />
                         <Icon name="connection" :size="14" class="row-ico" />
-                        <span class="link-title">{{ b.title || 'Untitled' }}</span>
+                        <span class="link-title">{{ displayTitle(b.title) }}</span>
                         <UiBadge tone="neutral" size="sm" class="badge">{{ b.kind }}</UiBadge>
                     </div>
                     <p class="snippet">{{ b.snippet }}</p>
@@ -44,7 +49,7 @@ const emit = defineEmits<{ (e: 'select', id: string): void }>();
 
 .card {
     width: 100%;
-    padding: var(--space-5) var(--space-6) !important;
+    padding: var(--space-4) !important;
     gap: var(--space-2) !important;
 }
 
@@ -57,8 +62,8 @@ const emit = defineEmits<{ (e: 'select', id: string): void }>();
 .row {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
-    font-size: var(--text-base);
+    gap: var(--space-3);
+    font-size: var(--text-sm);
     font-weight: var(--font-weight-medium);
 }
 

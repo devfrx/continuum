@@ -55,6 +55,15 @@ interface SearchHit {
   mode: 'semantic' | 'lexical';
 }
 
+function logEmbeddingFailure(log: FastifyBaseLogger, err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/unreachable/i.test(msg)) log.warn({ msg }, 'embedding skipped (no AI provider)');
+  else if (/no embedding model/i.test(msg)) log.warn({ msg }, 'embedding skipped (no embedding model loaded)');
+  else if (/invalid embedding|NaN|null/i.test(msg)) {
+    log.warn({ msg }, 'embedding skipped (invalid embedding model output)');
+  } else log.error({ err }, 'embed failed');
+}
+
 async function folderExists(folderId: string): Promise<boolean> {
   const [target] = await db
     .select({ id: folders.id })
@@ -83,13 +92,7 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
 
     // fire-and-forget embedding generation
     void embedNote(created, app.log).catch((e) => {
-      const msg = e instanceof Error ? e.message : String(e);
-      // Treat "no provider reachable" and "no embedding model loaded" as
-      // expected on chat-only installs (e.g. LM Studio with only a chat
-      // model) — warn rather than error so logs stay clean.
-      if (/unreachable/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no AI provider)');
-      else if (/no embedding model/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no embedding model loaded)');
-      else app.log.error({ err: e }, 'embed failed');
+      logEmbeddingFailure(app.log, e);
     });
 
     // Wikilink sync is awaited so the client immediately sees the new
@@ -122,10 +125,7 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     if (body.content !== undefined || body.title !== undefined || body.tags !== undefined) {
       await db.delete(embeddings).where(eq(embeddings.noteId, id));
       void embedNote(updated, app.log).catch((e) => {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (/unreachable/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no AI provider)');
-        else if (/no embedding model/i.test(msg)) app.log.warn({ msg }, 'embedding skipped (no embedding model loaded)');
-        else app.log.error({ err: e }, 'embed failed');
+        logEmbeddingFailure(app.log, e);
       });
     }
 
@@ -175,6 +175,18 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
         error: 'no-embedding-model',
         message:
           'No reachable provider has an embedding model loaded. Load one (e.g. nomic-embed-text) in your provider UI and try again.',
+      });
+    }
+
+    try {
+      await aiManager.embed('embedding health probe');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(503).send({
+        error: 'invalid-embedding-model',
+        message,
+        hint:
+          'The loaded embedding model returned invalid vectors. Load a different embedding model or update LM Studio, then try again.',
       });
     }
 

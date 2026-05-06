@@ -138,9 +138,9 @@ export class OpenAICompatProvider {
       // similarity scores).
       encoding_format: 'float',
     });
-    return res.data.map((d) => {
+    return res.data.map((d, responseIndex) => {
       const e = d.embedding as unknown;
-      if (Array.isArray(e)) return e as number[];
+      if (Array.isArray(e)) return this.validateEmbeddingVector(e, model, responseIndex);
       // Defensive: decode base64 → Float32Array if a server still ignores
       // encoding_format and returns strings.
       if (typeof e === 'string') {
@@ -148,10 +148,38 @@ export class OpenAICompatProvider {
         const buf = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
         const f = new Float32Array(buf.buffer);
-        return Array.from(f);
+        return this.validateEmbeddingVector(Array.from(f), model, responseIndex);
       }
       throw new Error(`Unexpected embedding payload type: ${typeof e}`);
     });
+  }
+
+  private validateEmbeddingVector(values: unknown[], model: string, responseIndex: number): number[] {
+    if (values.length === 0) {
+      throw new Error(
+        `Provider ${this.config.name} returned an empty embedding vector for model "${model}"`,
+      );
+    }
+
+    const vector: number[] = [];
+    for (let i = 0; i < values.length; i++) {
+      const value = values[i];
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new Error(
+          `Provider ${this.config.name} returned invalid embedding vector for model "${model}" ` +
+            `at response ${responseIndex}, element ${i}: ${this.describeEmbeddingValue(value)}. ` +
+            'The embedding model likely produced NaN values; update LM Studio/SDK or load a different embedding GGUF.',
+        );
+      }
+      vector.push(value);
+    }
+    return vector;
+  }
+
+  private describeEmbeddingValue(value: unknown): string {
+    if (value === null) return 'null';
+    if (typeof value === 'number' && Number.isNaN(value)) return 'NaN';
+    return JSON.stringify(value) ?? String(value);
   }
 
   private ensureTrailingSlash(u: string): string {

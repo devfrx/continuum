@@ -9,11 +9,19 @@
  * in absence of an explicit override.
  */
 import { computed, ref, watch } from 'vue';
-import { UiModal, UiInput, UiButton, UiSelect, Icon } from '@/components/ui';
+import {
+    KIND_ICON_GROUPS,
+    UiButton,
+    UiIconPicker,
+    UiInput,
+    UiModal,
+    UiSelect,
+    Icon,
+    type KindIconGroup,
+} from '@/components/ui';
 import { useKinds } from '@/composables/useKinds';
 import { useFolders, ROOT_FALLBACK } from '@/composables/useFolders';
 import type { Folder, FolderNode } from '@continuum/shared';
-import type { IconName } from '@/components/ui/icons';
 
 const props = defineProps<{
     modelValue: boolean;
@@ -40,6 +48,14 @@ const name = ref('');
 const defaultKind = ref<string>('');
 const icon = ref<string>('');
 const color = ref<string>('');
+
+const FOLDER_ICON_GROUPS: readonly KindIconGroup[] = [
+    {
+        label: 'Folders',
+        icons: ['folder', 'folder-open', 'folder-with-files', 'folder-add', 'folder-favourite', 'inbox'],
+    },
+    ...KIND_ICON_GROUPS,
+];
 
 // Inherited preview = effective values for the parent (create) or the
 // folder's parent (edit). These drive the "(inherits: …)" placeholders.
@@ -81,8 +97,13 @@ function onColorPick(ev: Event): void {
     color.value = (ev.target as HTMLInputElement).value;
 }
 
-/** Effective icon name for the preview chip — falls back to inherited icon. */
-const previewIcon = computed<IconName>(() => (icon.value || inherited.value.icon) as IconName);
+const selectedIcon = computed<string>({
+    get: () => icon.value || inherited.value.icon,
+    set: (value) => {
+        icon.value = value === inherited.value.icon ? '' : value;
+    },
+});
+const iconModeLabel = computed(() => (icon.value ? 'Custom icon' : 'Inherited icon'));
 
 const submitting = ref(false);
 const error = ref<string | null>(null);
@@ -145,15 +166,19 @@ const title = computed(() => (isEdit.value ? 'Edit folder' : 'New folder'));
                 <span class="field__label">Icon</span>
                 <div class="icon-row">
                     <span class="icon-preview" :style="{ color: color || inherited.color }">
-                        <Icon :name="previewIcon" :size="18" />
+                        <Icon :name="selectedIcon" :size="18" />
                     </span>
-                    <UiInput v-model="icon" :placeholder="`(inherits: ${inherited.icon})`" class="icon-input" />
-                    <button type="button" v-if="icon" class="color-clear" title="Clear (inherit)" @click="icon = ''">
+                    <span class="icon-summary">
+                        <strong>{{ iconModeLabel }}</strong>
+                        <span>{{ selectedIcon }}</span>
+                    </span>
+                    <button v-if="icon" type="button" class="color-clear" title="Clear (inherit)" @click="icon = ''">
                         <Icon name="close" :size="12" />
                     </button>
                 </div>
+                <UiIconPicker v-model="selectedIcon" :groups="FOLDER_ICON_GROUPS" :show-preview="false" />
                 <span class="field__hint">
-                    Any icon name from the registry (e.g. <code>folder</code>, <code>kind-character</code>).
+                    Pick an override, or clear it to inherit <code>{{ inherited.icon }}</code>.
                 </span>
             </div>
 
@@ -172,8 +197,8 @@ const title = computed(() => (isEdit.value ? 'Edit folder' : 'New folder'));
         </form>
 
         <template #footer>
-            <UiButton variant="ghost" :disabled="submitting" @click="close">Cancel</UiButton>
-            <UiButton variant="primary" :disabled="!name.trim() || submitting" @click="submit">
+            <UiButton variant="ghost" size="sm" :disabled="submitting" @click="close">Cancel</UiButton>
+            <UiButton variant="primary" size="sm" :disabled="!name.trim() || submitting" @click="submit">
                 {{ submitting ? 'Saving…' : isEdit ? 'Save' : 'Create' }}
             </UiButton>
         </template>
@@ -229,8 +254,33 @@ const title = computed(() => (isEdit.value ? 'Edit folder' : 'New folder'));
     background: var(--bg-soft);
 }
 
-.icon-input {
+.icon-summary {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
     flex: 1;
+}
+
+.icon-summary strong {
+    color: var(--fg);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-semibold);
+}
+
+.icon-summary span {
+    color: var(--fg-subtle);
+    font-size: var(--text-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.field :deep(.ui-icon-picker) {
+    gap: var(--space-4);
+}
+
+.field :deep(.ui-icon-picker__grid) {
+    max-height: 176px;
 }
 
 .form-error {

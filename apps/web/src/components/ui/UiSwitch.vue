@@ -30,9 +30,9 @@ function toggle() {
 .ui-switch {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-5);
+    gap: var(--space-3);
     cursor: pointer;
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
     color: var(--fg);
 }
 

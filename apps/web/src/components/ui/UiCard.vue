@@ -28,10 +28,10 @@ withDefaults(defineProps<Props>(), {
 
 <style scoped>
 .ui-card {
-    background: var(--bg-elev);
+    background: var(--surface-1);
     border: var(--border-width-1) solid var(--border);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
     transition:
         box-shadow var(--duration-base) var(--ease-standard),
         border-color var(--duration-base) var(--ease-standard),
@@ -41,8 +41,8 @@ withDefaults(defineProps<Props>(), {
 }
 
 .ui-card.is-padded {
-    padding: var(--space-12) var(--space-10);
-    gap: var(--space-6);
+    padding: var(--space-6) var(--space-5);
+    gap: var(--space-4);
 }
 
 .ui-card.is-interactive {
@@ -50,28 +50,29 @@ withDefaults(defineProps<Props>(), {
 }
 
 .ui-card.is-interactive:hover {
-    box-shadow: var(--shadow-md);
+    box-shadow: none;
     border-color: var(--border-strong);
+    background: var(--surface-2);
 }
 
 .ui-card__header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-6);
+    gap: var(--space-4);
 }
 
 .ui-card__body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    gap: var(--space-4);
 }
 
 .ui-card__footer {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: var(--space-4);
-    padding-top: var(--space-2);
+    gap: var(--space-3);
+    padding-top: var(--space-1);
 }
 </style>

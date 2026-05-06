@@ -298,7 +298,8 @@ onBeforeUnmount(() => {
     color: var(--fg);
     font: inherit;
     font-size: var(--text-base);
-    padding: var(--space-3);
+    min-height: 34px;
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
     text-align: left;
     transition:
@@ -331,6 +332,7 @@ onBeforeUnmount(() => {
 .ui-select--bare .ui-select__trigger {
     background: transparent;
     border-color: transparent;
+    min-height: 28px;
     padding: var(--space-1) var(--space-2);
     font-size: var(--text-sm);
 }
@@ -431,7 +433,7 @@ onBeforeUnmount(() => {
 }
 
 .ui-select__empty {
-    padding: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     color: var(--fg-subtle);
     font-size: var(--text-sm);
     text-align: center;

@@ -58,20 +58,35 @@ const openPath = ref<string[]>([]);
 /** Index of the focused item per menu level. */
 const focusIndex = ref<number[]>([0]);
 
-const rootStyle = ref<{ top: string; left: string; minWidth: string }>({
-    top: '0px', left: '0px', minWidth: `${props.minWidth}px`,
+const rootStyle = ref<{ top: string; left: string; minWidth: string; maxHeight: string }>({
+    top: '0px', left: '0px', minWidth: `${props.minWidth}px`, maxHeight: '70vh',
 });
+
+function viewportBounds(): { left: number; top: number; width: number; height: number } {
+    const viewport = window.visualViewport;
+    return {
+        left: viewport?.offsetLeft ?? 0,
+        top: viewport?.offsetTop ?? 0,
+        width: viewport?.width ?? window.innerWidth,
+        height: viewport?.height ?? window.innerHeight,
+    };
+}
 
 function clampPosition(x: number, y: number, w: number, h: number) {
     const pad = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const viewport = viewportBounds();
+    const maxLeft = viewport.left + Math.max(pad, viewport.width - w - pad);
+    const maxTop = viewport.top + Math.max(pad, viewport.height - h - pad);
     // Floor at `pad` so the panel never escapes off the top/left even when
     // the content is taller/wider than the viewport (in which case the
     // panel's own internal scroll handles overflow).
-    const left = Math.max(pad, Math.min(x, Math.max(pad, vw - w - pad)));
-    const top = Math.max(pad, Math.min(y, Math.max(pad, vh - h - pad)));
+    const left = Math.max(viewport.left + pad, Math.min(x, maxLeft));
+    const top = Math.max(viewport.top + pad, Math.min(y, maxTop));
     return { top, left };
+}
+
+function panelMaxHeight(): string {
+    return `${Math.max(160, viewportBounds().height - 16)}px`;
 }
 
 async function reposition() {
@@ -84,6 +99,7 @@ async function reposition() {
         top: `${top}px`,
         left: `${left}px`,
         minWidth: `${props.minWidth}px`,
+        maxHeight: panelMaxHeight(),
     };
 }
 
@@ -203,8 +219,9 @@ function onBackdropPointerDown(e: PointerEvent) {
     if (root.contains(e.target as Node)) return;
     // Also check submenu panels rendered as siblings via the same teleport.
     const panels = document.querySelectorAll('.ui-context-menu__panel');
-    for (const p of panels) {
-        if (p.contains(e.target as Node)) return;
+    const target = e.target as Node;
+    for (let index = 0; index < panels.length; index += 1) {
+        if (panels[index]?.contains(target)) return;
     }
     close();
 }
@@ -267,16 +284,17 @@ function computeSubmenuPosition(level: number, id: string, h: number): { top: st
     );
     if (!row) return null;
     const pad = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const viewport = viewportBounds();
     const w = props.minWidth;
     const rect = row.getBoundingClientRect();
-    const left = rect.right + 4 + w > vw - pad
-        ? Math.max(pad, rect.left - w - 4)
+    const viewportRight = viewport.left + viewport.width;
+    const viewportBottom = viewport.top + viewport.height;
+    const left = rect.right + 4 + w > viewportRight - pad
+        ? Math.max(viewport.left + pad, rect.left - w - 4)
         : rect.right + 4;
     // Default: align top with parent row. Then clamp so bottom fits.
     let top = rect.top;
-    if (top + h > vh - pad) top = Math.max(pad, vh - pad - h);
+    if (top + h > viewportBottom - pad) top = Math.max(viewport.top + pad, viewportBottom - pad - h);
     return { top: `${top}px`, left: `${left}px` };
 }
 
@@ -315,7 +333,7 @@ watch(openPath, () => { if (props.modelValue) repositionSubmenus(); }, { deep: t
         <Transition name="ui-cm">
             <div v-if="modelValue" ref="rootRef" class="ui-context-menu ui-context-menu__panel" role="menu"
                 :style="rootStyle">
-                <template v-for="(item, idx) in items" :key="item.id">
+                <div v-for="(item, idx) in items" :key="item.id" class="ui-cm__item">
                     <div v-if="item.divider" class="ui-cm__divider" role="separator" />
                     <div v-else-if="item.header" class="ui-cm__header">{{ item.label }}</div>
                     <button v-else type="button" class="ui-cm__row" role="menuitem" :data-cm-level="0"
@@ -338,19 +356,20 @@ watch(openPath, () => { if (props.modelValue) repositionSubmenus(); }, { deep: t
                             <Icon name="chevron-right" :size="12" />
                         </span>
                     </button>
-                </template>
+                </div>
             </div>
 
             <!-- Submenu panels: one per open level -->
         </Transition>
 
-        <template v-for="(id, level) in openPath" :key="`sub-${level}-${id}`">
-            <div v-if="modelValue" class="ui-context-menu ui-context-menu__panel" role="menu"
+        <div v-for="(id, level) in openPath" v-show="modelValue" :key="`sub-${level}-${id}`"
+            class="ui-context-menu ui-context-menu__panel" role="menu"
                 :data-cm-panel="`${level + 1}:${id}`" :style="{
                     ...subStyles[`${level}:${id}`],
                     minWidth: `${minWidth}px`,
+                    maxHeight: panelMaxHeight(),
                 }">
-                <template v-for="(item, idx) in visibleItems(level + 1)" :key="item.id">
+                <div v-for="(item, idx) in visibleItems(level + 1)" :key="item.id" class="ui-cm__item">
                     <div v-if="item.divider" class="ui-cm__divider" role="separator" />
                     <div v-else-if="item.header" class="ui-cm__header">{{ item.label }}</div>
                     <button v-else type="button" class="ui-cm__row" role="menuitem" :data-cm-level="level + 1"
@@ -374,9 +393,8 @@ watch(openPath, () => { if (props.modelValue) repositionSubmenus(); }, { deep: t
                             <Icon name="chevron-right" :size="12" />
                         </span>
                     </button>
-                </template>
+                </div>
             </div>
-        </template>
     </Teleport>
 </template>
 
@@ -394,8 +412,12 @@ watch(openPath, () => { if (props.modelValue) repositionSubmenus(); }, { deep: t
     box-shadow: var(--shadow-lg, var(--shadow-md));
     font-size: var(--text-sm);
     color: var(--fg);
-    max-height: 70vh;
+    max-height: min(70vh, var(--ui-context-menu-max-height, 70vh));
     overflow-y: auto;
+}
+
+.ui-cm__item {
+    display: contents;
 }
 
 .ui-cm__row {

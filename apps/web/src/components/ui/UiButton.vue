@@ -56,20 +56,21 @@ const isDisabled = computed(() => props.disabled || props.loading);
         background-color var(--duration-fast) var(--ease-standard),
         border-color var(--duration-fast) var(--ease-standard),
         color var(--duration-fast) var(--ease-standard),
-        box-shadow var(--duration-fast) var(--ease-standard),
-        transform var(--duration-fast) var(--ease-standard);
+        box-shadow var(--duration-fast) var(--ease-standard);
     text-decoration: none;
     user-select: none;
     white-space: nowrap;
 }
 
 .ui-btn--md {
-    padding: var(--space-4) var(--space-7);
+    min-height: 34px;
+    padding: 0 var(--space-6);
     font-size: var(--text-base);
 }
 
 .ui-btn--sm {
-    padding: var(--space-2) var(--space-5);
+    min-height: 28px;
+    padding: 0 var(--space-4);
     font-size: var(--text-sm);
 }
 
@@ -107,13 +108,13 @@ const isDisabled = computed(() => props.disabled || props.loading);
 }
 
 .ui-btn--ghost:hover:not(:disabled) {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--surface-hover);
+    color: var(--fg-strong);
 }
 
 .ui-btn--danger {
     background: var(--danger);
-    color: var(--text-primary);
+    color: #fff;
     border-color: var(--danger);
 }
 

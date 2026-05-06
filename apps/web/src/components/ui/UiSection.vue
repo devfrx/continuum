@@ -23,7 +23,7 @@ defineProps<Props>();
 .ui-section {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--space-4);
 }
 
 .ui-section__head {
@@ -43,7 +43,7 @@ defineProps<Props>();
 
 .ui-section__desc {
     margin: 0;
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
     color: var(--fg-muted);
     line-height: var(--leading-normal);
 }
@@ -51,6 +51,6 @@ defineProps<Props>();
 .ui-section__body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--space-4);
 }
 </style>

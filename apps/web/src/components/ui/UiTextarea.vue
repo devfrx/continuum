@@ -59,9 +59,9 @@ function onInput(e: Event) {
     color: var(--fg);
     font: inherit;
     font-size: var(--text-base);
-    padding: var(--space-5) var(--space-6);
+    padding: var(--space-3) var(--space-4);
     resize: vertical;
-    min-height: 60px;
+    min-height: 52px;
     line-height: var(--leading-normal);
 }
 

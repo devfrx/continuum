@@ -135,7 +135,7 @@ function removeTag(tag: string): void {
     border: none;
     outline: none;
     color: var(--fg-strong);
-    font-size: var(--text-3xl);
+    font-size: var(--text-2xl);
     font-weight: var(--font-weight-semibold);
     letter-spacing: var(--tracking-tight);
     padding: 0;

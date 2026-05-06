@@ -13,13 +13,13 @@ export type LinkType = 'wikilink' | 'related' | string;
  * Base node radius (graph units). Sized for legibility at typical zoom
  * with labels sitting comfortably below.
  */
-export const NODE_BASE_SIZE = 20;
+export const NODE_BASE_SIZE = 13;
 /** Extra radius per edge (sqrt-scaled) so hubs are visibly larger. */
-export const NODE_DEGREE_SCALE = 3.2;
+export const NODE_DEGREE_SCALE = 2.2;
 
 /** Subtle light rim that reads on the dark canvas without overpowering the kind colour. */
 export const NODE_BORDER_COLOR = 'rgba(255, 255, 255, 0.18)';
-export const NODE_BORDER_PIXELS = 1.25;
+export const NODE_BORDER_PIXELS = 1;
 
 /**
  * Dim / hidden fallbacks used when no palette is provided. They are dark
@@ -34,13 +34,13 @@ export const HIDDEN_EDGE_COLOR = 'rgba(0, 0, 0, 0)';
 export const ACCENT_EDGE_COLOR = 'rgba(232, 220, 200, 0.95)';
 
 export const EDGE_STYLES: Record<string, { color: string; size: number }> = {
-  wikilink: { color: 'rgba(232, 220, 200, 0.55)', size: 1.8 },
-  related: { color: 'rgba(160, 155, 144, 0.40)', size: 1.4 },
+  wikilink: { color: 'rgba(232, 220, 200, 0.42)', size: 0.82 },
+  related: { color: 'rgba(160, 155, 144, 0.32)', size: 0.72 },
 };
 
 export const FALLBACK_EDGE_STYLE = {
-  color: 'rgba(160, 155, 144, 0.45)',
-  size: 1.2,
+  color: 'rgba(160, 155, 144, 0.32)',
+  size: 0.72,
 };
 
 export function edgeStyleFor(linkType: LinkType): { color: string; size: number } {

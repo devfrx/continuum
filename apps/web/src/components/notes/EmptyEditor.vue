@@ -12,8 +12,8 @@ const emit = defineEmits<{ (e: 'create'): void }>();
             </div>
             <div class="empty-editor__copy">
                 <span class="empty-editor__eyebrow">Notebook</span>
-                <h2>Start with a named note.</h2>
-                <p>Choose its kind and destination first, then write into a clean editor.</p>
+                <h2>No note selected</h2>
+                <p>Select a note or create a new one.</p>
             </div>
             <UiButton variant="primary" @click="emit('create')">
                 <template #icon-left>
@@ -46,11 +46,11 @@ const emit = defineEmits<{ (e: 'create'): void }>();
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 56px;
-    height: 56px;
+    width: 48px;
+    height: 48px;
     border-radius: var(--radius-md);
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--surface-1);
+    color: var(--fg-muted);
     border: var(--border-width-1) solid var(--border);
 }
 

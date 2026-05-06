@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { colorForKind } from '@continuum/graph';
 import { UiSection, UiChip, UiEmpty } from '@/components/ui';
+import { graphDisplayLabel } from '@/utils/graphLabels';
 import type { Note } from '@continuum/shared';
 
 const props = defineProps<{
@@ -11,29 +12,41 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'select', id: string): void }>();
 
-const WIKILINK_RE = /\[\[([^\]\n|]+)(?:\|[^\]]*)?\]\]/g;
+const WIKILINK_RE = /(\\)?\[\[([^\n]+?)\]\]/g;
 
 interface LinkRef {
     name: string;
     note: Note | null;
 }
 
+function parseWikilink(payload: string): { target: string; label: string } | null {
+    const separator = payload.indexOf('|');
+    const target = (separator >= 0 ? payload.slice(0, separator) : payload).trim();
+    const label = (separator >= 0 ? payload.slice(separator + 1) : target).trim();
+    if (!target) return null;
+    return { target, label: label || target };
+}
+
 const links = computed<LinkRef[]>(() => {
     const text = props.content || '';
     const seen = new Set<string>();
-    const out: string[] = [];
+    const out: Array<{ target: string; label: string }> = [];
     let m: RegExpExecArray | null;
     WIKILINK_RE.lastIndex = 0;
     while ((m = WIKILINK_RE.exec(text)) !== null) {
-        const name = m[1].trim();
-        if (!name) continue;
-        const key = name.toLowerCase();
+        if (m[1]) continue;
+        const parsed = parseWikilink(m[2] ?? '');
+        if (!parsed) continue;
+        const key = parsed.target.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push(name);
+        out.push(parsed);
     }
     const byTitle = new Map(props.notes.map((n) => [n.title.toLowerCase(), n]));
-    return out.map((name) => ({ name, note: byTitle.get(name.toLowerCase()) ?? null }));
+    return out.map(({ target, label }) => {
+        const note = byTitle.get(target.toLowerCase()) ?? null;
+        return { name: graphDisplayLabel(note?.title ?? label, 42), note };
+    });
 });
 </script>
 

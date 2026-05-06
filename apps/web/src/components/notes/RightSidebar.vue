@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { UiButton, UiEmpty, Icon } from '@/components/ui';
+import { UiButton, Icon } from '@/components/ui';
 import BacklinksPanel from './BacklinksPanel.vue';
 import LinkedNotesPanel from './LinkedNotesPanel.vue';
 import TagsPanel from './TagsPanel.vue';
@@ -40,7 +40,7 @@ function toggle(): void { emit('update:collapsed', !props.collapsed); }
                 <BacklinksPanel :backlinks="backlinks" :loading="backlinksLoading" @select="onSelect" />
                 <TagsPanel :tags="note.tags ?? []" />
             </template>
-            <UiEmpty v-else title="No note selected" description="Select a note from the sidebar to see its details." />
+            <p v-else class="empty-details">No selection</p>
         </div>
     </aside>
 </template>
@@ -49,7 +49,7 @@ function toggle(): void { emit('update:collapsed', !props.collapsed); }
 .right-sidebar {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--space-4);
     height: 100%;
     min-height: 0;
 }
@@ -85,8 +85,15 @@ function toggle(): void { emit('update:collapsed', !props.collapsed); }
 .body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-8);
+    gap: var(--space-5);
     overflow: auto;
     min-height: 0;
+}
+
+.empty-details {
+    margin: 0;
+    padding: var(--space-2) 0;
+    color: var(--fg-subtle);
+    font-size: var(--text-sm);
 }
 </style>

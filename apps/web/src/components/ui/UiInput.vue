@@ -73,7 +73,7 @@ function onInput(e: Event) {
 .ui-input__icon {
     display: inline-flex;
     align-items: center;
-    padding-left: var(--space-5);
+    padding-left: var(--space-4);
     color: var(--fg-subtle);
 }
 
@@ -89,11 +89,11 @@ function onInput(e: Event) {
 }
 
 .ui-input--md input {
-    padding: var(--space-4) var(--space-6);
+    padding: var(--space-3) var(--space-4);
 }
 
 .ui-input--sm input {
-    padding: var(--space-3) var(--space-5);
+    padding: var(--space-2) var(--space-3);
     font-size: var(--text-sm);
 }
 
@@ -104,7 +104,7 @@ function onInput(e: Event) {
 .ui-input__trailing {
     display: inline-flex;
     align-items: center;
-    padding-right: var(--space-5);
+    padding-right: var(--space-4);
     color: var(--fg-subtle);
 }
 

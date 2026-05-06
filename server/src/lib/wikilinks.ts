@@ -3,9 +3,11 @@
  *
  * A wikilink uses the `[[Title]]` or `[[Title|alias]]` syntax. Escaped
  * sequences (`\[\[...]]`) are intentionally ignored so authors can opt out.
+ * Titles may contain single square brackets; only the closing `]]` terminates
+ * the link.
  */
 
-const WIKILINK_RE = /(\\)?\[\[([^\[\]\n]+?)\]\]/g;
+const WIKILINK_RE = /(\\)?\[\[([^\n]+?)\]\]/g;
 
 /**
  * Extract unique wikilink target titles from a body of text.

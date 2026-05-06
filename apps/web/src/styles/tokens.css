@@ -66,11 +66,11 @@
   --text-base: 0.82rem;
   --text-md: 0.9rem;
   --text-lg: 1rem;
-  --text-xl: 1.3rem;
-  --text-2xl: 1.6rem;
-  --text-3xl: 3rem;
-  --text-4xl: 3rem;
-  --text-5xl: 3rem;
+  --text-xl: 1.16rem;
+  --text-2xl: 1.38rem;
+  --text-3xl: 2.05rem;
+  --text-4xl: 2.35rem;
+  --text-5xl: 2.65rem;
 
   --weight-light: 200;
   --weight-normal: 400;
@@ -89,12 +89,12 @@
   --leading-relaxed: 1.55;
   --leading-loose: 1.6;
 
-  --tracking-tight: 0.02em;
-  --tracking-snug: 0.02em;
-  --tracking-normal: 0.04em;
-  --tracking-wide: 0.06em;
-  --tracking-wider: 0.25em;
-  --tracking-widest: 0.35em;
+  --tracking-tight: 0;
+  --tracking-snug: 0;
+  --tracking-normal: 0;
+  --tracking-wide: 0;
+  --tracking-wider: 0;
+  --tracking-widest: 0;
 
   /* Opacity and blur from Alice */
   --opacity-disabled: 0.3;

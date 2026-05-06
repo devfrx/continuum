@@ -28,6 +28,7 @@ import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import * as THREE from 'three';
 import type { GraphEdge, GraphNode } from '@continuum/shared';
 import { useGraphPalette, type GraphPalette } from '@/composables/useGraphPalette';
+import { graphDisplayLabel } from '@/utils/graphLabels';
 
 export interface SelectedInfo {
     id: string;
@@ -46,11 +47,8 @@ interface Props {
     highlightedIds: Set<string>;
     searchQuery: string;
     selectedId: string | null;
-    focusMode: boolean;
 }
-const props = withDefaults(defineProps<Props>(), {
-    focusMode: false,
-});
+const props = defineProps<Props>();
 
 const emit = defineEmits<{
     select: [info: SelectedInfo | null];
@@ -60,7 +58,7 @@ const emit = defineEmits<{
     ready: [];
 }>();
 
-defineExpose({ zoom, zoomToFit, homeView });
+defineExpose({ zoom, zoomToFit, homeView, focusNode, viewAlongAxis });
 
 // ---------- Internal state ----------
 
@@ -81,6 +79,11 @@ interface RtNode extends GraphNode {
 type AxisKey = 'x' | 'y' | 'z';
 type CoordinateSnapshot = Partial<Record<AxisKey, number>>;
 type PositionSnapshot = Record<AxisKey, number>;
+interface GraphObject3D extends THREE.Object3D {
+    __graphObjType?: 'node' | 'link';
+    __data?: RtNode | RtLink;
+}
+
 interface FixedPositionSnapshot {
     fx: number | undefined;
     fy: number | undefined;
@@ -91,6 +94,14 @@ interface CascadeDragNodeSnapshot {
     position: PositionSnapshot;
     fixed: FixedPositionSnapshot;
     depth: number;
+    parentId: string | null;
+    tetherLength: number;
+}
+
+interface CascadeDragTraversal {
+    depth: number;
+    parentId: string | null;
+    tetherLength: number;
 }
 
 interface CascadeDragSession {
@@ -129,6 +140,9 @@ const hoveredId = ref<string | null>(null);
 let lastClick: { id: string; t: number } | null = null;
 let fitTimer: number | null = null;
 let cascadeDrag: CascadeDragSession | null = null;
+let suppressRightPointerEnd = false;
+let activeAxisLock: AxisKey | null = null;
+const axisLockStack: AxisKey[] = [];
 
 /**
  * Watches the host element and forwards every size change to the
@@ -141,23 +155,29 @@ let resizeObserver: ResizeObserver | null = null;
 let referenceFrame: THREE.Group | null = null;
 let dragGuide: DragGuide | null = null;
 
-const REFERENCE_FRAME_SIZE = 280;
-const REFERENCE_FRAME_DIVISIONS = 14;
+const REFERENCE_FRAME_SIZE = 4000;
+const REFERENCE_FRAME_DIVISIONS = 200;
 const REFERENCE_PLANE_Y = 0;
-const REFERENCE_AXIS_LENGTH = 92;
+const REFERENCE_AXIS_MIN_LENGTH = 160;
+const REFERENCE_AXIS_MAX_LENGTH = 900;
 const INITIAL_LAYOUT_COOLDOWN_MS = 2800;
 const INITIAL_LAYOUT_TICKS = 220;
 const INITIAL_LAYOUT_WARMUP_TICKS = 80;
 const RUNTIME_RENDER_TICKS = 1;
 const RUNTIME_RENDER_MS = 260;
-const CHARGE_STRENGTH = -34;
+const CHARGE_STRENGTH = -68;
 const CHARGE_DISTANCE_MIN = 7;
-const CHARGE_DISTANCE_MAX = 96;
-const LINK_DISTANCE = 26;
-const CASCADE_DEPTH_FALLOFF = 0.62;
-const CASCADE_MIN_INFLUENCE = 0.12;
+const CHARGE_DISTANCE_MAX = 180;
+const LINK_DISTANCE = 44;
+const CASCADE_TETHER_SLACK = 18;
+const CASCADE_TETHER_DEPTH_SLACK = 5;
 const DRAG_GUIDE_AXIS_LENGTH = 48;
 const DRAG_GUIDE_ACTIVE_THRESHOLD = 2.5;
+const AXIS_LOCK_KEYS: Record<string, AxisKey> = {
+    x: 'x',
+    y: 'y',
+    z: 'z',
+};
 
 // ---------- Theme-reactive palette ----------
 // Read from CSS custom properties so the 3D canvas (background, label
@@ -213,25 +233,53 @@ function disposeObject(object: THREE.Object3D): void {
 
 function makeReferenceLabel(text: string, color: THREE.Color): THREE.Sprite | null {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const size = 24;
+    const size = 34;
+    const center = size / 2;
     const canvas = document.createElement('canvas');
     canvas.width = size * dpr;
     canvas.height = size * dpr;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     ctx.scale(dpr, dpr);
+
+    const axis = color.getStyle();
+    const ink = p().labelFg;
+    const shell = cssWithAlpha(p().labelBg, 0.76);
+    const glow = cssWithAlpha(axis, 0.18);
+
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = 8;
     ctx.beginPath();
-    ctx.arc(size / 2, size / 2, 10, 0, Math.PI * 2);
-    ctx.fillStyle = cssWithAlpha(p().labelBg, 0.88);
+    ctx.arc(center, center, 13.5, 0, Math.PI * 2);
+    ctx.fillStyle = glow;
     ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = color.getStyle();
+
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.arc(center, center, 11.5, 0, Math.PI * 2);
+    ctx.fillStyle = shell;
+    ctx.fill();
+
+    ctx.lineWidth = 1.15;
+    ctx.strokeStyle = cssWithAlpha(axis, 0.78);
     ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(center, center, 15.2, -Math.PI * 0.62, Math.PI * 0.18);
+    ctx.strokeStyle = cssWithAlpha(axis, 0.52);
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(center, center, 3.1, 0, Math.PI * 2);
+    ctx.fillStyle = cssWithAlpha(axis, 0.18);
+    ctx.fill();
+
     ctx.font = '700 11px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = p().labelFg;
-    ctx.fillText(text, size / 2, size / 2 + 0.5);
+    ctx.fillStyle = ink;
+    ctx.fillText(text, center, center + 0.35);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
@@ -243,41 +291,142 @@ function makeReferenceLabel(text: string, color: THREE.Color): THREE.Sprite | nu
         depthTest: false,
         toneMapped: false,
     }));
-    sprite.scale.set(10, 10, 1);
+    sprite.scale.set(9, 9, 1);
     sprite.renderOrder = 20;
     return sprite;
+}
+
+/**
+ * Build a faux-infinite ground grid by subdividing each line and applying a
+ * radial alpha falloff via vertex colors. Lines fade smoothly toward the
+ * outer edges so the plane reads as boundless without hard borders.
+ */
+function makeInfiniteGrid(size: number, divisions: number, color: THREE.Color): THREE.LineSegments {
+    const half = size / 2;
+    const step = size / divisions;
+    const SUB = 24;
+    const subStep = size / SUB;
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const fade = (d: number): number => {
+        const t = Math.max(0, Math.min(1, d / half));
+        return Math.pow(1 - t, 1.7);
+    };
+    const push = (x: number, z: number): void => {
+        positions.push(x, 0, z);
+        const a = fade(Math.hypot(x, z));
+        colors.push(color.r * a, color.g * a, color.b * a);
+    };
+    for (let i = 0; i <= divisions; i++) {
+        const v = -half + i * step;
+        for (let s = 0; s < SUB; s++) {
+            const x0 = -half + s * subStep;
+            const x1 = x0 + subStep;
+            push(x0, v);
+            push(x1, v);
+        }
+        for (let s = 0; s < SUB; s++) {
+            const z0 = -half + s * subStep;
+            const z1 = z0 + subStep;
+            push(v, z0);
+            push(v, z1);
+        }
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const mat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.1,
+        depthWrite: false,
+    });
+    return new THREE.LineSegments(geom, mat);
+}
+
+function referenceAxisLength(): number {
+    let farthest = 0;
+    for (const node of nodesById.values()) {
+        const position = finitePositionOf(node);
+        if (!position) continue;
+        farthest = Math.max(
+            farthest,
+            Math.abs(position.x),
+            Math.abs(position.y - REFERENCE_PLANE_Y),
+            Math.abs(position.z),
+        );
+    }
+    const countBased = Math.sqrt(Math.max(1, nodesById.size)) * 54;
+    return Math.max(
+        REFERENCE_AXIS_MIN_LENGTH,
+        Math.min(REFERENCE_AXIS_MAX_LENGTH, Math.max(farthest + 96, countBased)),
+    );
+}
+
+function makeAxisRail(axis: 'x' | 'z', length: number, color: THREE.Color): THREE.Line {
+    const positions = axis === 'x'
+        ? new Float32Array([-length, REFERENCE_PLANE_Y + 0.4, 0, length, REFERENCE_PLANE_Y + 0.4, 0])
+        : new Float32Array([0, REFERENCE_PLANE_Y + 0.4, -length, 0, REFERENCE_PLANE_Y + 0.4, length]);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.055,
+        depthTest: false,
+        depthWrite: false,
+    });
+    const line = new THREE.Line(geometry, material);
+    line.renderOrder = 55;
+    line.frustumCulled = false;
+    return line;
 }
 
 function makeReferenceFrame(): THREE.Group {
     const group = new THREE.Group();
     group.name = 'continuum-reference-frame';
-    const grid = new THREE.GridHelper(
+    const axisLength = referenceAxisLength();
+    const xColor = cssToThreeColor('#c16f5f');
+    const yColor = cssToThreeColor('#b9b2a5');
+    const zColor = cssToThreeColor('#6f91b8');
+    const grid = makeInfiniteGrid(
         REFERENCE_FRAME_SIZE,
         REFERENCE_FRAME_DIVISIONS,
-        cssToThreeColor(p().edgeFocus),
         cssToThreeColor(p().grid || p().edgeDim),
     );
     grid.position.y = REFERENCE_PLANE_Y;
     grid.renderOrder = -10;
-    const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
-    for (const material of gridMaterials) {
-        material.transparent = true;
-        material.opacity = 0.34;
-        material.depthWrite = false;
-    }
     group.add(grid);
+    group.add(makeAxisRail('x', axisLength, xColor));
+    group.add(makeAxisRail('z', axisLength, zColor));
 
     const origin = new THREE.Vector3(0, REFERENCE_PLANE_Y + 0.6, 0);
-    const axis = (name: string, dir: THREE.Vector3, color: THREE.Color, length = REFERENCE_AXIS_LENGTH): void => {
-        group.add(new THREE.ArrowHelper(dir, origin, length, color, 7, 4));
-        const label = makeReferenceLabel(name, color);
-        if (!label) return;
-        label.position.copy(origin).add(dir.clone().multiplyScalar(length + 10));
-        group.add(label);
+    const axis = (
+        name: string,
+        dir: THREE.Vector3,
+        color: THREE.Color,
+        length = axisLength,
+        opacity = 0.16,
+    ): void => {
+        const arrow = new THREE.ArrowHelper(dir, origin, length, color, 6, 3.2);
+        arrow.renderOrder = 65;
+        const lineMat = arrow.line.material as THREE.LineBasicMaterial;
+        lineMat.transparent = true;
+        lineMat.opacity = opacity;
+        lineMat.depthTest = false;
+        lineMat.depthWrite = false;
+        const coneMat = arrow.cone.material as THREE.MeshBasicMaterial;
+        coneMat.transparent = true;
+        coneMat.opacity = Math.min(0.28, opacity + 0.08);
+        coneMat.depthTest = false;
+        coneMat.depthWrite = false;
+        arrow.line.renderOrder = 66;
+        arrow.cone.renderOrder = 67;
+        group.add(arrow);
     };
-    axis('X', new THREE.Vector3(1, 0, 0), cssToThreeColor(p().accent));
-    axis('Y', new THREE.Vector3(0, 1, 0), cssToThreeColor(p().labelFg), REFERENCE_AXIS_LENGTH * 0.8);
-    axis('Z', new THREE.Vector3(0, 0, 1), cssToThreeColor(p().edgeFocus));
+    axis('X', new THREE.Vector3(1, 0, 0), xColor);
+    axis('Y', new THREE.Vector3(0, 1, 0), yColor, Math.min(180, axisLength * 0.38), 0.13);
+    axis('Z', new THREE.Vector3(0, 0, 1), zColor);
     return group;
 }
 
@@ -304,11 +453,11 @@ function configureInitialLayoutForces(instance: ForceGraph3DInstance): void {
     const link = instance.d3Force('link') as unknown as LinkForce3D | undefined;
     link
         ?.distance(LINK_DISTANCE)
-        .strength(0.72)
+        .strength(0.46)
         .iterations(2);
 
     const center = instance.d3Force('center') as unknown as CenterForce3D | undefined;
-    center?.strength(0.18);
+    center?.strength(0.08);
 
     instance
         .numDimensions(3)
@@ -423,6 +572,7 @@ function setGuideOpacity(bundle: GuideLineBundle, opacity: number): void {
 }
 
 function activeAxisFor(delta: THREE.Vector3): AxisKey | null {
+    if (activeAxisLock) return activeAxisLock;
     const values: Record<AxisKey, number> = {
         x: Math.abs(delta.x),
         y: Math.abs(delta.y),
@@ -437,6 +587,97 @@ function activeAxisFor(delta: THREE.Vector3): AxisKey | null {
 function componentOpacity(length: number, active: boolean): number {
     if (length < 1) return 0.08;
     return active ? 0.95 : 0.38 + Math.min(0.28, length / 180);
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    return !!element
+        && (element.isContentEditable
+            || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(element.tagName));
+}
+
+function axisForKeyboardEvent(event: KeyboardEvent): AxisKey | null {
+    return AXIS_LOCK_KEYS[event.key.toLowerCase()] ?? null;
+}
+
+function pushAxisLock(axis: AxisKey): void {
+    const existingIndex = axisLockStack.indexOf(axis);
+    if (existingIndex >= 0) axisLockStack.splice(existingIndex, 1);
+    axisLockStack.push(axis);
+    activeAxisLock = axis;
+}
+
+function releaseAxisLock(axis: AxisKey): void {
+    const existingIndex = axisLockStack.indexOf(axis);
+    if (existingIndex >= 0) axisLockStack.splice(existingIndex, 1);
+    activeAxisLock = axisLockStack.length > 0
+        ? axisLockStack[axisLockStack.length - 1]
+        : null;
+}
+
+function clearAxisLocks(): void {
+    axisLockStack.length = 0;
+    activeAxisLock = null;
+}
+
+function constrainPositionToAxis(
+    position: PositionSnapshot,
+    origin: THREE.Vector3,
+    axis: AxisKey,
+): PositionSnapshot {
+    return {
+        x: axis === 'x' ? position.x : origin.x,
+        y: axis === 'y' ? position.y : origin.y,
+        z: axis === 'z' ? position.z : origin.z,
+    };
+}
+
+function applyActiveAxisLockToDraggedNode(node: RtNode): void {
+    const session = cascadeDrag;
+    if (!session || !activeAxisLock) return;
+    const current = positionSnapshot(node);
+    const constrained = constrainPositionToAxis(current, session.origin, activeAxisLock);
+    setNodePosition(node, constrained, true);
+}
+
+function refreshActiveDrag(): void {
+    const session = cascadeDrag;
+    if (!session) return;
+    const node = nodesById.get(session.draggedId);
+    if (!node) return;
+    applyActiveAxisLockToDraggedNode(node);
+    applyCascadeDrag(node);
+    if (!dragGuide) showDragGuide(node);
+    if (dragGuide) updateDragGuide(dragGuide, vectorOf(node));
+    requestPositionRender();
+}
+
+function onAxisKeyDown(event: KeyboardEvent): void {
+    if (isEditableKeyboardTarget(event.target)) return;
+    const axis = axisForKeyboardEvent(event);
+    if (!axis) return;
+    if (event.repeat && activeAxisLock === axis) {
+        if (cascadeDrag) event.preventDefault();
+        return;
+    }
+    pushAxisLock(axis);
+    if (!cascadeDrag) return;
+    event.preventDefault();
+    refreshActiveDrag();
+}
+
+function onAxisKeyUp(event: KeyboardEvent): void {
+    const axis = axisForKeyboardEvent(event);
+    if (!axis) return;
+    releaseAxisLock(axis);
+    if (!cascadeDrag) return;
+    event.preventDefault();
+    refreshActiveDrag();
+}
+
+function onWindowBlur(): void {
+    clearAxisLocks();
+    refreshActiveDrag();
 }
 
 function makeDragGuide(origin: THREE.Vector3): DragGuide {
@@ -602,16 +843,106 @@ function restoreNavigationControlsSoon(): void {
     window.setTimeout(() => graph.value?.enableNavigationControls(true), 0);
 }
 
-function connectedDepthsFrom(root: RtNode): Map<string, number> {
-    const depths = new Map<string, number>([[root.id, 0]]);
+function graphObjectFromEvent(event: MouseEvent | PointerEvent): GraphObject3D | null {
+    const g = graph.value;
+    if (!g) return null;
+    const renderer = g.renderer();
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    const pointer = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, g.camera() as THREE.Camera);
+    const hits = raycaster.intersectObjects(g.scene().children, true);
+    for (const hit of hits) {
+        let current: THREE.Object3D | null = hit.object;
+        while (current) {
+            const candidate = current as GraphObject3D;
+            if (candidate.__graphObjType) return candidate;
+            current = current.parent;
+        }
+    }
+    return null;
+}
+
+function emitNodeContextMenu(node: RtNode, event: MouseEvent | PointerEvent): void {
+    emit('contextMenu', {
+        id: node.id,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        highlighted: props.highlightedIds.has(node.id),
+    });
+}
+
+function emitStageContextMenu(event: MouseEvent | PointerEvent): void {
+    emit('stageContextMenu', { clientX: event.clientX, clientY: event.clientY });
+}
+
+function stopRightClickEvent(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if ('stopImmediatePropagation' in event) event.stopImmediatePropagation();
+}
+
+function onRightPointerDownCapture(event: PointerEvent): void {
+    if (event.button !== 2) return;
+    suppressRightPointerEnd = true;
+    stopRightClickEvent(event);
+    releaseCascadeDrag();
+    restoreNavigationControlsSoon();
+
+    const graphObject = graphObjectFromEvent(event);
+    const node = graphObject?.__graphObjType === 'node'
+        ? graphObject.__data as RtNode | undefined
+        : undefined;
+    if (node) {
+        emitNodeContextMenu(node, event);
+        return;
+    }
+    emitStageContextMenu(event);
+}
+
+function onRightPointerUpCapture(event: PointerEvent): void {
+    if (event.button !== 2 && !suppressRightPointerEnd) return;
+    stopRightClickEvent(event);
+    suppressRightPointerEnd = false;
+    restoreNavigationControlsSoon();
+}
+
+function onRightPointerCancelCapture(event: PointerEvent): void {
+    if (!suppressRightPointerEnd) return;
+    stopRightClickEvent(event);
+    suppressRightPointerEnd = false;
+    restoreNavigationControlsSoon();
+}
+
+function onContextMenuCapture(event: MouseEvent): void {
+    stopRightClickEvent(event);
+}
+
+function connectedDepthsFrom(root: RtNode): Map<string, CascadeDragTraversal> {
+    const depths = new Map<string, CascadeDragTraversal>([[root.id, {
+        depth: 0,
+        parentId: null,
+        tetherLength: 0,
+    }]]);
     const queue: RtNode[] = [root];
     for (let index = 0; index < queue.length; index++) {
         const current = queue[index];
+        const currentTraversal = depths.get(current.id);
+        if (!currentTraversal) continue;
         for (const neighborId of current.neighbors) {
             if (depths.has(neighborId)) continue;
             const neighbor = nodesById.get(neighborId);
             if (!neighbor) continue;
-            depths.set(neighborId, (depths.get(current.id) ?? 0) + 1);
+            depths.set(neighborId, {
+                depth: currentTraversal.depth + 1,
+                parentId: current.id,
+                tetherLength: vectorOf(current).distanceTo(vectorOf(neighbor)),
+            });
             queue.push(neighbor);
         }
     }
@@ -636,13 +967,15 @@ function beginCascadeDrag(node: RtNode): void {
     const depths = connectedDepthsFrom(node);
     const snapshots = new Map<string, CascadeDragNodeSnapshot>();
 
-    for (const [id, depth] of depths) {
+    for (const [id, traversal] of depths) {
         const current = nodesById.get(id);
         if (!current) continue;
         snapshots.set(id, {
             position: id === node.id ? dragOriginSnapshot(node) : positionSnapshot(current),
             fixed: id === node.id ? dragFixedPositionSnapshot(current) : fixedPositionSnapshot(current),
-            depth,
+            depth: traversal.depth,
+            parentId: traversal.parentId,
+            tetherLength: traversal.tetherLength,
         });
     }
 
@@ -654,31 +987,53 @@ function beginCascadeDrag(node: RtNode): void {
     };
 }
 
-function cascadeInfluence(depth: number): number {
-    if (depth <= 0) return 1;
-    return Math.max(CASCADE_MIN_INFLUENCE, CASCADE_DEPTH_FALLOFF ** depth);
-}
-
 function applyCascadeDrag(node: RtNode): void {
     const session = cascadeDrag;
     if (!session) return;
-    const current = vectorOf(node);
-    const delta = current.sub(session.origin);
+    const nextPositions = new Map<string, PositionSnapshot>();
+    nextPositions.set(node.id, positionSnapshot(node));
 
-    for (const [id, snapshot] of session.nodes) {
+    const orderedSnapshots = [...session.nodes.entries()].sort((a, b) => a[1].depth - b[1].depth);
+    for (const [id, snapshot] of orderedSnapshots) {
         const currentNode = nodesById.get(id);
         if (!currentNode) continue;
-        const influence = cascadeInfluence(snapshot.depth);
-        setNodePosition(currentNode, {
-            x: snapshot.position.x + delta.x * influence,
-            y: snapshot.position.y + delta.y * influence,
-            z: snapshot.position.z + delta.z * influence,
-        }, true);
+        if (id === node.id || !snapshot.parentId) {
+            const currentPosition = positionSnapshot(currentNode);
+            nextPositions.set(id, currentPosition);
+            setNodePosition(currentNode, currentPosition, true);
+            continue;
+        }
+
+        const parentPosition = nextPositions.get(snapshot.parentId);
+        if (!parentPosition) continue;
+
+        const base = new THREE.Vector3(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+        const parent = new THREE.Vector3(parentPosition.x, parentPosition.y, parentPosition.z);
+        const parentToBase = new THREE.Vector3().subVectors(base, parent);
+        const distance = parentToBase.length();
+        const slack = CASCADE_TETHER_SLACK + snapshot.depth * CASCADE_TETHER_DEPTH_SLACK;
+        const maxDistance = snapshot.tetherLength + slack;
+
+        if (distance <= maxDistance || distance <= 0.001) {
+            nextPositions.set(id, snapshot.position);
+            setNodePosition(currentNode, snapshot.position, true);
+            continue;
+        }
+
+        const constrained = parent.clone().add(parentToBase.normalize().multiplyScalar(maxDistance));
+        const next = {
+            x: constrained.x,
+            y: constrained.y,
+            z: constrained.z,
+        };
+        nextPositions.set(id, next);
+        setNodePosition(currentNode, next, true);
     }
 }
 
 function maintainCascadeDrag(node: RtNode): void {
     if (cascadeDrag?.draggedId !== node.id) beginCascadeDrag(node);
+    applyActiveAxisLockToDraggedNode(node);
     applyCascadeDrag(node);
 }
 
@@ -686,7 +1041,10 @@ function releaseCascadeDrag(draggedNode?: RtNode): void {
     const session = cascadeDrag;
     if (!session) return;
     const node = draggedNode ?? nodesById.get(session.draggedId);
-    if (node) applyCascadeDrag(node);
+    if (node) {
+        applyActiveAxisLockToDraggedNode(node);
+        applyCascadeDrag(node);
+    }
     cascadeDrag = null;
 
     for (const [id, snapshot] of session.nodes) {
@@ -802,8 +1160,8 @@ function makeElevationGuide(radius: number, primary: boolean): ElevationGuide {
     return group;
 }
 
-const NODE_BASE_R = 4;
-const NODE_DEGREE_SCALE = 1.4;
+const NODE_BASE_R = 2.4;
+const NODE_DEGREE_SCALE = 0.82;
 
 function radiusFor(node: RtNode): number {
     return Math.sqrt(Math.max(0, node.inDegree + node.outDegree)) * NODE_DEGREE_SCALE + NODE_BASE_R;
@@ -875,10 +1233,7 @@ function buildRuntimeData(): { nodes: RtNode[]; links: RtLink[] } {
 
 // ---------- Visibility / colour reducers ----------
 
-/** Effective focus id: hover previews focus; focus mode locks selection focus. */
-function focusedId(): string | null {
-    return hoveredId.value ?? (props.focusMode ? props.selectedId : null);
-}
+function focusedId(): string | null { return hoveredId.value ?? props.selectedId; }
 
 function nodeVisible(node: RtNode): boolean {
     return !props.hiddenKinds.has(node.kind);
@@ -905,7 +1260,22 @@ function isNeighborOfFocus(id: string): boolean {
 function isSearchMatch(node: RtNode): boolean {
     const q = props.searchQuery.trim().toLowerCase();
     if (!q) return false;
-    return node.label.toLowerCase().includes(q);
+    return node.label.toLowerCase().includes(q)
+        || graphDisplayLabel(node.label).toLowerCase().includes(q);
+}
+
+function isInteractionTarget(node: RtNode): boolean {
+    return hoveredId.value === node.id
+        || props.selectedId === node.id
+        || cascadeDrag?.draggedId === node.id;
+}
+
+function shouldShowNodeLabel(node: RtNode): boolean {
+    const hasQuery = props.searchQuery.trim().length > 0;
+    return isInteractionTarget(node)
+        || props.highlightedIds.has(node.id)
+        || (focusedId() !== null && isNeighborOfFocus(node.id))
+        || (hasQuery && isSearchMatch(node));
 }
 
 function nodeColorFor(node: RtNode): string {
@@ -940,23 +1310,23 @@ function linkColorReducer(link: RtLink): string {
         if (sId === f || tId === f) return p().edgeFocus;
         return p().edgeDim;
     }
-    return linkColorFor(link.type);
+    return cssWithAlpha(linkColorFor(link.type), 0.18);
 }
 
 function linkWidthReducer(link: RtLink): number {
     const sId = linkIdOf(link.source);
     const tId = linkIdOf(link.target);
     const f = focusedId();
-    if (f && (sId === f || tId === f)) return 1.6;
-    return 0.6;
+    if (f && (sId === f || tId === f)) return 1.25;
+    return 0.24;
 }
 
 function particlesFor(link: RtLink): number {
     const f = focusedId();
-    if (!f) return 2;
+    if (!f) return 0;
     const sId = linkIdOf(link.source);
     const tId = linkIdOf(link.target);
-    return sId === f || tId === f ? 4 : 0;
+    return sId === f || tId === f ? 3 : 0;
 }
 
 // ---------- Compact label card sprite (canvas → CanvasTexture → Sprite) ----------
@@ -975,8 +1345,7 @@ function cssWithAlpha(input: string, alpha: number): string {
 }
 
 function compactLabel(text: string): string {
-    const clean = text.trim() || '(untitled)';
-    return clean.length > 42 ? `${clean.slice(0, 39)}...` : clean;
+    return graphDisplayLabel(text, 34);
 }
 
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -1089,7 +1458,9 @@ function makeLabelSprite(
 // ---------- Three.js node object: sphere + label sprite (+ optional ring) ----------
 
 function makeNodeObject(node: RtNode): THREE.Object3D {
-    const group = new THREE.Group();
+    const group = new THREE.Group() as GraphObject3D;
+    group.__graphObjType = 'node';
+    group.__data = node;
     const r = radiusFor(node);
     // Sphere colour respects search + focus dimming so the node
     // visually fades alongside its links when off-target.
@@ -1097,20 +1468,18 @@ function makeNodeObject(node: RtNode): THREE.Object3D {
     const isHighlighted = props.highlightedIds.has(node.id);
     const focus = focusedId();
     const isFocus = focus === node.id;
-    const isSelectedMarker = props.selectedId === node.id && !props.focusMode && !isFocus;
+    const isSelectedMarker = props.selectedId === node.id && !isFocus;
     const isFocusNeighbor = isNeighborOfFocus(node.id);
     const isPrimary = isNodePrimary(node);
 
-    // Matte Lambert shading — no specular highlight (the previous Phong
-    // setup produced a bright "reflection" hot-spot that read as a
-    // post-processing bloom). Emissive stays low-key so colours look
-    // saturated under both the warm and dark themes.
     const sphere = new THREE.Mesh(
-        new THREE.SphereGeometry(r, 32, 24),
-        new THREE.MeshLambertMaterial({
+        new THREE.SphereGeometry(r, 24, 16),
+        new THREE.MeshStandardMaterial({
             color,
             emissive: color,
-            emissiveIntensity: isFocus ? 0.35 : isSelectedMarker ? 0.24 : isFocusNeighbor ? 0.18 : isHighlighted ? 0.25 : 0.06,
+            emissiveIntensity: isFocus ? 0.42 : isSelectedMarker ? 0.28 : isFocusNeighbor ? 0.2 : isHighlighted ? 0.24 : 0.08,
+            metalness: 0.08,
+            roughness: 0.48,
         }),
     );
     if (isFocus) sphere.scale.setScalar(1.2);
@@ -1142,17 +1511,21 @@ function makeNodeObject(node: RtNode): THREE.Object3D {
         group.add(ring);
     }
 
-    group.add(makeElevationGuide(r, isPrimary || isFocus || isSelectedMarker || isHighlighted));
+    if (isInteractionTarget(node)) {
+        group.add(makeElevationGuide(r, isFocus || isSelectedMarker || cascadeDrag?.draggedId === node.id));
+    }
 
-    const sprite = makeLabelSprite(node.label || '(untitled)', {
-        bold: isFocus || isSelectedMarker,
-        dim: !isPrimary && !isFocus && !isSelectedMarker,
-        accent: isFocus || isSelectedMarker || isHighlighted ? p().edgeFocus : props.colorOf(node.kind),
-    });
-    if (sprite) {
-        sprite.position.set(0, r + 3.1, 0);
-        sprite.renderOrder = 10;
-        group.add(sprite);
+    if (shouldShowNodeLabel(node)) {
+        const sprite = makeLabelSprite(node.label || '(untitled)', {
+            bold: isFocus || isSelectedMarker,
+            dim: !isPrimary && !isFocus && !isSelectedMarker,
+            accent: isFocus || isSelectedMarker || isHighlighted ? p().edgeFocus : props.colorOf(node.kind),
+        });
+        if (sprite) {
+            sprite.position.set(0, r + 3.1, 0);
+            sprite.renderOrder = 10;
+            group.add(sprite);
+        }
     }
 
     return group;
@@ -1181,6 +1554,7 @@ function homeView() {
     const g = graph.value;
     if (!g) return;
     if (cascadeDrag) return;
+    (g.camera() as THREE.PerspectiveCamera).up.set(0, 1, 0);
     const count = Math.max(1, nodesById.size);
     const distance = Math.max(210, Math.min(620, Math.sqrt(count) * 52));
     const target = { x: 0, y: 0, z: 0 };
@@ -1191,12 +1565,67 @@ function homeView() {
     );
 }
 
+function graphCenterAndCameraDistance(): { center: THREE.Vector3; distance: number } {
+    if (nodesById.size === 0) {
+        return { center: new THREE.Vector3(0, 0, 0), distance: 260 };
+    }
+
+    const box = new THREE.Box3();
+    for (const node of nodesById.values()) box.expandByPoint(vectorOf(node));
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(size.x, size.y, size.z, 80) * 0.5;
+    return { center, distance: Math.max(180, Math.min(900, radius * 3.2)) };
+}
+
+function viewAlongAxis(axis: AxisKey): void {
+    const g = graph.value;
+    if (!g || cascadeDrag) return;
+    // Anchor to the world/grid origin so the reference plane appears edge-on
+    // for X/Z views and perfectly top-down for Y, regardless of where the
+    // node cluster currently drifts.
+    const { distance } = graphCenterAndCameraDistance();
+    const directions: Record<AxisKey, THREE.Vector3> = {
+        x: new THREE.Vector3(1, 0, 0),
+        y: new THREE.Vector3(0, 1, 0),
+        z: new THREE.Vector3(0, 0, 1),
+    };
+    const upVectors: Record<AxisKey, THREE.Vector3> = {
+        x: new THREE.Vector3(0, 1, 0),
+        y: new THREE.Vector3(0, 0, -1),
+        z: new THREE.Vector3(0, 1, 0),
+    };
+    const cam = g.camera() as THREE.PerspectiveCamera;
+    cam.up.copy(upVectors[axis]);
+    const origin = new THREE.Vector3(0, REFERENCE_PLANE_Y, 0);
+    const next = origin.clone().add(directions[axis].clone().multiplyScalar(distance));
+    const target = { x: origin.x, y: origin.y, z: origin.z };
+    g.cameraPosition({ x: next.x, y: next.y, z: next.z }, target, 650);
+}
+
+function focusNode(id: string): boolean {
+    const g = graph.value;
+    const node = nodesById.get(id);
+    if (!g || !node || cascadeDrag) return false;
+    const targetVector = vectorOf(node);
+    const target = { x: targetVector.x, y: targetVector.y, z: targetVector.z };
+    const cam = g.camera() as THREE.PerspectiveCamera;
+    const currentDirection = new THREE.Vector3().subVectors(cam.position, targetVector);
+    const direction = currentDirection.lengthSq() > 1
+        ? currentDirection.normalize()
+        : new THREE.Vector3(0.74, 0.42, 0.52).normalize();
+    const distance = 96;
+    const next = targetVector.clone().add(direction.multiplyScalar(distance));
+    g.cameraPosition({ x: next.x, y: next.y, z: next.z }, target, 650);
+    return true;
+}
+
 // ---------- Pointer event helpers ----------
 
 function selectionFor(node: RtNode): SelectedInfo {
     return {
         id: node.id,
-        label: node.label,
+        label: graphDisplayLabel(node.label, 48),
         kind: node.kind,
         inDegree: node.inDegree,
         outDegree: node.outDegree,
@@ -1215,6 +1644,7 @@ function applyDataAndStyles() {
     const data = buildRuntimeData();
     configureInitialLayoutForces(g);
     g.graphData({ nodes: data.nodes, links: data.links });
+    refreshReferenceFrame();
     scheduleFitToView();
 }
 
@@ -1254,19 +1684,19 @@ onMounted(() => {
         .nodeLabel(() => '') // we draw our own label sprites
         .linkVisibility((l) => linkVisible(l as RtLink))
         .linkColor((l) => linkColorReducer(l as RtLink))
-        .linkOpacity(0.6)
+        .linkOpacity(0.48)
         .linkWidth((l) => linkWidthReducer(l as RtLink))
         .linkDirectionalParticles((l) => particlesFor(l as RtLink))
         .linkDirectionalParticleWidth(0.9)
         .linkDirectionalParticleSpeed(0.006)
         .linkDirectionalParticleColor(() => p().edgeFocus)
-        .linkDirectionalArrowLength(2.4)
+        .linkDirectionalArrowLength(1.4)
         .linkDirectionalArrowRelPos(0.94)
         .linkDirectionalArrowColor((l) => linkColorReducer(l as RtLink))
         .onBackgroundClick(() => emit('select', null))
         .onBackgroundRightClick((evt) => {
             evt.preventDefault?.();
-            emit('stageContextMenu', { clientX: evt.clientX, clientY: evt.clientY });
+            emitStageContextMenu(evt);
         })
         .onNodeDrag((n) => onSimpleNodeDrag(n as RtNode))
         .onNodeDragEnd((n) => onSimpleNodeDragEnd(n as RtNode))
@@ -1292,12 +1722,7 @@ onMounted(() => {
             const node = n as RtNode;
             const me = evt as MouseEvent;
             me.preventDefault?.();
-            emit('contextMenu', {
-                id: node.id,
-                clientX: me.clientX,
-                clientY: me.clientY,
-                highlighted: props.highlightedIds.has(node.id),
-            });
+            emitNodeContextMenu(node, me);
         });
 
     configureInitialLayoutForces(instance);
@@ -1339,10 +1764,26 @@ onMounted(() => {
     resizeObserver = new ResizeObserver(syncSize);
     resizeObserver.observe(container.value);
 
+    window.addEventListener('keydown', onAxisKeyDown);
+    window.addEventListener('keyup', onAxisKeyUp);
+    window.addEventListener('blur', onWindowBlur);
+    container.value.addEventListener('pointerdown', onRightPointerDownCapture, { capture: true });
+    container.value.addEventListener('pointerup', onRightPointerUpCapture, { capture: true });
+    container.value.addEventListener('pointercancel', onRightPointerCancelCapture, { capture: true });
+    container.value.addEventListener('contextmenu', onContextMenuCapture, { capture: true });
+
     emit('ready');
 });
 
 onBeforeUnmount(() => {
+    window.removeEventListener('keydown', onAxisKeyDown);
+    window.removeEventListener('keyup', onAxisKeyUp);
+    window.removeEventListener('blur', onWindowBlur);
+    container.value?.removeEventListener('pointerdown', onRightPointerDownCapture, { capture: true });
+    container.value?.removeEventListener('pointerup', onRightPointerUpCapture, { capture: true });
+    container.value?.removeEventListener('pointercancel', onRightPointerCancelCapture, { capture: true });
+    container.value?.removeEventListener('contextmenu', onContextMenuCapture, { capture: true });
+    clearAxisLocks();
     resizeObserver?.disconnect();
     resizeObserver = null;
     releaseCascadeDrag();
@@ -1370,7 +1811,7 @@ watch(() => props.payload, () => {
 
 watch(
     () => [props.hiddenKinds.size, props.searchQuery, props.selectedId,
-    props.highlightedIds.size, props.focusMode],
+    props.highlightedIds.size],
     () => refreshVisuals(),
 );
 

@@ -32,10 +32,12 @@ import {
   UiCard,
   UiChip,
   UiConfirmModal,
+  UiContextMenu,
   UiEmpty,
   UiInput,
   UiNotePickerModal,
   UiPromptModal,
+  type ContextMenuItem as UiContextMenuItem,
 } from '@/components/ui';
 import type { IconName } from '@/components/ui/icons';
 import { getIconImage } from '@/components/graph/iconRasterizer';
@@ -44,6 +46,7 @@ import type { SelectedInfo as Graph3DSelected } from '@/components/graph/Graph3D
 import NoteCreateModal from '@/components/notes/NoteCreateModal.vue';
 import { useKinds } from '@/composables/useKinds';
 import { useGraphPalette } from '@/composables/useGraphPalette';
+import { graphDisplayLabel } from '@/utils/graphLabels';
 import type { EntityKind, GraphEdge, GraphNode, KindDefinition } from '@continuum/shared';
 
 interface SelectedInfo {
@@ -73,6 +76,7 @@ interface ContextMenuState {
 
 type LayoutMode = 'force' | 'circular';
 type ViewMode = '3d' | '2d';
+type GraphAxisView = 'x' | 'y' | 'z';
 
 const router = useRouter();
 const kindStore = useKinds();
@@ -81,6 +85,7 @@ const palette = useGraphPalette();
 const container = ref<HTMLDivElement | null>(null);
 const sigmaInstance = shallowRef<Sigma | null>(null);
 const graphRef = shallowRef<Graph | null>(null);
+const GRAPH_HIGHLIGHTS_STORAGE_KEY = 'continuum.graph.highlightedNoteIds.v1';
 
 /**
  * View mode — 3D is the new core base view (neural-network style),
@@ -113,6 +118,8 @@ const graph3dRef = ref<{
   zoom: (direction: 1 | -1) => void;
   zoomToFit: () => void;
   homeView: () => void;
+  focusNode: (id: string) => boolean;
+  viewAlongAxis: (axis: GraphAxisView) => void;
 } | null>(null);
 
 const stats = ref({ nodes: 0, edges: 0 });
@@ -122,7 +129,6 @@ const hoveredNode = ref<string | null>(null);
 const hoveredEdge = ref<string | null>(null);
 const layoutMode = ref<LayoutMode>('force');
 const legendOpen = ref(false);
-const focusMode = ref(false);
 const helpOpen = ref(false);
 const searchQuery = ref('');
 const hiddenKinds = reactive<Set<string>>(new Set());
@@ -162,6 +168,7 @@ const graphCreateOpen = ref(false);
 const graphCreateBusy = ref(false);
 const graphCreateError = ref('');
 const graphCreateStage = ref<{ x: number; y: number } | null>(null);
+const graphError = ref('');
 
 const isEmpty = computed(() => !loading.value && stats.value.nodes === 0);
 const viewLabel = computed(() => {
@@ -172,6 +179,29 @@ const viewLabel = computed(() => {
 const activeFilters = computed<KindDefinition[]>(() =>
   kindStore.kinds.value.filter((k) => hiddenKinds.has(k.id)),
 );
+
+const contextMenuItems = computed<UiContextMenuItem[]>(() => {
+  if (contextMenu.nodeId) {
+    return [
+      { id: 'open-note', label: 'Open note', icon: 'node', onSelect: ctxOpenNote },
+      { id: 'rename-note', label: 'Rename...', icon: 'edit', onSelect: ctxRenameNote },
+      {
+        id: 'toggle-highlight',
+        label: contextMenu.highlighted ? 'Remove highlight' : 'Highlight node',
+        icon: 'sparkles',
+        active: contextMenu.highlighted,
+        onSelect: ctxToggleHighlight,
+      },
+      { id: 'link-note', label: 'Link to note(s)...', icon: 'link', onSelect: ctxLinkNote },
+      { id: 'hide-other-kinds', label: 'Hide other kinds', icon: 'eye-off', onSelect: ctxHideOtherKinds },
+      { id: 'node-separator', divider: true },
+      { id: 'delete-note', label: 'Delete note', icon: 'trash', danger: true, onSelect: ctxDeleteNote },
+    ];
+  }
+  return [
+    { id: 'create-note-here', label: 'Create note here', icon: 'plus', onSelect: ctxCreateNoteHere },
+  ];
+});
 
 function iconNameOf(kind: string): IconName {
   return kindStore.iconOf(kind) as IconName;
@@ -198,9 +228,7 @@ function recomputeMatches(): void {
   matchedNodes.value = matches;
 }
 
-function activeFocusId(): string | null {
-  return focusMode.value ? selected.value?.id ?? hoveredNode.value : hoveredNode.value;
-}
+function activeFocusId(): string | null { return hoveredNode.value ?? selected.value?.id ?? null; }
 
 function applyReducers(sigma: Sigma, graph: Graph) {
   sigma.setSetting('nodeReducer', (node, data) => {
@@ -208,6 +236,9 @@ function applyReducers(sigma: Sigma, graph: Graph) {
     const kind = String((data as { kind?: string }).kind ?? 'custom');
     const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 14);
     const pal = palette.value;
+    const rawLabel = String((data as { label?: string }).label ?? '');
+    let showLabel = false;
+    res.label = '';
 
     // 1. Hidden kind → near-invisible micro dot, no label, no icon.
     if (hiddenKinds.has(kind)) {
@@ -229,6 +260,7 @@ function applyReducers(sigma: Sigma, graph: Graph) {
       (res as { dimmed?: boolean }).dimmed = true;
     } else if (hasQuery && matches.has(node)) {
       res.zIndex = 2;
+      showLabel = true;
     }
 
     // 3. Selection / hover focus — vivid focus subgraph, dim background.
@@ -255,21 +287,24 @@ function applyReducers(sigma: Sigma, graph: Graph) {
         // icon + label card on the hovers layer instead.
         res.size = baseSize * 1.22;
         res.zIndex = 3;
+        showLabel = true;
       } else {
         // Neighbours: subtle bump only.
         res.size = baseSize * 1.06;
         res.zIndex = 2;
+        showLabel = true;
       }
     }
 
-    if (!focusMode.value && selected.value?.id === node) {
+    if (selected.value?.id === node) {
       res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.14);
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 2);
       (res as { borderColor?: string }).borderColor = pal.edgeFocus;
+      showLabel = true;
     }
 
     // 4. Persistent user highlight — toggled from the context menu.
-    //    Renders an accent border + bumped size that survives focus mode
+    //    Renders an accent border + bumped size that survives hover
     //    and search dimming. The border colour is read by the bordered
     //    Sigma program via the `borderColor` attribute (configured to be
     //    attribute-driven in `buildSigmaProgramSettings`).
@@ -277,7 +312,10 @@ function applyReducers(sigma: Sigma, graph: Graph) {
       res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.45);
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 3);
       (res as { borderColor?: string }).borderColor = pal.accent;
+      showLabel = true;
     }
+
+    if (showLabel) res.label = graphDisplayLabel(rawLabel, 32);
 
     return res;
   });
@@ -286,8 +324,8 @@ function applyReducers(sigma: Sigma, graph: Graph) {
     const res: Record<string, unknown> = { ...data };
     const pal = palette.value;
     const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 1);
-    res.color = pal.edge;
-    res.size = baseSize;
+    res.color = pal.edgeDim;
+    res.size = Math.max(0.3, baseSize * 0.72);
 
     // Hide edges connecting hidden-kind endpoints
     const [src, tgt] = graph.extremities(edge);
@@ -333,7 +371,7 @@ function buildSelected(graph: Graph, id: string): SelectedInfo {
   });
   return {
     id,
-    label: attrs.label ?? '(untitled)',
+    label: graphDisplayLabel(attrs.label ?? '(untitled)', 48),
     kind: attrs.kind ?? 'custom',
     inDegree: graph.inDegree(id),
     outDegree: graph.outDegree(id),
@@ -350,8 +388,9 @@ async function load() {
   try {
     await kindStore.load();
     const data = await api.links.graph();
+    const storedHighlights = readStoredHighlightedIds();
+    highlightedIds.value = storedHighlights;
     payload.value = { nodes: data.nodes, edges: data.edges };
-    highlightedIds.value = new Set<string>();
     const g = buildGraph({
       ...data,
       colorResolver: (k) => kindStore.colorOf(k),
@@ -360,6 +399,7 @@ async function load() {
       // visible from the very first frame.
       runLayout: false,
     });
+    highlightedIds.value = applyStoredHighlights(g, storedHighlights);
     graphRef.value = g;
     stats.value = { nodes: g.order, edges: g.size };
 
@@ -397,16 +437,14 @@ async function load() {
       // call — we drive them through the palette (theme-reactive) and the
       // theme watcher reapplies via `applyPaletteToSigma` on dark-mode flip.
       labelColor: { color: palette.value.labelFg },
-      labelSize: 12,
+      labelSize: 11,
       labelWeight: '500',
       labelFont: 'Inter, system-ui, sans-serif',
-      // Show labels eagerly — bigger nodes leave room and Obsidian-style
-      // graphs are most useful when you can read every title.
-      labelDensity: 1.2,
-      labelGridCellSize: 60,
-      labelRenderedSizeThreshold: 4,
+      labelDensity: 0.35,
+      labelGridCellSize: 128,
+      labelRenderedSizeThreshold: 12,
       defaultEdgeColor: palette.value.edge,
-      minEdgeThickness: 1.0,
+      minEdgeThickness: 0.45,
       zIndex: true,
     });
     sigmaInstance.value = sigma;
@@ -432,6 +470,13 @@ async function load() {
     // own rAF loop and refreshes Sigma each tick; we never call layout
     // helpers from here for the force mode.
     liveSim = startLiveSimulation(g, {
+      linkDistance: 92,
+      linkStrength: 0.016,
+      repelStrength: 2400,
+      repelMaxDist: 260,
+      velocityDecay: 0.78,
+      alphaTarget: 0.014,
+      centroidStrength: 0.002,
       onTick: () => sigma.refresh({ skipIndexation: true }),
     });
   } finally {
@@ -440,7 +485,7 @@ async function load() {
 }
 
 /**
- * Draw the kind icon centred on every visible node.
+ * Draw the kind icon centred on labelled foreground nodes.
  *
  * Why this lives inside `defaultDrawNodeLabel` rather than `afterRender`:
  *   - Sigma calls the label callback once per node with `data.x/y/size`
@@ -453,9 +498,8 @@ async function load() {
  *     because Sigma's labels canvas already has a context transform
  *     applied that we were unaware of.
  *
- * Hidden / dimmed / culled nodes have `data.label` cleared by the
- * reducer, so the early-return below skips them automatically — the
- * icon and label always appear/disappear together.
+ * Background nodes have `data.label` cleared by the reducer, so the icon
+ * and pill appear only for focus, search matches and highlights.
  */
 type NodeRenderData = {
   label?: string;
@@ -513,6 +557,9 @@ function drawIconAndLabel(
   }
   if (!data.label) return;
 
+  const label = graphDisplayLabel(data.label, isHover ? 40 : 30);
+  if (!label) return;
+
   const weight = isHover ? '600' : '500';
   const fontPx = settings.labelSize;
   ctx.font = `${weight} ${fontPx}px ${settings.labelFont}`;
@@ -522,7 +569,7 @@ function drawIconAndLabel(
   const padX = 8;
   const padY = 4;
   const radius = 6;
-  const textW = ctx.measureText(data.label).width;
+  const textW = ctx.measureText(label).width;
   const w = Math.ceil(textW + padX * 2);
   const h = Math.ceil(fontPx + padY * 2);
   const x = data.x - w / 2;
@@ -546,7 +593,7 @@ function drawIconAndLabel(
   ctx.stroke();
 
   ctx.fillStyle = pal.labelFg;
-  ctx.fillText(data.label, data.x, y + h / 2);
+  ctx.fillText(label, data.x, y + h / 2);
 }
 
 /**
@@ -710,7 +757,7 @@ function reRunLayout() {
   } else {
     // Force = continuous physics. Resume the loop and inject fresh energy.
     liveSim?.resume();
-    liveSim?.reheat(0.8);
+    liveSim?.reheat(0.35);
     s.getCamera().animatedReset({ duration: 400 });
   }
 }
@@ -737,6 +784,37 @@ function setViewMode(mode: ViewMode) {
       s.getCamera().animatedReset({ duration: 0 });
     });
   }
+}
+
+function readStoredHighlightedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(GRAPH_HIGHLIGHTS_STORAGE_KEY);
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set<string>();
+    return new Set<string>(parsed.filter((id): id is string => typeof id === 'string' && id.length > 0));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writeStoredHighlightedIds(ids: Set<string>): void {
+  try {
+    localStorage.setItem(GRAPH_HIGHLIGHTS_STORAGE_KEY, JSON.stringify([...ids].sort()));
+  } catch {
+    // Local storage can be unavailable in restrictive WebViews; graph state still works in memory.
+  }
+}
+
+function applyStoredHighlights(graph: Graph, stored: Set<string>): Set<string> {
+  const active = new Set<string>();
+  graph.forEachNode((id) => {
+    if (!stored.has(id)) return;
+    graph.setNodeAttribute(id, 'userHighlight', true);
+    active.add(id);
+  });
+  if (active.size !== stored.size) writeStoredHighlightedIds(active);
+  return active;
 }
 
 // ---------- 3D bridge handlers (mirror Sigma click/right-click flow) ----------
@@ -794,6 +872,11 @@ function homeView() {
   sigmaInstance.value?.getCamera().animatedReset({ duration: 400 });
 }
 
+function viewGraph3DAxis(axis: GraphAxisView): void {
+  if (viewMode.value !== '3d') return;
+  graph3dRef.value?.viewAlongAxis(axis);
+}
+
 function toggleKindVisibility(kind: string) {
   if (hiddenKinds.has(kind)) hiddenKinds.delete(kind);
   else hiddenKinds.add(kind);
@@ -805,18 +888,62 @@ function showAllKinds() {
   sigmaInstance.value?.refresh();
 }
 
-function toggleFocusMode() {
-  const next = !focusMode.value;
-  const g = graphRef.value;
-  if (next && !selected.value && hoveredNode.value && g?.hasNode(hoveredNode.value)) {
-    selected.value = buildSelected(g, hoveredNode.value);
-  }
-  focusMode.value = next;
-  sigmaInstance.value?.refresh();
-}
-
 function clearSearch() {
   searchQuery.value = '';
+}
+
+function searchScore(label: string, query: string): number | null {
+  const normalized = label.toLowerCase();
+  if (normalized === query) return 0;
+  if (normalized.startsWith(query)) return 1;
+  const index = normalized.indexOf(query);
+  return index >= 0 ? 2 + index / 1000 : null;
+}
+
+function findSearchTargetId(): string | null {
+  const g = graphRef.value;
+  const query = searchQuery.value.trim().toLowerCase();
+  if (!g || !query) return null;
+  let bestId: string | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  let bestLabel = '';
+  g.forEachNode((id, attrs) => {
+    const kind = String((attrs as { kind?: unknown }).kind ?? 'custom');
+    if (hiddenKinds.has(kind)) return;
+    const label = String((attrs as { label?: unknown }).label ?? '');
+    const score = searchScore(label, query);
+    if (score === null) return;
+    if (score < bestScore || (score === bestScore && label.localeCompare(bestLabel) < 0)) {
+      bestId = id;
+      bestScore = score;
+      bestLabel = label;
+    }
+  });
+  return bestId;
+}
+
+function focusSearchResult() {
+  const g = graphRef.value;
+  const id = findSearchTargetId();
+  if (!g || !id || !g.hasNode(id)) return;
+  selected.value = buildSelected(g, id);
+  if (viewMode.value === '3d') {
+    graph3dRef.value?.focusNode(id);
+    return;
+  }
+  const sigma = sigmaInstance.value;
+  if (!sigma) return;
+  const attrs = g.getNodeAttributes(id) as { x?: unknown; y?: unknown };
+  const x = Number(attrs.x);
+  const y = Number(attrs.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  sigma.getCamera().animate({ x, y, ratio: 0.42 }, { duration: 450 });
+  sigma.refresh({ skipIndexation: true });
+}
+
+function graphActionError(action: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  graphError.value = `${action}: ${message}`;
 }
 
 function openNote(id: string) {
@@ -863,8 +990,15 @@ async function submitGraphCreate(payload: {
 // ---------- Context menu ----------
 
 function closeContextMenu() {
-  contextMenu.visible = false;
+  setContextMenuOpen(false);
+}
+
+function setContextMenuOpen(value: boolean) {
+  contextMenu.visible = value;
+  if (value) return;
   contextMenu.nodeId = null;
+  contextMenu.stage = null;
+  contextMenu.highlighted = false;
 }
 
 function ctxOpenNote() {
@@ -882,6 +1016,7 @@ function ctxToggleHighlight() {
   const nextSet = new Set(highlightedIds.value);
   if (next) nextSet.add(id); else nextSet.delete(id);
   highlightedIds.value = nextSet;
+  writeStoredHighlightedIds(nextSet);
   contextMenu.highlighted = next;
   sigmaInstance.value?.refresh();
   closeContextMenu();
@@ -908,12 +1043,13 @@ async function submitRename(title: string) {
   const next = title.trim();
   if (!next || next === renameModal.initial) return;
   try {
+    graphError.value = '';
     await api.notes.update(id, { title: next });
     if (g.hasNode(id)) g.setNodeAttribute(id, 'label', next);
     if (selected.value && selected.value.id === id) selected.value.label = next;
     sigmaInstance.value?.refresh();
   } catch (err) {
-    window.alert(`Rename failed: ${err instanceof Error ? err.message : String(err)}`);
+    graphActionError('Rename failed', err);
   }
 }
 
@@ -932,14 +1068,19 @@ async function confirmDelete() {
   const g = graphRef.value;
   if (!id || !g) return;
   try {
+    graphError.value = '';
     await api.notes.remove(id);
     if (g.hasNode(id)) g.dropNode(id);
     if (selected.value && selected.value.id === id) selected.value = null;
+    const nextSet = new Set(highlightedIds.value);
+    nextSet.delete(id);
+    highlightedIds.value = nextSet;
+    writeStoredHighlightedIds(nextSet);
     stats.value = { nodes: g.order, edges: g.size };
-    liveSim?.reheat(0.5);
+    liveSim?.reheat(0.2);
     sigmaInstance.value?.refresh();
   } catch (err) {
-    window.alert(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    graphActionError('Delete failed', err);
   }
 }
 
@@ -1006,6 +1147,7 @@ async function submitLinks(targetIds: string[]) {
   if (!sourceId || targetIds.length === 0) return;
   linkBusy.value = true;
   try {
+    graphError.value = '';
     // Build a label lookup from the snapshot taken when the modal opened.
     const labelById = new Map<string, string>();
     for (const e of linkModal.entries) labelById.set(e.id, e.label);
@@ -1028,7 +1170,7 @@ async function submitLinks(targetIds: string[]) {
     // syncWikilinks runs server-side; reload to pick up the new edges.
     await load();
   } catch (err) {
-    window.alert(`Linking failed: ${err instanceof Error ? err.message : String(err)}`);
+    graphActionError('Linking failed', err);
   } finally {
     linkBusy.value = false;
   }
@@ -1043,7 +1185,6 @@ function onKeydown(e: KeyboardEvent) {
   else if (e.key === '-' || e.key === '_') { zoom(-1); e.preventDefault(); }
   else if (e.key === '0') { fitToView(); e.preventDefault(); }
   else if (e.key === 'h' || e.key === 'H') { homeView(); e.preventDefault(); }
-  else if (e.key === 'f' || e.key === 'F') { toggleFocusMode(); e.preventDefault(); }
   else if (e.key === 'Escape') {
     closeContextMenu();
     selected.value = null;
@@ -1059,16 +1200,6 @@ function onDocumentClick(e: MouseEvent) {
       legendOpen.value = false;
     }
   }
-  if (!contextMenu.visible) return;
-  const el = (e.target as HTMLElement | null)?.closest?.('.ctx-menu');
-  if (!el) closeContextMenu();
-}
-
-function onDocumentContextMenu(e: MouseEvent) {
-  // Close the menu when the user right-clicks anywhere outside the menu itself.
-  if (!contextMenu.visible) return;
-  const el = (e.target as HTMLElement | null)?.closest?.('.ctx-menu');
-  if (!el) closeContextMenu();
 }
 
 // ---------- Watchers ----------
@@ -1076,10 +1207,6 @@ function onDocumentContextMenu(e: MouseEvent) {
 watch(searchQuery, () => {
   recomputeMatches();
   sigmaInstance.value?.refresh();
-});
-
-watch(focusMode, () => {
-  sigmaInstance.value?.refresh({ skipIndexation: true });
 });
 
 watch([() => selected.value?.id, hoveredNode, hoveredEdge], () => {
@@ -1116,14 +1243,13 @@ function onWindowMouseUp(e: MouseEvent) {
   draggedNode = null;
   liveSim?.setDragged(null);
   if (container.value) container.value.style.cursor = '';
-  liveSim?.reheat(0.3);
+  liveSim?.reheat(0.08);
 }
 
 onMounted(() => {
   load();
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('click', onDocumentClick);
-  window.addEventListener('contextmenu', onDocumentContextMenu);
   window.addEventListener('mouseup', onWindowMouseUp);
   container.value?.addEventListener('contextmenu', preventNativeContextMenu);
 });
@@ -1131,7 +1257,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('click', onDocumentClick);
-  window.removeEventListener('contextmenu', onDocumentContextMenu);
   window.removeEventListener('mouseup', onWindowMouseUp);
   container.value?.removeEventListener('contextmenu', preventNativeContextMenu);
   liveSim?.stop();
@@ -1146,8 +1271,8 @@ onBeforeUnmount(() => {
     <div v-show="viewMode === '2d'" ref="container" class="canvas" />
     <Graph3DCanvas v-show="viewMode === '3d'" ref="graph3dRef" :payload="payload"
       :color-of="(k) => kindStore.colorOf(k)" :hidden-kinds="hiddenKinds" :highlighted-ids="highlightedIds"
-      :search-query="searchQuery" :selected-id="selected?.id ?? null" :focus-mode="focusMode" @select="on3DSelect"
-      @open-note="on3DOpenNote" @context-menu="on3DContextMenu" @stage-context-menu="on3DStageContextMenu" />
+      :search-query="searchQuery" :selected-id="selected?.id ?? null" @select="on3DSelect" @open-note="on3DOpenNote"
+      @context-menu="on3DContextMenu" @stage-context-menu="on3DStageContextMenu" />
 
     <!-- Top-left: floating toolbar -->
     <div class="panel toolbar" @click.stop>
@@ -1186,18 +1311,35 @@ onBeforeUnmount(() => {
       <button class="tb-btn" title="Home orientation (H)" @click="homeView">
         <Icon name="cube" size="16" />
       </button>
-      <span class="tb-sep" />
-      <button class="tb-btn" :class="{ active: focusMode }" title="Focus selected/hovered neighborhood (F)"
-        @click="toggleFocusMode">
-        <Icon :name="focusMode ? 'eye-off' : 'eye'" size="16" />
+      <span v-if="viewMode === '3d'" class="tb-sep" />
+      <button v-if="viewMode === '3d'" class="tb-btn tb-axis-btn" title="View from Y axis — top"
+        @click="viewGraph3DAxis('y')">
+        <span>Y</span>
+      </button>
+      <button v-if="viewMode === '3d'" class="tb-btn tb-axis-btn" title="View from Z axis"
+        @click="viewGraph3DAxis('z')">
+        <span>Z</span>
+      </button>
+      <button v-if="viewMode === '3d'" class="tb-btn tb-axis-btn" title="View from X axis"
+        @click="viewGraph3DAxis('x')">
+        <span>X</span>
       </button>
       <span class="tb-sep" />
       <div class="tb-search">
-        <UiInput v-model="searchQuery" size="sm" placeholder="Search nodes…" variant="bare" />
+        <UiInput v-model="searchQuery" size="sm" placeholder="Search nodes…" variant="bare"
+          @keydown.enter.stop.prevent="focusSearchResult" />
         <button v-if="searchQuery" class="tb-clear" @click="clearSearch" aria-label="Clear search">
           <Icon name="close" :size="12" />
         </button>
       </div>
+    </div>
+
+    <div v-if="graphError" class="panel graph-error" role="status" @click.stop>
+      <Icon name="error" size="14" />
+      <span>{{ graphError }}</span>
+      <button type="button" aria-label="Dismiss graph error" @click="graphError = ''">
+        <Icon name="close" size="12" />
+      </button>
     </div>
 
     <!-- Top-right: stacked rail (stats / legend / active filters) -->
@@ -1240,7 +1382,7 @@ onBeforeUnmount(() => {
           <button class="chip-clear" @click="showAllKinds">Clear</button>
         </div>
         <div class="chips-body">
-          <UiChip v-for="k in activeFilters" :key="k.id" removable @remove="toggleKindVisibility(k.id)">
+          <UiChip v-for="k in activeFilters" :key="k.id" closable @close="toggleKindVisibility(k.id)">
             {{ k.label }}
           </UiChip>
         </div>
@@ -1280,13 +1422,13 @@ onBeforeUnmount(() => {
 
     <!-- Bottom-right: help pill -->
     <div class="help-pill" @mouseenter="helpOpen = true" @mouseleave="helpOpen = false">
-      <Icon name="sparkles" size="14" />
+      <Icon name="info" size="14" />
       <span>Shortcuts</span>
       <div v-if="helpOpen" class="help-pop">
         <div><b>+ / −</b> zoom in / out</div>
         <div><b>0</b> fit to view</div>
         <div><b>H</b> home orientation</div>
-        <div><b>F</b> focus selected neighborhood</div>
+        <div v-if="viewMode === '3d'"><b>X/Y/Z</b> anchor drag to axis</div>
         <div><b>Esc</b> clear selection</div>
         <div><b>Drag</b> move node</div>
         <div><b>Right-click</b> node menu</div>
@@ -1294,36 +1436,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Right-click context menu -->
-    <div v-if="contextMenu.visible" class="ctx-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
-      <template v-if="contextMenu.nodeId">
-        <button @click="ctxOpenNote">
-          <Icon name="node" size="14" /> Open note
-        </button>
-        <button @click="ctxRenameNote">
-          <Icon name="edit" size="14" /> Rename…
-        </button>
-        <button @click="ctxToggleHighlight">
-          <Icon name="sparkles" size="14" />
-          {{ contextMenu.highlighted ? 'Remove highlight' : 'Highlight node' }}
-        </button>
-        <button @click="ctxLinkNote">
-          <Icon name="link" size="14" /> Link to note(s)…
-        </button>
-        <button @click="ctxHideOtherKinds">
-          <Icon name="eye-off" size="14" /> Hide other kinds
-        </button>
-        <div class="ctx-sep" />
-        <button class="danger" @click="ctxDeleteNote">
-          <Icon name="trash" size="14" /> Delete note
-        </button>
-      </template>
-      <template v-else>
-        <button @click="ctxCreateNoteHere">
-          <Icon name="plus" size="14" /> Create note here
-        </button>
-      </template>
-    </div>
+    <UiContextMenu :model-value="contextMenu.visible" :x="contextMenu.x" :y="contextMenu.y" :items="contextMenuItems"
+      :min-width="224" @update:model-value="setContextMenuOpen" />
 
     <!-- Empty state -->
     <div v-if="isEmpty" class="empty">
@@ -1390,10 +1504,10 @@ onBeforeUnmount(() => {
 
 .panel {
   position: absolute;
-  background: var(--bg-elev);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
   border: var(--border-width-1) solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
   color: var(--fg);
   z-index: var(--z-raised);
   transition:
@@ -1404,25 +1518,22 @@ onBeforeUnmount(() => {
 
 /* ---- Toolbar ---- */
 .toolbar {
-  top: var(--space-7);
-  left: var(--space-7);
+  top: var(--space-5);
+  left: var(--space-5);
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  /* Wrap to a second row before colliding with the right-rail (~280px) so
-   * neither panel ever overlaps the other on narrow viewports. */
-  max-width: calc(100% - 320px - var(--space-7) * 2);
-  flex-wrap: wrap;
-  row-gap: var(--space-2);
+  gap: var(--space-1);
+  padding: var(--space-2);
+  max-width: calc(100% - 390px);
+  flex-wrap: nowrap;
 }
 
 .tb-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
   border: var(--border-width-1) solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1435,15 +1546,15 @@ onBeforeUnmount(() => {
 }
 
 .tb-btn:hover:not(:disabled) {
-  background: var(--bg-soft);
+  background: var(--surface-hover);
   color: var(--fg);
   border-color: var(--border);
 }
 
 .tb-btn.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
+  background: var(--surface-selected);
+  color: var(--fg-strong);
+  border-color: var(--accent-border);
 }
 
 .tb-btn:disabled {
@@ -1451,25 +1562,36 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
+.tb-axis-btn span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .tb-sep {
   width: 1px;
-  height: 20px;
+  height: 18px;
   background: var(--border);
-  margin: 0 var(--space-2);
+  margin: 0 var(--space-1);
 }
 
 .tb-search {
   display: flex;
   align-items: center;
-  flex: 0 0 160px;
+  flex: 0 0 190px;
   min-width: 0;
-  padding-left: var(--space-3);
+  padding-left: var(--space-1);
   position: relative;
 }
 
 .tb-clear {
   position: absolute;
-  right: var(--space-2);
+  right: var(--space-1);
   background: transparent;
   border: none;
   color: var(--fg-muted);
@@ -1483,17 +1605,55 @@ onBeforeUnmount(() => {
   color: var(--fg);
 }
 
+.graph-error {
+  top: calc(var(--space-5) + 46px);
+  left: var(--space-5);
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(520px, calc(100% - 2 * var(--space-7)));
+  padding: var(--space-3) var(--space-4);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.graph-error span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-error button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.graph-error button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* ---- Stats + legend ---- */
 .right-rail {
   position: absolute;
-  top: var(--space-7);
-  right: var(--space-7);
+  top: var(--space-5);
+  right: var(--space-5);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--space-3);
+  gap: var(--space-2);
   z-index: var(--z-raised);
-  max-width: min(280px, calc(100vw - 2 * var(--space-7)));
+  max-width: min(360px, calc(100vw - 2 * var(--space-5)));
 }
 
 .right-rail .panel {
@@ -1506,20 +1666,20 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-5);
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  padding: var(--space-2);
 }
 
 .view-pill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 26px;
+  height: 28px;
   padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-selected);
+  color: var(--fg-strong);
   font-size: var(--text-xs);
   font-weight: var(--font-weight-semibold);
   white-space: nowrap;
@@ -1529,6 +1689,7 @@ onBeforeUnmount(() => {
   font-size: var(--text-sm);
   color: var(--fg-muted);
   white-space: nowrap;
+  padding: 0 var(--space-2);
 }
 
 .legend-btn {
@@ -1538,7 +1699,8 @@ onBeforeUnmount(() => {
   background: transparent;
   border: var(--border-width-1) solid var(--border);
   border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-4);
+  height: 28px;
+  padding: 0 var(--space-3);
   font-size: var(--text-sm);
   color: var(--fg);
   cursor: pointer;
@@ -1548,7 +1710,7 @@ onBeforeUnmount(() => {
 
 .legend-btn:hover,
 .legend-btn.open {
-  background: var(--bg-soft);
+  background: var(--surface-hover);
   border-color: var(--border-strong);
 }
 
@@ -1684,9 +1846,9 @@ onBeforeUnmount(() => {
 /* ---- Selected card ---- */
 .selected-wrap {
   position: absolute;
-  bottom: var(--space-7);
-  left: var(--space-7);
-  width: 300px;
+  bottom: var(--space-5);
+  left: var(--space-5);
+  width: 292px;
   z-index: var(--z-raised);
 }
 
@@ -1766,18 +1928,18 @@ onBeforeUnmount(() => {
 /* ---- Help pill ---- */
 .help-pill {
   position: absolute;
-  bottom: var(--space-7);
-  right: var(--space-7);
+  bottom: var(--space-5);
+  right: var(--space-5);
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-6);
-  background: var(--bg-elev);
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
   border: var(--border-width-1) solid var(--border);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--fg-muted);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   z-index: var(--z-raised);
   cursor: help;
 }
@@ -1786,7 +1948,7 @@ onBeforeUnmount(() => {
   position: absolute;
   bottom: calc(100% + 8px);
   right: 0;
-  background: var(--bg-elev);
+  background: var(--surface-1);
   border: var(--border-width-1) solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
@@ -1802,53 +1964,6 @@ onBeforeUnmount(() => {
 .help-pop b {
   color: var(--accent);
   margin-right: var(--space-3);
-}
-
-/* ---- Context menu ---- */
-.ctx-menu {
-  position: fixed;
-  z-index: var(--z-popover);
-  background: var(--bg-elev);
-  border: var(--border-width-1) solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-2);
-  display: flex;
-  flex-direction: column;
-  min-width: 180px;
-}
-
-.ctx-menu button {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  background: transparent;
-  border: none;
-  padding: var(--space-4) var(--space-5);
-  text-align: left;
-  font-size: var(--text-base);
-  color: var(--fg);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: background-color var(--duration-fast) var(--ease-standard);
-}
-
-.ctx-menu button:hover {
-  background: var(--bg-soft);
-}
-
-.ctx-menu button.danger {
-  color: var(--danger);
-}
-
-.ctx-menu button.danger:hover {
-  background: var(--danger-soft);
-}
-
-.ctx-sep {
-  height: 1px;
-  background: var(--border);
-  margin: var(--space-2) var(--space-3);
 }
 
 /* ---- Empty state ---- */

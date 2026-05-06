@@ -486,12 +486,12 @@ onMounted(() => {
 
 <style scoped>
 .settings {
-  max-width: 720px;
+  max-width: 880px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-14);
-  padding: var(--space-4) var(--space-2) var(--space-20);
+  gap: var(--space-10);
+  padding: var(--space-2) var(--space-2) var(--space-16);
 }
 
 .settings__head {
@@ -503,7 +503,7 @@ onMounted(() => {
 
 .settings__title {
   margin: 0 0 var(--space-2);
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: var(--font-weight-semibold);
   color: var(--fg-strong);
   letter-spacing: var(--tracking-tight);
@@ -556,7 +556,7 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-8);
+  gap: var(--space-6);
 }
 
 .danger__text strong {
@@ -599,16 +599,16 @@ onMounted(() => {
 .kind-row {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-4) var(--space-5);
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border: var(--border-width-1) solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-soft);
+  background: var(--surface-0);
 }
 
 .kind-swatch {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--radius-xs);
   border: var(--border-width-1) solid var(--border);
   flex-shrink: 0;
@@ -627,7 +627,7 @@ onMounted(() => {
 .kind-row__title {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   font-size: var(--text-base);
   font-weight: var(--font-weight-medium);
   color: var(--fg-strong);
@@ -666,8 +666,8 @@ onMounted(() => {
 }
 
 .kind-form {
-  margin-top: var(--space-6);
-  padding: var(--space-6);
+  margin-top: var(--space-5);
+  padding: var(--space-5);
   border: var(--border-width-1) dashed var(--border);
   border-radius: var(--radius-sm);
   display: flex;

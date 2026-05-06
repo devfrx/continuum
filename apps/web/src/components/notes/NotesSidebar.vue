@@ -4,6 +4,7 @@ import { UiButton, UiInput, UiSegmented, UiBadge, Icon } from '@/components/ui';
 import { FolderTree } from '@/components/folders';
 import { useKinds } from '@/composables/useKinds';
 import { useFolders } from '@/composables/useFolders';
+import { graphDisplayLabel } from '@/utils/graphLabels';
 import type { AiSearchHit, FolderNode, Note } from '@continuum/shared';
 
 type SearchMode = 'filter' | 'semantic';
@@ -19,6 +20,10 @@ const props = defineProps<{
     semanticBusy: boolean;
     /** False when no provider has an embedding model loaded. */
     semanticAvailable: boolean;
+    /** Enables local-only development utilities such as test corpus seeding. */
+    devMode?: boolean;
+    seedBusy?: boolean;
+    seedError?: string;
 }>();
 
 const emit = defineEmits<{
@@ -27,6 +32,7 @@ const emit = defineEmits<{
     (e: 'update:selectedFolderId', value: string | null): void;
     (e: 'select', id: string): void;
     (e: 'create'): void;
+    (e: 'seed-test-notes'): void;
     (e: 'delete', id: string): void;
     (e: 'runSemantic'): void;
     (e: 'create-folder', parentId: string | null): void;
@@ -132,6 +138,10 @@ function formatScore(score: number): string {
     return `${pct.toFixed(2)}%`;
 }
 
+function displayTitle(title: string | null | undefined): string {
+    return graphDisplayLabel(title?.trim() || 'Untitled', 80);
+}
+
 const kindStore = useKinds();
 onMounted(() => {
     void kindStore.load();
@@ -186,13 +196,25 @@ onMounted(() => {
                         semanticResults.length :
                         filtered.length }}</span>
                 </div>
-                <UiButton variant="primary" size="sm" class="new-note" @click="emit('create')">
-                    <template #icon-left>
-                        <Icon name="plus" :size="12" />
-                    </template>
-                    New
-                </UiButton>
+                <div class="list-actions">
+                    <UiButton v-if="devMode" variant="subtle" size="sm" class="seed-notes" :loading="seedBusy"
+                        :disabled="seedBusy" title="Generate semantic search test notes"
+                        @click="emit('seed-test-notes')">
+                        <template #icon-left>
+                            <Icon name="sparkles" :size="12" />
+                        </template>
+                        Seed
+                    </UiButton>
+                    <UiButton variant="primary" size="sm" class="new-note" @click="emit('create')">
+                        <template #icon-left>
+                            <Icon name="plus" :size="12" />
+                        </template>
+                        New
+                    </UiButton>
+                </div>
             </div>
+
+            <p v-if="devMode && seedError" class="seed-error">{{ seedError }}</p>
 
             <ul v-if="searchMode === 'semantic' && searchQuery.trim()" class="note-list"
                 :class="{ refreshing: semanticBusy && semanticResults.length }">
@@ -204,7 +226,7 @@ onMounted(() => {
                         <span class="dot" :style="{ background: kindStore.colorOf(r.note?.kind ?? 'note') }" />
                     </span>
                     <div class="meta">
-                        <div class="title">{{ r.hit.title || r.note?.title || 'Untitled' }}</div>
+                        <div class="title">{{ displayTitle(r.hit.title || r.note?.title) }}</div>
                         <div class="snippet">{{ cleanSnippet(r.hit.snippet) }}</div>
                     </div>
                     <UiBadge>{{ formatScore(r.hit.score) }}</UiBadge>
@@ -226,7 +248,7 @@ onMounted(() => {
                         <span class="dot" :style="{ background: kindStore.colorOf(n.kind) }" />
                     </span>
                     <div class="meta">
-                        <div class="title">{{ n.title || 'Untitled' }}</div>
+                        <div class="title">{{ displayTitle(n.title) }}</div>
                         <div class="kind-label">{{ n.kind }}</div>
                     </div>
                     <button class="del" title="Delete note" aria-label="Delete note" @click="onDelete(n.id, $event)">
@@ -259,9 +281,9 @@ onMounted(() => {
 }
 
 .nav-deck {
-    flex: 0 0 168px;
-    min-height: 116px;
-    max-height: 32%;
+    flex: 0 0 118px;
+    min-height: 104px;
+    max-height: 24%;
     overflow: hidden;
 }
 
@@ -401,11 +423,27 @@ onMounted(() => {
     font-variant-numeric: tabular-nums;
 }
 
+.list-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex: 0 0 auto;
+}
+
+.seed-notes.seed-notes,
 .new-note.new-note {
     min-height: 28px;
     padding: 0 var(--space-3);
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
+}
+
+.seed-error {
+    margin: 0 var(--space-1);
+    padding: 0 var(--space-2);
+    color: var(--danger);
+    font-size: var(--text-xs);
+    line-height: 1.35;
 }
 
 .note-list {
@@ -425,7 +463,7 @@ onMounted(() => {
     grid-template-columns: 30px minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-3);
-    min-height: 52px;
+    min-height: 46px;
     padding: var(--space-2);
     border: var(--border-width-1) solid transparent;
     border-radius: var(--radius-sm);
@@ -453,8 +491,8 @@ onMounted(() => {
 }
 
 .kind-mark {
-    width: 28px;
-    height: 34px;
+    width: 26px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
     justify-content: center;

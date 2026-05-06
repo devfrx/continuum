@@ -111,7 +111,7 @@ function submit(): void {
         </div>
 
         <template #footer>
-            <UiButton variant="subtle" size="sm" @click="close">Cancel</UiButton>
+            <UiButton variant="ghost" size="sm" @click="close">Cancel</UiButton>
             <UiButton variant="primary" size="sm" :disabled="selected.size === 0" @click="submit">
                 {{ confirmLabel }}
             </UiButton>

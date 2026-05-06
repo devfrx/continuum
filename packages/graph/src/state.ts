@@ -129,21 +129,21 @@ export interface LiveSimulationHandle {
 export interface LiveSimulationOptions {
   /**
   * Link force ("rubber band" stiffness) - Obsidian's "Link force".
-  * Per-edge attractive spring strength. Default 0.038.
+  * Per-edge attractive spring strength. Default 0.024.
    */
   linkStrength?: number;
-  /** Natural rest distance for edges. Obsidian "Link distance". Default 68. */
+  /** Natural rest distance for edges. Obsidian "Link distance". Default 56. */
   linkDistance?: number;
   /**
    * Repel force — Obsidian "Repel force". Negative means push apart.
    * Applied as `repelStrength / (dist*dist)` and capped at `repelMaxDist`.
-  * Default 360: enough spacing to breathe without pushing small graphs to the edges.
+  * Default 1400: strong close-range separation, tempered by low baseline alpha.
    */
   repelStrength?: number;
   /**
    * Distance beyond which repulsion is ignored. Mimics Obsidian/d3-force
    * Barnes-Hut θ-cutoff and prevents far nodes from moving the world.
-  * Default 220.
+  * Default 180.
    */
   repelMaxDist?: number;
   /**
@@ -156,21 +156,23 @@ export interface LiveSimulationOptions {
   centerStrength?: number;
   /**
   * Velocity decay (friction). d3-force default is 0.4 -> keep 60% of v.
-  * Higher = more friction, smoother, less jitter. Default 0.64.
+  * Higher = more friction, smoother, less jitter. Default 0.7.
    */
   velocityDecay?: number;
-  /** Hard clamp on per-frame displacement (graph units). Default 3.0. */
+  /** Hard clamp on per-frame displacement (graph units). Default 4.8. */
   maxStep?: number;
   /** Callback after every frame — usually `sigma.refresh({ skipIndexation: true })`. */
   onTick?: () => void;
   /**
    * Baseline alpha — force multiplier that NEVER fully decays. Keeps the
-  * simulation gently alive forever. Kept low (default 0.045) so motion
+  * simulation gently alive forever. Kept low (default 0.022) so motion
    * is a barely-perceptible breathing rather than a return-to-center.
    */
   alphaTarget?: number;
-  /** Tiny centroid nudge that keeps the cluster framed without snap-back. Default 0.01. */
+  /** Tiny centroid nudge that keeps the cluster framed without snap-back. Default 0.004. */
   centroidStrength?: number;
+  /** Extra repulsion for pairs involving the actively dragged node. Default 4.5. */
+  dragRepelBoost?: number;
 }
 
 interface NodeState {
@@ -197,23 +199,24 @@ export function startLiveSimulation(
   graph: Graph,
   opts: LiveSimulationOptions = {},
 ): LiveSimulationHandle {
-  const linkStrength = opts.linkStrength ?? 0.038;
-  const linkDistance = opts.linkDistance ?? 68;
-  const repelStrength = opts.repelStrength ?? 360;
-  const repelMaxDist = opts.repelMaxDist ?? 220;
+  const linkStrength = opts.linkStrength ?? 0.024;
+  const linkDistance = opts.linkDistance ?? 56;
+  const repelStrength = opts.repelStrength ?? 1400;
+  const repelMaxDist = opts.repelMaxDist ?? 180;
   const repelMaxDist2 = repelMaxDist * repelMaxDist;
   // Per-node center pull — disabled by default. The previous 0.04 created
   // a visible "return to origin" after every drag, which the user found
   // annoying. Centroid framing is now handled by a much gentler nudge.
   const centerStrength = opts.centerStrength ?? 0;
-  const velocityDecay = opts.velocityDecay ?? 0.64;
+  const velocityDecay = opts.velocityDecay ?? 0.7;
   const velocityKeep = 1 - velocityDecay;
-  const maxStep = opts.maxStep ?? 3.0;
+  const maxStep = opts.maxStep ?? 4.8;
   // Very low baseline α: keeps the graph subtly alive without enough
   // energy to noticeably move nodes back after a drag.
-  const alphaTarget = opts.alphaTarget ?? 0.045;
-  const alphaDecay = 0.04; // per-frame decay of the *transient* boost on top of alphaTarget
-  const centroidStrength = opts.centroidStrength ?? 0.01;
+  const alphaTarget = opts.alphaTarget ?? 0.022;
+  const alphaDecay = 0.09; // per-frame decay of the *transient* boost on top of alphaTarget
+  const centroidStrength = opts.centroidStrength ?? 0.004;
+  const dragRepelBoost = opts.dragRepelBoost ?? 4.5;
 
   const states = new Map<string, NodeState>();
   let rafId: number | null = null;
@@ -245,7 +248,7 @@ export function startLiveSimulation(
   function reheatImpl(strength = 1): void {
     alpha = Math.min(1.5, alpha + strength);
   }
-  reheatImpl(0.6); // small initial nudge so motion is visible right away
+  reheatImpl(0.36); // small initial nudge so motion is visible right away
 
   const tick = (): void => {
     if (paused) {
@@ -301,7 +304,8 @@ export function startLiveSimulation(
           dx += jx; dy += jy;
           d2 = Math.max(1, dx * dx + dy * dy);
         }
-        const f = (repelStrength * alpha) / d2;
+        const isDraggedPair = ids[a] === draggedId || ids[b] === draggedId;
+        const f = (repelStrength * (isDraggedPair ? dragRepelBoost : 1) * alpha) / d2;
         const inv = 1 / Math.sqrt(d2);
         const fx = dx * inv * f;
         const fy = dy * inv * f;
@@ -397,8 +401,7 @@ export function startLiveSimulation(
     reheat(strength = 1): void { reheatImpl(strength); },
     setDragged(id: string | null): void {
       draggedId = id;
-      // Intentionally NO reheat on drag start/end — the user wants nodes
-      // to stay where they're dropped, not to settle back via fresh energy.
+      if (id) alpha = Math.max(alpha, 1.15);
     },
   };
 }
