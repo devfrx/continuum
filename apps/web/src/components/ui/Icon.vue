@@ -13,8 +13,8 @@
  * element; otherwise it is hidden from assistive tech.
  */
 import { computed } from 'vue';
-import { Icon as IconifyIcon } from '@iconify/vue';
-import { ICONS, isValidIconName, type IconName } from './icons';
+import { Icon as IconifyIcon } from '@iconify/vue/dist/offline';
+import { ICONS, isValidIconName, type AppIconName as IconName } from '@/assets/icons';
 
 const props = withDefaults(
   defineProps<{

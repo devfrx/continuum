@@ -12,7 +12,7 @@
 import { computed, ref } from 'vue';
 import Icon from './Icon.vue';
 import UiInput from './UiInput.vue';
-import { KIND_ICON_GROUPS, DEFAULT_KIND_ICON, type KindIconGroup } from './kindIcons';
+import { KIND_ICON_GROUPS, DEFAULT_KIND_ICON, type KindIconGroup } from '@/assets/kindIcons';
 
 const props = withDefaults(
     defineProps<{

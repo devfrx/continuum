@@ -11,8 +11,10 @@
  *   • Lookup helpers: `byId`, `childrenOf`, `breadcrumb`, `pathSlugs`.
  *   • Inheritance helpers (Modality B): `effectiveFor` walks up the tree
  *     to resolve the nearest non-null `defaultKind` / `icon` / `color`.
- *   • Mutation helpers (`create`, `update`, `move`, `remove`) that hit
- *     the API and refresh the local tree.
+ *
+ * Mutating commands (create/update/move/remove) live in
+ * `./foldersApi` so consumers can import them as plain async functions
+ * and so this composable stays focused on read-only state.
  *
  * The flat list is rebuilt from the tree on every refresh so callers can
  * iterate without recursion when convenient (`flat`).
@@ -20,14 +22,12 @@
 
 import { ref, computed, type ComputedRef, type Ref } from 'vue';
 import { api } from '@/api';
-import type { Folder, FolderEffective, FolderNode } from '@continuum/shared';
+import type { FolderEffective, FolderNode } from '@continuum/shared';
+import { ROOT_FALLBACK } from '@continuum/shared';
 
-/** Project-wide fallback when no ancestor defines a value. */
-export const ROOT_FALLBACK: FolderEffective = {
-  defaultKind: 'note',
-  icon: 'folder',
-  color: '#8C7B6A',
-};
+// Re-exported so existing `import { ROOT_FALLBACK } from '@/composables/useFolders'`
+// callers keep working while the canonical definition lives in `@continuum/shared`.
+export { ROOT_FALLBACK };
 
 const tree = ref<FolderNode[]>([]);
 const loaded = ref(false);
@@ -69,10 +69,6 @@ export interface UseFoldersReturn {
   breadcrumb: (id: string | null | undefined) => FolderNode[];
   pathSlugs: (id: string | null | undefined) => string[];
   effectiveFor: (id: string | null | undefined) => FolderEffective;
-  create: (data: Parameters<typeof api.folders.create>[0]) => Promise<Folder>;
-  update: (id: string, data: Parameters<typeof api.folders.update>[1]) => Promise<Folder>;
-  move: (id: string, data: Parameters<typeof api.folders.move>[1]) => Promise<Folder>;
-  remove: (id: string) => Promise<void>;
 }
 
 /**
@@ -157,35 +153,6 @@ export function useFolders(): UseFoldersReturn {
     };
   }
 
-  async function create(data: Parameters<typeof api.folders.create>[0]): Promise<Folder> {
-    const created = await api.folders.create(data);
-    await refresh();
-    return created;
-  }
-
-  async function update(
-    id: string,
-    data: Parameters<typeof api.folders.update>[1],
-  ): Promise<Folder> {
-    const updated = await api.folders.update(id, data);
-    await refresh();
-    return updated;
-  }
-
-  async function move(
-    id: string,
-    data: Parameters<typeof api.folders.move>[1],
-  ): Promise<Folder> {
-    const moved = await api.folders.move(id, data);
-    await refresh();
-    return moved;
-  }
-
-  async function remove(id: string): Promise<void> {
-    await api.folders.remove(id);
-    await refresh();
-  }
-
   return {
     tree,
     flat,
@@ -198,9 +165,6 @@ export function useFolders(): UseFoldersReturn {
     breadcrumb,
     pathSlugs,
     effectiveFor,
-    create,
-    update,
-    move,
-    remove,
   };
 }
+

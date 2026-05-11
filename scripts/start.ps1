@@ -13,7 +13,8 @@ param(
   [switch]$NoDesktop,
   [switch]$ServerOnly,
   [switch]$WebOnly,
-  [switch]$SkipDocker
+  [switch]$SkipDocker,
+  [switch]$KeepExistingProcesses
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,6 +80,21 @@ if (-not $SkipDocker) {
       exit 1
     }
     Write-Ok "Schema ready"
+  }
+}
+
+# 2c. Dev ports -------------------------------------------------------------
+if (-not $KeepExistingProcesses) {
+  if ($ServerOnly) {
+    $devPorts = @(3001, 1235)
+  } elseif ($WebOnly) {
+    $devPorts = @(5174)
+  } else {
+    $devPorts = @(3001, 5174, 1235)
+  }
+  Write-Step "Releasing stale Continuum dev ports"
+  if (-not (Stop-ContinuumPortListeners -Ports $devPorts -RepoPath $repo -FailOnForeign)) {
+    exit 1
   }
 }
 

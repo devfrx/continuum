@@ -17,8 +17,9 @@
  *     `kind-location`) → either delegated to its iconify id, or wrapped
  *     in a synthetic SVG using the registry's inline markup.
  */
-import { getIcon } from '@iconify/vue';
-import { ICONS, type IconName } from '@/components/ui/icons';
+import { getIconData } from '@iconify/utils';
+import { icons as solarIcons } from '@iconify-json/solar';
+import { ICONS, type AppIconName as IconName } from '@/assets/icons';
 
 type CacheEntry = HTMLImageElement | 'loading' | 'error';
 
@@ -41,7 +42,13 @@ function buildSvg(name: string): string | null {
 }
 
 function buildIconifySvg(id: string): string | null {
-  const data = getIcon(id);
+  // Only the solar collection is bundled offline; anything else is unsupported.
+  const colon = id.indexOf(':');
+  if (colon === -1) return null;
+  const prefix = id.slice(0, colon);
+  const slug = id.slice(colon + 1);
+  if (prefix !== 'solar') return null;
+  const data = getIconData(solarIcons, slug);
   if (!data) return null;
   const w = data.width ?? 24;
   const h = data.height ?? 24;

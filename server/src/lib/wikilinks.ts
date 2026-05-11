@@ -1,5 +1,6 @@
 /**
- * Wikilink parsing utilities.
+ * Wikilink parsing utilities — thin server-side shim around the canonical
+ * implementation in `@continuum/shared`.
  *
  * A wikilink uses the `[[Title]]` or `[[Title|alias]]` syntax. Escaped
  * sequences (`\[\[...]]`) are intentionally ignored so authors can opt out.
@@ -7,33 +8,22 @@
  * the link.
  */
 
-const WIKILINK_RE = /(\\)?\[\[([^\n]+?)\]\]/g;
+import { extractWikilinkTargets, getWikilinkPattern } from '@continuum/shared';
+
+export { getWikilinkPattern };
 
 /**
  * Extract unique wikilink target titles from a body of text.
  *
- * - Strips any `|alias` portion.
- * - Trims whitespace inside the brackets.
- * - Deduplicates case-insensitively while preserving the casing of the first
- *   occurrence (so display in UI stays natural).
- * - Skips occurrences preceded by a backslash (escaped wikilinks).
+ * Preserved as a stable named export for existing server code; the
+ * implementation lives in `@continuum/shared` so the web client and the
+ * server agree on parsing semantics.
  *
  * @param content Raw note content (markdown / plain text).
  * @returns Ordered list of unique titles referenced by the content.
  */
 export function extractWikilinks(content: string): string[] {
-  if (!content) return [];
-
-  const seen = new Map<string, string>(); // lower -> first-seen casing
-  for (const match of content.matchAll(WIKILINK_RE)) {
-    const [, escape, inner] = match;
-    if (escape) continue;
-    const title = inner.split('|', 1)[0]?.trim();
-    if (!title) continue;
-    const key = title.toLowerCase();
-    if (!seen.has(key)) seen.set(key, title);
-  }
-  return Array.from(seen.values());
+  return extractWikilinkTargets(content);
 }
 
 /**

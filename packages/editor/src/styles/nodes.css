@@ -1,0 +1,399 @@
+/**
+ * Continuum NodeView chrome.
+ *
+ * Holds the global styling for editor NodeViews whose root class is
+ * rendered into the ProseMirror DOM (`.continuum-callout`,
+ * `.continuum-code-block`) plus the highlight.js token theme used by
+ * the code-block view. Component-internal layout (e.g. picker tabs,
+ * search input) lives scoped inside the corresponding `*.vue` files.
+ */
+
+/* ── Callout ─────────────────────────────────────────────────── */
+.continuum-callout {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: var(--space-4);
+    margin: 0.6em 0;
+    padding: var(--space-4) var(--space-5);
+    background: var(--bg-soft);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
+}
+
+.continuum-callout__icon-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: flex-start;
+    line-height: 1;
+}
+
+.continuum-callout__icon-btn {
+    appearance: none;
+    background: transparent;
+    border: var(--border-width-1) solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--fg);
+    user-select: none;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+}
+
+.continuum-callout__icon-btn:hover {
+    background: var(--bg-elev);
+    border-color: var(--border);
+}
+
+.continuum-callout__icon-img {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.continuum-callout__icon-emoji {
+    font-size: 1.25em;
+    line-height: 1.2;
+    pointer-events: none;
+}
+
+.continuum-callout__picker {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 50;
+    width: 280px;
+    padding: var(--space-3);
+    background: var(--bg-elev);
+    border: var(--border-width-1) solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+}
+
+.continuum-callout__tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: var(--space-2);
+    padding-bottom: var(--space-2);
+    border-bottom: var(--border-width-1) solid var(--border);
+}
+
+.continuum-callout__tab {
+    appearance: none;
+    background: transparent;
+    border: var(--border-width-1) solid transparent;
+    border-radius: var(--radius-xs);
+    padding: 4px 10px;
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    cursor: pointer;
+}
+
+.continuum-callout__tab:hover {
+    color: var(--fg);
+}
+
+.continuum-callout__tab.active {
+    background: var(--bg-soft);
+    color: var(--fg);
+    border-color: var(--border);
+}
+
+.continuum-callout__search,
+.continuum-callout__url-input {
+    width: 100%;
+    height: 28px;
+    padding: 0 var(--space-2);
+    background: var(--bg-soft);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-xs);
+    color: var(--fg);
+    font-size: var(--text-xs);
+    outline: none;
+    margin-bottom: var(--space-2);
+}
+
+.continuum-callout__search:focus,
+.continuum-callout__url-input:focus {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-focus);
+}
+
+.continuum-callout__grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 2px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.continuum-callout__swatch {
+    appearance: none;
+    background: transparent;
+    border: var(--border-width-1) solid transparent;
+    border-radius: var(--radius-xs);
+    padding: 4px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.continuum-callout__swatch:hover {
+    background: var(--bg-soft);
+}
+
+.continuum-callout__swatch.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+}
+
+.continuum-callout__swatch-fallback {
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--fg-muted);
+    text-transform: uppercase;
+}
+
+.continuum-callout__empty {
+    padding: var(--space-3);
+    text-align: center;
+    color: var(--fg-muted);
+    font-size: var(--text-xs);
+}
+
+.continuum-callout__label {
+    display: block;
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    margin-bottom: 4px;
+}
+
+.continuum-callout__url-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.continuum-callout__url-preview {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-soft);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+}
+
+.continuum-callout__url-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.continuum-callout__url-placeholder {
+    color: var(--fg-muted);
+    font-weight: var(--font-weight-semibold);
+}
+
+.continuum-callout__url-btn {
+    flex: 1 1 auto;
+    height: 28px;
+    padding: 0 var(--space-3);
+    background: var(--accent);
+    color: var(--fg-on-accent);
+    border: none;
+    border-radius: var(--radius-xs);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    cursor: pointer;
+}
+
+.continuum-callout__url-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.continuum-callout__hint {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-2xs);
+    color: var(--fg-muted);
+    line-height: 1.4;
+}
+
+.continuum-callout__body>:first-child {
+    margin-top: 0;
+}
+
+.continuum-callout__body>:last-child {
+    margin-bottom: 0;
+}
+
+/* ── Code block ──────────────────────────────────────────────── */
+.continuum-code-block {
+    position: relative;
+    margin: 0.6em 0;
+}
+
+.continuum-code-block pre {
+    background: var(--bg-soft);
+    padding: var(--space-7) var(--space-8);
+    padding-top: calc(var(--space-7) + 28px);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    border: var(--border-width-1) solid var(--border);
+    margin: 0;
+}
+
+.continuum-code-block__bar {
+    position: absolute;
+    top: var(--space-2);
+    right: var(--space-3);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    z-index: 1;
+    opacity: 0.55;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.continuum-code-block:hover .continuum-code-block__bar,
+.continuum-code-block:focus-within .continuum-code-block__bar {
+    opacity: 1;
+}
+
+.continuum-code-block__lang-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.continuum-code-block__lang-label {
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 var(--space-3);
+    background: var(--bg-elev);
+    color: var(--fg-muted);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-xs);
+    font-size: var(--text-2xs);
+    font-family: var(--font-sans);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    pointer-events: none;
+}
+
+.continuum-code-block__lang {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    appearance: none;
+    background: transparent;
+    color: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 0;
+}
+
+.continuum-code-block__lang:focus-visible+.continuum-code-block__lang-label,
+.continuum-code-block__lang-wrap:hover .continuum-code-block__lang-label {
+    color: var(--fg);
+    border-color: var(--border-strong);
+}
+
+.continuum-code-block__copy {
+    height: 22px;
+    padding: 0 var(--space-3);
+    background: var(--bg-elev);
+    color: var(--fg-muted);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-xs);
+    font-size: var(--text-2xs);
+    font-family: var(--font-sans);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    cursor: pointer;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+}
+
+.continuum-code-block__copy:hover {
+    color: var(--fg);
+    border-color: var(--border-strong);
+}
+
+/* ── Lowlight syntax tokens (theme-aware) ────────────────────── */
+.continuum-code-block .hljs-comment,
+.continuum-code-block .hljs-quote {
+  color: var(--fg-subtle);
+  font-style: italic;
+}
+
+.continuum-code-block .hljs-keyword,
+.continuum-code-block .hljs-selector-tag,
+.continuum-code-block .hljs-literal {
+  color: var(--accent);
+}
+
+.continuum-code-block .hljs-number,
+.continuum-code-block .hljs-string,
+.continuum-code-block .hljs-doctag {
+  color: var(--success, #16a34a);
+}
+
+.continuum-code-block .hljs-title,
+.continuum-code-block .hljs-section,
+.continuum-code-block .hljs-built_in,
+.continuum-code-block .hljs-name {
+  color: var(--warning, #d97706);
+}
+
+.continuum-code-block .hljs-variable,
+.continuum-code-block .hljs-template-variable,
+.continuum-code-block .hljs-attr,
+.continuum-code-block .hljs-attribute {
+  color: var(--fg-strong);
+}
+
+.continuum-code-block .hljs-meta,
+.continuum-code-block .hljs-tag {
+  color: var(--fg-muted);
+}
+
+.continuum-code-block .hljs-emphasis {
+  font-style: italic;
+}
+
+.continuum-code-block .hljs-strong {
+  font-weight: var(--font-weight-semibold);
+}

@@ -1,36 +1,20 @@
 import Graph from 'graphology';
 import type { GraphEdge, GraphNode } from '@continuum/shared';
-import {
-  applyDegreeSizing,
-  runForceLayout,
-  runNoverlap,
-  seededPosition,
-} from './state.js';
+import { KIND_COLORS, colorForKind } from '@continuum/shared';
+import { applyDegreeSizing, seededPosition } from './state/sizing.js';
+import { runForceLayout, runNoverlap } from './state/layouts.js';
 import {
   edgeStyleFor,
   NODE_BASE_SIZE,
 } from './render.js';
 
 /**
- * Legacy color map. The web app now reads colors from the `useKinds`
- * composable; this remains a safe fallback for embedders without one.
+ * Re-exported from `@continuum/shared` so existing
+ * `import { colorForKind } from '@continuum/graph'` callers keep working.
+ * The web app now reads colors from the `useKinds` composable; this remains
+ * a safe fallback for embedders without one.
  */
-const KIND_COLORS: Record<string, string> = {
-  note: '#8C7B6A',
-  character: '#C96E4A',
-  race: '#7A9E7E',
-  class: '#D4A24C',
-  location: '#5B7B95',
-  item: '#A87CA0',
-  faction: '#B5563E',
-  event: '#6B8E8E',
-  lore: '#A89580',
-  custom: '#9A9286',
-};
-
-export function colorForKind(kind: string): string {
-  return KIND_COLORS[kind] ?? KIND_COLORS.custom;
-}
+export { KIND_COLORS, colorForKind };
 
 export interface BuildGraphOptions {
   nodes: GraphNode[];
@@ -90,17 +74,20 @@ export function buildGraph({
   return g;
 }
 
+export { applyDegreeSizing, seededPosition } from './state/sizing.js';
 export {
-  applyDegreeSizing,
   highlightNeighbors,
   runCircularLayout,
+  runClusteredLayout,
   runForceLayout,
   runNoverlap,
-  seededPosition,
+  runOrganicSeed,
+} from './state/layouts.js';
+export {
   startLiveSimulation,
   type LiveSimulationHandle,
   type LiveSimulationOptions,
-} from './state.js';
+} from './state/live-simulation.js';
 
 export {
   buildSigmaProgramSettings,

@@ -1,5 +1,8 @@
-<script setup lang="ts">
-import { onBeforeUnmount, watch, computed, ref, markRaw } from 'vue';
+﻿<script setup lang="ts">
+import './styles/editor.css';
+import './styles/prosemirror.css';
+import './styles/nodes.css';
+import { onBeforeUnmount, watch, computed, ref, markRaw, provide, type Component } from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import Collaboration from '@tiptap/extension-collaboration';
 import { HocuspocusProvider } from '@hocuspocus/provider';
@@ -9,6 +12,14 @@ import { buildExtensions } from './extensions';
 import { buildEditorMenu, type PromptRequest } from './editorMenu';
 import CodeBlockNodeView from './CodeBlockNodeView.vue';
 import DetailsNodeView from './nodes/DetailsNodeView.vue';
+import CalloutNodeView from './nodes/CalloutNodeView.vue';
+import ChartNodeView from './nodes/ChartNodeView.vue';
+import {
+  ICON_CATALOG_KEY,
+  ICON_COMPONENT_KEY,
+  SELECT_COMPONENT_KEY,
+  type IconCatalogEntry,
+} from './hostBridge';
 
 interface CollaborationConfig {
   documentId: string;
@@ -24,8 +35,33 @@ const props = withDefaults(
     mode?: EditorMode;
     placeholder?: string;
     collaboration?: CollaborationConfig | null;
+    /**
+     * Catalog of icons surfaced in node-view pickers (e.g. Callout). When
+     * omitted the editor falls back to a built-in symbol grid so the
+     * package stays usable in isolation.
+     */
+    iconCatalog?: IconCatalogEntry[];
+    /**
+     * Vue component used to render an icon by `name`. The host typically
+     * passes its own `<Icon name="â€¦" :size="â€¦">` so node-views inherit
+     * the app's visual identity.
+     */
+    iconComponent?: Component | null;
+    /**
+     * Vue component used to render dropdowns (e.g. the code-block
+     * language picker). Expected to mirror the `UiSelect` API:
+     * `modelValue`, `options: { label; value }[]`, emits `update:modelValue`.
+     */
+    selectComponent?: Component | null;
   }>(),
-  { mode: 'wysiwyg', placeholder: 'Start writing…', collaboration: null },
+  {
+    mode: 'wysiwyg',
+    placeholder: 'Start writingâ€¦',
+    collaboration: null,
+    iconCatalog: () => [],
+    iconComponent: null,
+    selectComponent: null,
+  },
 );
 
 const emit = defineEmits<{
@@ -46,6 +82,14 @@ const emit = defineEmits<{
 }>();
 
 const isMarkdown = computed(() => props.mode === 'markdown');
+
+// Make host-provided UI primitives available to all node-views without
+// each one importing them directly. Computed-then-watched providers would
+// be overkill â€” the catalog and component refs are stable for the
+// editor's lifetime in practice, so a single eager `provide` is enough.
+provide(ICON_CATALOG_KEY, props.iconCatalog);
+if (props.iconComponent) provide(ICON_COMPONENT_KEY, markRaw(props.iconComponent));
+if (props.selectComponent) provide(SELECT_COMPONENT_KEY, markRaw(props.selectComponent));
 
 // Collaboration is only valid in WYSIWYG mode.
 const collab = computed<CollaborationConfig | null>(() => {
@@ -78,17 +122,62 @@ const editor = useEditor({
       placeholder: props.placeholder,
       codeBlockView: markRaw(CodeBlockNodeView),
       detailsView: markRaw(DetailsNodeView),
+      calloutView: markRaw(CalloutNodeView),
+      chartView: markRaw(ChartNodeView),
     }),
     ...(collab.value && ydoc ? [Collaboration.configure({ document: ydoc })] : []),
   ],
   editorProps: {
-    handleKeyDown(_view, event: KeyboardEvent) {
+    handleKeyDown(view, event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         wrapWikilink();
         return true;
       }
+      // Backspace at the very start of a wrapping block (callout,
+      // blockquote, codeBlock, details summary/content) should escape the
+      // block instead of being a no-op. Without this the cursor is stuck
+      // inside the wrapper and the only way out is to drag-select and
+      // delete â€” a poor UX for anyone reaching for backspace to "remove
+      // this thing I just inserted".
+      if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (handleBlockBackspace(view)) {
+          event.preventDefault();
+          return true;
+        }
+      }
       return false;
+    },
+    /**
+     * Inline-paste images from the clipboard. The browser exposes them
+     * as `image/*` items on the DataTransfer; convert each to a data
+     * URL and insert as a regular image node so the rest of the
+     * pipeline (selection outline, alignment, replace, delete) keeps
+     * working without a dedicated upload service.
+     */
+    handlePaste(_view, event: ClipboardEvent) {
+      const data = event.clipboardData;
+      if (!data || data.files.length === 0) return false;
+      const images = Array.from(data.files).filter((f) => f.type.startsWith('image/'));
+      if (!images.length) return false;
+      event.preventDefault();
+      void insertImagesFromFiles(images);
+      return true;
+    },
+    /**
+     * Inline-drop images dragged from the desktop. Same data-URL strategy
+     * as paste; we only intercept the event when at least one of the
+     * dropped files is an image so non-image drops fall through to
+     * Tiptap's default handling (e.g. internal node drag).
+     */
+    handleDrop(_view, event: DragEvent) {
+      const dt = event.dataTransfer;
+      if (!dt || dt.files.length === 0) return false;
+      const images = Array.from(dt.files).filter((f) => f.type.startsWith('image/'));
+      if (!images.length) return false;
+      event.preventDefault();
+      void insertImagesFromFiles(images);
+      return true;
     },
   },
   onUpdate: () => {
@@ -100,6 +189,16 @@ function openContextMenu(ev: MouseEvent): void {
   const e = editor.value;
   if (!e) return;
   ev.preventDefault();
+  // Place the caret at the right-click coordinates so context-menu
+  // commands (notably table row/column ops) operate on the cell the
+  // user actually clicked, not on whatever selection happened to be
+  // active before. `posAtCoords` returns null when the click lands in
+  // padding outside any node â€” in that case keep the existing selection.
+  const view = e.view;
+  const pos = view.posAtCoords({ left: ev.clientX, top: ev.clientY });
+  if (pos && e.state.selection.empty) {
+    e.commands.setTextSelection(pos.pos);
+  }
   const inCodeBlock = e.isActive('codeBlock');
   const codeLanguage = inCodeBlock
     ? ((e.getAttributes('codeBlock').language as string | undefined) ?? 'plaintext')
@@ -159,6 +258,121 @@ function wrapWikilink(): void {
   }
 }
 
+/** Block types whose Backspace-at-start should escape the wrapper. */
+const ESCAPE_ON_BACKSPACE = new Set([
+  'callout',
+  'blockquote',
+  'codeBlock',
+  'details',
+  'detailsContent',
+  'detailsSummary',
+]);
+
+/**
+ * Handle Backspace inside special block wrappers.
+ *
+ * Returns `true` when the keystroke was handled (caller should
+ * preventDefault). The rule mirrors Notion: Backspace at the very start
+ * of a wrapping block lifts the cursor out (preserving content); when the
+ * wrapping block is empty it is removed entirely.
+ */
+function handleBlockBackspace(view: import('@tiptap/pm/view').EditorView): boolean {
+  const e = editor.value;
+  if (!e) return false;
+  const { state } = view;
+  const { selection } = state;
+  if (!selection.empty) return false;
+  const $from = selection.$from;
+  // Only act when the caret is at the very start of its parent text block.
+  if ($from.parentOffset !== 0) return false;
+
+  // Walk up the ancestor chain to find the closest "escape" target.
+  for (let depth = $from.depth; depth >= 0; depth--) {
+    const node = $from.node(depth);
+    const typeName = node.type.name;
+    if (!ESCAPE_ON_BACKSPACE.has(typeName)) continue;
+
+    // Special-case the Details node: a backspace inside the summary
+    // should remove the whole `details` wrapper, not just the summary.
+    if (typeName === 'detailsSummary' || typeName === 'detailsContent') {
+      const detailsDepth = depth - 1;
+      const detailsNode = detailsDepth >= 0 ? $from.node(detailsDepth) : null;
+      if (detailsNode?.type.name === 'details' && isBlockEmpty(detailsNode)) {
+        const before = $from.before(detailsDepth);
+        const after = $from.after(detailsDepth);
+        return e
+          .chain()
+          .focus()
+          .command(({ tr, dispatch }) => {
+            if (dispatch) tr.delete(before, after);
+            return true;
+          })
+          .run();
+      }
+      // Non-empty details: lift the inner block out so caret escapes.
+      return e.chain().focus().lift('details').run() || e.chain().focus().selectParentNode().run();
+    }
+
+    if (isBlockEmpty(node)) {
+      const before = $from.before(depth);
+      const after = $from.after(depth);
+      return e
+        .chain()
+        .focus()
+        .command(({ tr, dispatch }) => {
+          if (dispatch) tr.delete(before, after);
+          return true;
+        })
+        .run();
+    }
+    // Non-empty wrapper: lift out (callout/blockquote) or convert (codeBlock).
+    if (typeName === 'codeBlock') {
+      return e.chain().focus().setNode('paragraph').run();
+    }
+    return e.chain().focus().lift(typeName).run();
+  }
+  return false;
+}
+
+/** A block is considered empty when it has no text and no inline content. */
+function isBlockEmpty(node: import('@tiptap/pm/model').Node): boolean {
+  if (node.textContent.length > 0) return false;
+  if (node.childCount === 0) return true;
+  // Recursively ensure every descendant is empty.
+  let empty = true;
+  node.descendants((child) => {
+    if (!empty) return false;
+    if (child.isText && child.text && child.text.length > 0) {
+      empty = false;
+      return false;
+    }
+    return true;
+  });
+  return empty;
+}
+
+/**
+ * Read each file as a data URL and insert as an image node. Sequencing
+ * the FileReaders keeps insertion order deterministic when multiple
+ * images are pasted at once, and bypasses the need for an upload
+ * service on a local-first install.
+ */
+async function insertImagesFromFiles(files: File[]): Promise<void> {
+  const e = editor.value;
+  if (!e) return;
+  for (const file of files) {
+    const dataUrl = await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+    if (dataUrl) {
+      e.chain().focus().setImage({ src: dataUrl, alt: file.name }).run();
+    }
+  }
+}
+
 // Keep external v-model in sync only when not in collab mode.
 watch(
   () => props.modelValue,
@@ -182,6 +396,39 @@ watch(
 );
 
 const markdownRef = ref<HTMLTextAreaElement | null>(null);
+
+/**
+ * Sub-view for source mode: 'source' shows the raw HTML in a textarea,
+ * 'preview' renders it read-only with the same `.ProseMirror` styles as
+ * the WYSIWYG view so authors can verify formatting without switching
+ * the whole editor. Resets back to 'source' whenever the parent leaves
+ * source mode so the next entry starts in edit-first state.
+ */
+const sourceView = ref<'source' | 'preview'>('source');
+watch(isMarkdown, (md) => {
+  if (!md) sourceView.value = 'source';
+});
+
+/**
+ * Strip script/style/iframe/object tags and event-handler / javascript:
+ * attributes from the HTML before injecting it as preview. The editor
+ * never produces these via Tiptap; this is defence-in-depth against
+ * pasted or hand-edited content. Full XSS hardening would warrant a
+ * library like DOMPurify, but the current surface (local-first, single
+ * trusted user) makes a focused regex pass acceptable.
+ */
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<\s*(script|style|iframe|object|embed)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*(script|style|iframe|object|embed)\b[^>]*\/?\s*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/(href|src)\s*=\s*"javascript:[^"]*"/gi, '$1="#"')
+    .replace(/(href|src)\s*=\s*'javascript:[^']*'/gi, "$1='#'");
+}
+
+const sanitizedPreview = computed(() => sanitizeHtml(props.modelValue || ''));
 
 let mdEmitTimer: ReturnType<typeof setTimeout> | null = null;
 let mdPendingValue: string | null = null;
@@ -242,7 +489,7 @@ function isActive(name: string, attrs?: Record<string, unknown>): boolean {
 </script>
 
 <template>
-  <div class="lore-editor" :class="{ 'is-markdown': isMarkdown }">
+  <div class="continuum-editor" :class="{ 'is-markdown': isMarkdown }">
     <template v-if="!isMarkdown">
       <div class="toolbar" v-if="editor" role="toolbar" aria-label="Formatting">
         <div class="tb-group">
@@ -353,450 +600,34 @@ function isActive(name: string, attrs?: Record<string, unknown>): boolean {
     </template>
 
     <template v-else>
-      <div class="md-hint">Markdown source</div>
-      <textarea ref="markdownRef" class="content md-area" :value="modelValue" :placeholder="placeholder"
-        spellcheck="false" @input="onMarkdownInput" />
+      <div class="md-hint" role="toolbar" aria-label="Source view">
+        <span class="md-hint__label">HTML source</span>
+        <div class="md-view-switch" role="group" aria-label="Source / preview">
+          <button type="button" class="md-view-btn" :class="{ active: sourceView === 'source' }"
+            @click="sourceView = 'source'">
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"
+                d="m6 5l-3 3l3 3m4-6l3 3l-3 3" />
+            </svg>
+            Source
+          </button>
+          <button type="button" class="md-view-btn" :class="{ active: sourceView === 'preview' }"
+            @click="sourceView = 'preview'">
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"
+                d="M1 8s2.5-5 7-5s7 5 7 5s-2.5 5-7 5s-7-5-7-5z" />
+              <circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.4" />
+            </svg>
+            Preview
+          </button>
+        </div>
+      </div>
+      <textarea v-show="sourceView === 'source'" ref="markdownRef" class="content md-area" :value="modelValue"
+        :placeholder="placeholder" spellcheck="false" @input="onMarkdownInput" />
+      <!-- Read-only preview: renders the same HTML the WYSIWYG would emit so
+           authors can verify their source edits without leaving source mode.
+           Uses .ProseMirror so saved tiptap styles apply identically. -->
+      <div v-if="sourceView === 'preview'" class="content md-preview ProseMirror" v-html="sanitizedPreview" />
     </template>
   </div>
 </template>
-
-<style>
-.lore-editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  flex: 1 1 0;
-  min-height: 0;
-}
-
-.lore-editor .toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-width-1) solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-}
-
-.lore-editor .toolbar .tb-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.lore-editor .toolbar .tb-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: var(--border-width-1) solid transparent;
-  color: var(--fg-muted);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.01em;
-  transition:
-    background-color var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard);
-}
-
-.lore-editor .toolbar .tb-btn--text {
-  width: auto;
-  min-width: 28px;
-  padding: 0 var(--space-3);
-}
-
-.lore-editor .toolbar .tb-btn:hover {
-  background: var(--bg-soft);
-  color: var(--fg);
-}
-
-.lore-editor .toolbar .tb-btn.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.lore-editor .toolbar .sep {
-  width: 1px;
-  height: 18px;
-  background: var(--border);
-}
-
-.lore-editor .toolbar .live {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: auto;
-  padding: 2px var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--success-soft, var(--bg-soft));
-  color: var(--success);
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-medium);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-wide);
-}
-
-.lore-editor .toolbar .live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-circle);
-  background: var(--success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 25%, transparent);
-}
-
-.lore-editor .content {
-  /* The pane already provides the surface + radius; the editor becomes a
-     calmer, frameless writing area. */
-  padding: var(--space-6) var(--space-2);
-  background: transparent;
-  color: var(--fg);
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-  font-size: var(--text-md);
-  line-height: var(--leading-relaxed);
-}
-
-.lore-editor .md-hint {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-widest);
-  color: var(--fg-subtle);
-  padding: 0 var(--space-2);
-}
-
-.lore-editor .md-area {
-  width: 100%;
-  resize: none;
-  font-family: var(--font-mono);
-  font-size: var(--text-md);
-  line-height: var(--leading-relaxed);
-  outline: none;
-  background: var(--bg-elev);
-  color: var(--fg);
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-}
-
-.lore-editor .md-area:focus {
-  outline: none;
-  border-color: var(--border-strong);
-  box-shadow: none;
-}
-
-.lore-editor .ProseMirror {
-  outline: none;
-  min-height: 100%;
-}
-
-.lore-editor .ProseMirror p.is-editor-empty:first-child::before {
-  content: attr(data-placeholder);
-  color: var(--fg-subtle);
-  float: left;
-  pointer-events: none;
-  height: 0;
-}
-
-.lore-editor .ProseMirror h1 {
-  font-size: var(--text-3xl);
-  margin: 0.5em 0 0.3em;
-  font-weight: var(--font-weight-semibold);
-  color: var(--fg-strong);
-  letter-spacing: var(--tracking-tight);
-}
-
-.lore-editor .ProseMirror h2 {
-  font-size: var(--text-2xl);
-  margin: 0.5em 0 0.3em;
-  font-weight: var(--font-weight-semibold);
-  color: var(--fg-strong);
-}
-
-.lore-editor .ProseMirror h3 {
-  font-size: var(--text-xl);
-  margin: 0.5em 0 0.3em;
-  font-weight: var(--font-weight-semibold);
-  color: var(--fg-strong);
-}
-
-.lore-editor .ProseMirror p {
-  margin: 0.5em 0;
-  line-height: var(--leading-relaxed);
-}
-
-.lore-editor .ProseMirror code {
-  background: var(--accent-soft);
-  color: var(--accent);
-  padding: 1px var(--space-3);
-  border-radius: var(--radius-xs);
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-}
-
-.lore-editor .ProseMirror pre {
-  background: var(--bg-soft);
-  padding: var(--space-7) var(--space-8);
-  border-radius: var(--radius-sm);
-  overflow-x: auto;
-  font-family: var(--font-mono);
-  border: var(--border-width-1) solid var(--border);
-}
-
-.lore-editor .ProseMirror blockquote {
-  border-left: 3px solid var(--accent);
-  padding-left: var(--space-7);
-  color: var(--fg-muted);
-  margin: 0.6em 0;
-}
-
-.lore-editor .ProseMirror a {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.lore-editor .ProseMirror ul,
-.lore-editor .ProseMirror ol {
-  padding-left: 1.4em;
-}
-
-.lore-editor .ProseMirror hr {
-  border: none;
-  border-top: var(--border-width-1) solid var(--border);
-  margin: 1em 0;
-}
-
-/* ── Task list ───────────────────────────────────────────────── */
-.lore-editor .ProseMirror ul[data-type="taskList"] {
-  list-style: none;
-  padding-left: 0;
-}
-
-.lore-editor .ProseMirror ul[data-type="taskList"] li {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-  margin: var(--space-2) 0;
-}
-
-.lore-editor .ProseMirror ul[data-type="taskList"] li>label {
-  flex: 0 0 auto;
-  user-select: none;
-  margin-top: 4px;
-}
-
-.lore-editor .ProseMirror ul[data-type="taskList"] li>div {
-  flex: 1;
-  min-width: 0;
-}
-
-.lore-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border: var(--border-width-1) solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  background: var(--bg-elev);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard);
-  margin: 0;
-  padding: 0;
-}
-
-.lore-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.lore-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"]:checked::after {
-  content: '';
-  width: 9px;
-  height: 5px;
-  border-left: 2px solid var(--fg-on-accent, #fff);
-  border-bottom: 2px solid var(--fg-on-accent, #fff);
-  transform: rotate(-45deg) translate(1px, -1px);
-}
-
-.lore-editor .ProseMirror li[data-checked="true"]>div {
-  color: var(--fg-subtle);
-  text-decoration: line-through;
-}
-
-/* ── Tables ──────────────────────────────────────────────────── */
-.lore-editor .ProseMirror table {
-  border-collapse: collapse;
-  table-layout: fixed;
-  width: 100%;
-  margin: 0.6em 0;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  border: var(--border-width-1) solid var(--border);
-}
-
-.lore-editor .ProseMirror table td,
-.lore-editor .ProseMirror table th {
-  border: var(--border-width-1) solid var(--border);
-  padding: var(--space-3) var(--space-5);
-  vertical-align: top;
-  position: relative;
-  min-width: 60px;
-}
-
-.lore-editor .ProseMirror table th {
-  background: var(--bg-soft);
-  font-weight: var(--font-weight-semibold);
-  color: var(--fg-strong);
-  text-align: left;
-}
-
-.lore-editor .ProseMirror table .selectedCell {
-  background: var(--accent-soft);
-}
-
-.lore-editor .ProseMirror table .column-resize-handle {
-  position: absolute;
-  right: -2px;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: var(--accent);
-  pointer-events: none;
-}
-
-/* ── Images ──────────────────────────────────────────────────── */
-.lore-editor .ProseMirror img {
-  max-width: 100%;
-  height: auto;
-  border-radius: var(--radius-md);
-  border: var(--border-width-1) solid var(--border);
-  display: block;
-  margin: 0.6em 0;
-}
-
-.lore-editor .ProseMirror img[data-align="left"] {
-  margin-left: 0;
-  margin-right: auto;
-}
-
-.lore-editor .ProseMirror img[data-align="center"] {
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.lore-editor .ProseMirror img[data-align="right"] {
-  margin-left: auto;
-  margin-right: 0;
-}
-
-.lore-editor .ProseMirror img.ProseMirror-selectednode {
-  outline: 2px solid var(--accent);
-}
-
-/* ── Highlights / inline color ───────────────────────────────── */
-.lore-editor .ProseMirror mark {
-  border-radius: var(--radius-xs);
-  padding: 0 2px;
-}
-
-/* ── Callout ─────────────────────────────────────────────────── */
-.lore-editor .ProseMirror .lore-callout {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: start;
-  gap: var(--space-4);
-  margin: 0.6em 0;
-  padding: var(--space-4) var(--space-5);
-  background: var(--bg-soft);
-  border: var(--border-width-1) solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.lore-editor .ProseMirror .lore-callout__emoji {
-  font-size: 1.25em;
-  line-height: 1.4;
-  user-select: none;
-}
-
-.lore-editor .ProseMirror .lore-callout__body> :first-child {
-  margin-top: 0;
-}
-
-.lore-editor .ProseMirror .lore-callout__body> :last-child {
-  margin-bottom: 0;
-}
-
-/* ── Details / Toggle ────────────────────────────────────────── */
-/* Visual styling lives inside DetailsNodeView.vue (scoped). Nothing here. */
-
-/* ── Text alignment ──────────────────────────────────────────── */
-.lore-editor .ProseMirror [style*="text-align: center"] {
-  text-align: center;
-}
-
-.lore-editor .ProseMirror [style*="text-align: right"] {
-  text-align: right;
-}
-
-.lore-editor .ProseMirror [style*="text-align: justify"] {
-  text-align: justify;
-}
-
-/* ── Lowlight syntax tokens (theme-aware) ────────────────────── */
-.lore-code-block .hljs-comment,
-.lore-code-block .hljs-quote {
-  color: var(--fg-subtle);
-  font-style: italic;
-}
-
-.lore-code-block .hljs-keyword,
-.lore-code-block .hljs-selector-tag,
-.lore-code-block .hljs-literal {
-  color: var(--accent);
-}
-
-.lore-code-block .hljs-number,
-.lore-code-block .hljs-string,
-.lore-code-block .hljs-doctag {
-  color: var(--success, #16a34a);
-}
-
-.lore-code-block .hljs-title,
-.lore-code-block .hljs-section,
-.lore-code-block .hljs-built_in,
-.lore-code-block .hljs-name {
-  color: var(--warning, #d97706);
-}
-
-.lore-code-block .hljs-variable,
-.lore-code-block .hljs-template-variable,
-.lore-code-block .hljs-attr,
-.lore-code-block .hljs-attribute {
-  color: var(--fg-strong);
-}
-
-.lore-code-block .hljs-meta,
-.lore-code-block .hljs-tag {
-  color: var(--fg-muted);
-}
-
-.lore-code-block .hljs-emphasis {
-  font-style: italic;
-}
-
-.lore-code-block .hljs-strong {
-  font-weight: var(--font-weight-semibold);
-}
-</style>

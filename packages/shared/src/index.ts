@@ -186,3 +186,89 @@ export interface FolderEffective {
   icon: string;
   color: string;
 }
+
+/**
+ * Project-wide fallback applied when no ancestor folder defines a value.
+ * Single source of truth shared by the server (`folder-tree.ts`) and the
+ * web client (`useFolders`) so both sides agree on what an "Inbox" note or
+ * a top-level folder inherits when none of its ancestors set a default.
+ */
+export const ROOT_FALLBACK: FolderEffective = {
+  defaultKind: 'note',
+  icon: 'folder',
+  color: '#8C7B6A',
+};
+
+// ===== Wikilinks =====
+
+/**
+ * Canonical wikilink syntax: `[[Title]]` / `[[Title|alias]]`. A leading
+ * backslash escapes the link (group 1), the inner payload is captured by
+ * group 2. The pattern uses the `g` flag and therefore carries `lastIndex`
+ * state — call {@link getWikilinkPattern} to obtain a fresh instance per
+ * call site instead of sharing a module-level constant.
+ */
+export function getWikilinkPattern(): RegExp {
+  return /(\\)?\[\[([^\n]+?)\]\]/g;
+}
+
+/**
+ * Extract unique wikilink target titles from a body of text.
+ *
+ * - Strips any `|alias` portion.
+ * - Trims whitespace inside the brackets.
+ * - Deduplicates case-insensitively while preserving the casing of the
+ *   first occurrence so display in UI stays natural.
+ * - Skips occurrences preceded by a backslash (escaped wikilinks).
+ *
+ * @param content Raw note content (markdown / plain text).
+ * @returns Ordered list of unique titles referenced by the content.
+ */
+export function extractWikilinkTargets(content: string): string[] {
+  if (!content) return [];
+  const seen = new Map<string, string>(); // lower -> first-seen casing
+  for (const match of content.matchAll(getWikilinkPattern())) {
+    const [, escape, inner] = match;
+    if (escape) continue;
+    const title = inner.split('|', 1)[0]?.trim();
+    if (!title) continue;
+    const key = title.toLowerCase();
+    if (!seen.has(key)) seen.set(key, title);
+  }
+  return Array.from(seen.values());
+}
+
+// ===== Kind colours =====
+
+/**
+ * Default per-kind colour palette — **single source of truth** consumed by:
+ *
+ * - The web client as the runtime fallback when no `Kind` record provides an
+ *   explicit colour (graph nodes, sidebar dots, backlinks/linked-notes
+ *   panels, embedders of `@continuum/graph` without the `useKinds`
+ *   composable).
+ * - The server seed (`server/src/db/seed.ts`), which imports this map and
+ *   uses it for the `color` column when populating the `kinds` table on a
+ *   fresh database. Existing rows in `kinds` are never rewritten from this
+ *   map — only first-install defaults derive from it.
+ *
+ * Keep this map and the kind id list in `server/src/db/seed.ts` in sync;
+ * any kind id that appears in the seed must have an entry here.
+ */
+export const KIND_COLORS: Record<string, string> = {
+  note: '#8C7B6A',
+  character: '#C96E4A',
+  race: '#7A9E7E',
+  class: '#D4A24C',
+  location: '#5B7B95',
+  item: '#A87CA0',
+  faction: '#B5563E',
+  event: '#6B8E8E',
+  lore: '#A89580',
+  custom: '#9A9286',
+};
+
+/** Resolve a kind id to its fallback colour, defaulting to `custom`. */
+export function colorForKind(kind: string): string {
+  return KIND_COLORS[kind] ?? KIND_COLORS.custom;
+}

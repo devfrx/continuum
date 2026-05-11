@@ -29,41 +29,14 @@ import type { Component } from 'vue';
 import { all, createLowlight } from 'lowlight';
 import { Details, DetailsSummary, DetailsContent } from './nodes/Details';
 import { Callout } from './nodes/Callout';
+import { Chart } from './nodes/Chart';
 import { TrailingNode } from './extensions/TrailingNode';
 
 export const lowlight = createLowlight(all);
 
-/** Languages exposed by the code-block selector, in display order. */
-export const CODE_LANGUAGES: { value: string; label: string }[] = [
-  { value: 'plaintext', label: 'Plain text' },
-  { value: 'bash', label: 'Bash' },
-  { value: 'c', label: 'C' },
-  { value: 'cpp', label: 'C++' },
-  { value: 'csharp', label: 'C#' },
-  { value: 'css', label: 'CSS' },
-  { value: 'diff', label: 'Diff' },
-  { value: 'go', label: 'Go' },
-  { value: 'graphql', label: 'GraphQL' },
-  { value: 'html', label: 'HTML' },
-  { value: 'java', label: 'Java' },
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'json', label: 'JSON' },
-  { value: 'kotlin', label: 'Kotlin' },
-  { value: 'markdown', label: 'Markdown' },
-  { value: 'php', label: 'PHP' },
-  { value: 'python', label: 'Python' },
-  { value: 'ruby', label: 'Ruby' },
-  { value: 'rust', label: 'Rust' },
-  { value: 'scss', label: 'SCSS' },
-  { value: 'shell', label: 'Shell' },
-  { value: 'sql', label: 'SQL' },
-  { value: 'swift', label: 'Swift' },
-  { value: 'toml', label: 'TOML' },
-  { value: 'typescript', label: 'TypeScript' },
-  { value: 'vue', label: 'Vue' },
-  { value: 'xml', label: 'XML' },
-  { value: 'yaml', label: 'YAML' },
-];
+// Re-exported here to preserve the public API for any external consumer
+// that previously imported `CODE_LANGUAGES` from this module.
+export { CODE_LANGUAGES } from './codeLanguages';
 
 interface BuildOptions {
   collaborative: boolean;
@@ -72,6 +45,10 @@ interface BuildOptions {
   codeBlockView: Component;
   /** Vue NodeView component for the Toggle/Details block. */
   detailsView: Component;
+  /** Vue NodeView component for the Callout block (provides icon picker). */
+  calloutView: Component;
+  /** Vue NodeView component for the Chart block (provides editor + canvas). */
+  chartView: Component;
 }
 
 export function buildExtensions(opts: BuildOptions) {
@@ -121,7 +98,16 @@ export function buildExtensions(opts: BuildOptions) {
     }),
     DetailsSummary,
     DetailsContent,
-    Callout,
+    Callout.extend({
+      addNodeView() {
+        return VueNodeViewRenderer(opts.calloutView);
+      },
+    }),
+    Chart.extend({
+      addNodeView() {
+        return VueNodeViewRenderer(opts.chartView);
+      },
+    }),
     CodeBlockLowlight.extend({
       addNodeView() {
         return VueNodeViewRenderer(opts.codeBlockView);

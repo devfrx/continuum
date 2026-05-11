@@ -53,6 +53,12 @@ export const api = {
     update: (id: string, data: Partial<Note>) =>
       http<Note>(`/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id: string) => http<{ ok: true }>(`/notes/${id}`, { method: 'DELETE' }),
+    /**
+     * Wipe every note in the workspace. Server cascades through embeddings
+     * and links via FK `ON DELETE CASCADE`. The UI guards this behind the
+     * Settings → Danger zone confirmation modal.
+     */
+    removeAll: () => http<{ ok: true; deleted: number }>(`/notes`, { method: 'DELETE' }),
     search: (query: string) =>
       http<unknown[]>(`/notes/search`, { method: 'POST', body: JSON.stringify({ query }) }),
     semanticSearch: (

@@ -16,14 +16,14 @@ interface Props {
     confirmVariant?: 'primary' | 'danger';
 }
 
-const props = withDefaults(defineProps<Props>(), {
+// Defaults are applied to the props consumed directly by the template;
+// no script-side reference to `props` is needed here.
+withDefaults(defineProps<Props>(), {
     message: '',
     confirmLabel: 'Confirm',
     cancelLabel: 'Cancel',
     confirmVariant: 'primary',
 });
-// Re-expose for template usage and to satisfy noUnusedLocals.
-void props;
 
 const emit = defineEmits<{
     'update:modelValue': [value: boolean];

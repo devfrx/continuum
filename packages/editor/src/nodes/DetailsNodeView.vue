@@ -23,20 +23,20 @@ function toggle(): void {
 </script>
 
 <template>
-    <NodeViewWrapper as="div" class="lore-details" :data-open="isOpen ? 'true' : 'false'">
-        <button type="button" class="lore-details__chevron" :aria-expanded="isOpen ? 'true' : 'false'"
+    <NodeViewWrapper as="div" class="continuum-details" :data-open="isOpen ? 'true' : 'false'">
+        <button type="button" class="continuum-details__chevron" :aria-expanded="isOpen ? 'true' : 'false'"
             contenteditable="false" @click.stop.prevent="toggle" @mousedown.stop.prevent>
             <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M9 6.5a1 1 0 0 1 1.6-.8l6 4.5a1 1 0 0 1 0 1.6l-6 4.5A1 1 0 0 1 9 17.5v-11Z"
                     fill="currentColor" />
             </svg>
         </button>
-        <NodeViewContent class="lore-details__body" />
+        <NodeViewContent class="continuum-details__body" />
     </NodeViewWrapper>
 </template>
 
 <style scoped>
-.lore-details {
+.continuum-details {
     position: relative;
     margin: 0.6em 0;
     padding: var(--space-3) var(--space-4) var(--space-3) calc(22px + var(--space-3) + var(--space-3));
@@ -45,7 +45,7 @@ function toggle(): void {
     border-radius: var(--radius-md);
 }
 
-.lore-details__chevron {
+.continuum-details__chevron {
     position: absolute;
     top: calc(var(--space-3) + 4px);
     left: var(--space-3);
@@ -66,26 +66,26 @@ function toggle(): void {
         transform var(--duration-fast) var(--ease-standard);
 }
 
-.lore-details__chevron:hover {
+.continuum-details__chevron:hover {
     background: var(--bg-elev);
     color: var(--fg-strong);
 }
 
-.lore-details[data-open='true']>.lore-details__chevron {
+.continuum-details[data-open='true']>.continuum-details__chevron {
     transform: rotate(90deg);
 }
 
-.lore-details__body {
+.continuum-details__body {
     display: block;
 }
 
 /* Hide content children when collapsed (keep first child = summary visible). */
-.lore-details[data-open='false']>.lore-details__body> :nth-child(n+2) {
+.continuum-details[data-open='false']>.continuum-details__body> :nth-child(n+2) {
     display: none;
 }
 
 /* First child is the summary row — editable label. */
-.lore-details__body> :first-child {
+.continuum-details__body> :first-child {
     font-weight: var(--font-weight-semibold);
     color: var(--fg-strong);
     margin: 0;
@@ -95,13 +95,13 @@ function toggle(): void {
     cursor: text;
 }
 
-.lore-details__body> :first-child::-webkit-details-marker,
-.lore-details__body> :first-child::marker {
+.continuum-details__body> :first-child::-webkit-details-marker,
+.continuum-details__body> :first-child::marker {
     display: none;
     content: '';
 }
 
-.lore-details__body> :nth-child(n+2) {
+.continuum-details__body> :nth-child(n+2) {
     margin-top: var(--space-2);
 }
 </style>

@@ -42,7 +42,7 @@ export const Details = Node.create({
       'div',
       mergeAttributes(HTMLAttributes, {
         'data-type': 'details',
-        class: 'lore-details',
+        class: 'continuum-details',
       }),
       0,
     ];
@@ -71,7 +71,7 @@ export const DetailsSummary = Node.create({
       'div',
       mergeAttributes(HTMLAttributes, {
         'data-type': 'details-summary',
-        class: 'lore-details__summary',
+        class: 'continuum-details__summary',
       }),
       0,
     ];
@@ -92,7 +92,7 @@ export const DetailsContent = Node.create({
       'div',
       mergeAttributes(HTMLAttributes, {
         'data-type': 'details-content',
-        class: 'lore-details__content',
+        class: 'continuum-details__content',
       }),
       0,
     ];

@@ -1,10 +1,26 @@
 <script setup lang="ts">
+/**
+ * NotesSidebar — left rail of the notes view.
+ *
+ * Layout shell composed of:
+ *   • {@link FolderTree}                  — folder navigation deck
+ *   • search input + mode toggle          — local command surface
+ *   • {@link RecentNotesSection}          — recently opened pin list
+ *   • {@link NotesSidebarSearchResults}   — semantic search results path
+ *   • {@link NotesSidebarList}            — folder/filter list path
+ *
+ * The two list children are mutually exclusive (chosen by `searchMode`
+ * + non-empty query). Each owns its own row rendering; this shell just
+ * picks which one to mount and wires shared events back up to NotesView.
+ */
 import { computed, onMounted, watch } from 'vue';
-import { UiButton, UiInput, UiSegmented, UiBadge, Icon } from '@/components/ui';
+import { UiButton, UiInput, UiSegmented, Icon } from '@/components/ui';
 import { FolderTree } from '@/components/folders';
+import RecentNotesSection from '@/components/notes/RecentNotesSection.vue';
+import NotesSidebarList from '@/components/notes/NotesSidebarList.vue';
+import NotesSidebarSearchResults from '@/components/notes/NotesSidebarSearchResults.vue';
 import { useKinds } from '@/composables/useKinds';
 import { useFolders } from '@/composables/useFolders';
-import { graphDisplayLabel } from '@/utils/graphLabels';
 import type { AiSearchHit, FolderNode, Note } from '@continuum/shared';
 
 type SearchMode = 'filter' | 'semantic';
@@ -42,6 +58,7 @@ const emit = defineEmits<{
 }>();
 
 const folders = useFolders();
+const kindStore = useKinds();
 
 /**
  * Notes filtered by the current folder scope. When `selectedFolderId` is
@@ -61,19 +78,18 @@ const folderScopedNotes = computed<Note[]>(() => {
     return props.notes.filter((n) => n.folderId && allowed.has(n.folderId));
 });
 
-const filtered = computed<Note[]>(() => {
-    if (props.searchMode === 'semantic') return folderScopedNotes.value;
+const isSemanticActive = computed(
+    () => props.searchMode === 'semantic' && props.searchQuery.trim().length > 0,
+);
+
+/** Live count for the list header. */
+const visibleCount = computed<number>(() => {
+    if (isSemanticActive.value) return props.semanticHits.length;
     const q = props.searchQuery.toLowerCase().trim();
-    if (!q) return folderScopedNotes.value;
+    if (!q) return folderScopedNotes.value.length;
     return folderScopedNotes.value.filter(
         (n) => n.title.toLowerCase().includes(q) || n.kind.toLowerCase().includes(q),
-    );
-});
-
-const semanticResults = computed(() => {
-    if (props.searchMode !== 'semantic') return [];
-    const byId = new Map(props.notes.map((n) => [n.id, n]));
-    return props.semanticHits.map((h) => ({ hit: h, note: byId.get(h.id) ?? null }));
+    ).length;
 });
 
 /** Count of notes living at root (no folder) for the "All notes" row. */
@@ -101,48 +117,7 @@ watch(
 function onSearchInput(v: string): void { emit('update:searchQuery', v); }
 function onModeChange(v: string): void { emit('update:searchMode', v as SearchMode); }
 function onEnter(): void { if (props.searchMode === 'semantic') emit('runSemantic'); }
-function onDelete(id: string, ev: Event): void {
-    ev.stopPropagation();
-    emit('delete', id);
-}
 
-/**
- * Drag handler attached to every note row so users can drag a note onto a
- * folder in the tree to move it. The payload uses a custom mime type to
- * avoid colliding with browser-native drags (text, urls, files).
- */
-function onNoteDragStart(ev: DragEvent, id: string): void {
-    if (!ev.dataTransfer) return;
-    ev.dataTransfer.effectAllowed = 'move';
-    ev.dataTransfer.setData('application/x-continuum-note-id', id);
-}
-
-/** Strip HTML tags for the snippet preview so the sidebar shows readable text
- *  instead of `<p><strong>...</strong></p>` markup. */
-function cleanSnippet(s: string): string {
-    return s
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-/** Display similarity as percentage with adaptive precision so small but
- *  non-zero scores (typical for short queries against long docs) don't
- *  collapse to "0%". */
-function formatScore(score: number): string {
-    const pct = score * 100;
-    if (pct >= 10) return `${pct.toFixed(0)}%`;
-    if (pct >= 1) return `${pct.toFixed(1)}%`;
-    return `${pct.toFixed(2)}%`;
-}
-
-function displayTitle(title: string | null | undefined): string {
-    return graphDisplayLabel(title?.trim() || 'Untitled', 80);
-}
-
-const kindStore = useKinds();
 onMounted(() => {
     void kindStore.load();
     void folders.load();
@@ -186,15 +161,13 @@ onMounted(() => {
             </div>
         </section>
 
+        <RecentNotesSection :notes="notes" :selected-id="selectedId" @select="(id: string) => emit('select', id)" />
+
         <section class="note-stream" aria-label="Notes">
             <div class="list-head">
                 <div class="list-head__title">
-                    <span class="list-head__label">{{ searchMode === 'semantic' && searchQuery.trim() ? 'Results' :
-                        'Notes'
-                        }}</span>
-                    <span class="list-head__count">{{ searchMode === 'semantic' && searchQuery.trim() ?
-                        semanticResults.length :
-                        filtered.length }}</span>
+                    <span class="list-head__label">{{ isSemanticActive ? 'Results' : 'Notes' }}</span>
+                    <span class="list-head__count">{{ visibleCount }}</span>
                 </div>
                 <div class="list-actions">
                     <UiButton v-if="devMode" variant="subtle" size="sm" class="seed-notes" :loading="seedBusy"
@@ -216,61 +189,22 @@ onMounted(() => {
 
             <p v-if="devMode && seedError" class="seed-error">{{ seedError }}</p>
 
-            <ul v-if="searchMode === 'semantic' && searchQuery.trim()" class="note-list"
-                :class="{ refreshing: semanticBusy && semanticResults.length }">
-                <li v-for="r in semanticResults" :key="r.hit.id" class="note-row"
-                    :class="{ active: r.hit.id === selectedId }" draggable="true"
-                    @dragstart="onNoteDragStart($event, r.hit.id)" @click="emit('select', r.hit.id)">
-                    <span class="kind-mark">
-                        <Icon :name="kindStore.iconOf(r.note?.kind ?? 'note')" :size="14" class="kind-icon" />
-                        <span class="dot" :style="{ background: kindStore.colorOf(r.note?.kind ?? 'note') }" />
-                    </span>
-                    <div class="meta">
-                        <div class="title">{{ displayTitle(r.hit.title || r.note?.title) }}</div>
-                        <div class="snippet">{{ cleanSnippet(r.hit.snippet) }}</div>
-                    </div>
-                    <UiBadge>{{ formatScore(r.hit.score) }}</UiBadge>
-                </li>
-                <li v-if="semanticBusy && !semanticResults.length" class="empty searching">
-                    <Icon name="spinner" :size="14" class="spin" />
-                    <span>Searching…</span>
-                </li>
-                <li v-else-if="!semanticBusy && !semanticResults.length" class="empty">
-                    No semantic matches.
-                </li>
-            </ul>
+            <NotesSidebarSearchResults v-if="isSemanticActive" :notes="notes" :selected-id="selectedId"
+                :semantic-hits="semanticHits" :semantic-busy="semanticBusy"
+                @select="(id: string) => emit('select', id)" />
 
-            <ul v-else class="note-list">
-                <li v-for="n in filtered" :key="n.id" class="note-row" :class="{ active: n.id === selectedId }"
-                    draggable="true" @dragstart="onNoteDragStart($event, n.id)" @click="emit('select', n.id)">
-                    <span class="kind-mark">
-                        <Icon :name="kindStore.iconOf(n.kind)" :size="14" class="kind-icon" />
-                        <span class="dot" :style="{ background: kindStore.colorOf(n.kind) }" />
-                    </span>
-                    <div class="meta">
-                        <div class="title">{{ displayTitle(n.title) }}</div>
-                        <div class="kind-label">{{ n.kind }}</div>
-                    </div>
-                    <button class="del" title="Delete note" aria-label="Delete note" @click="onDelete(n.id, $event)">
-                        <Icon name="close" :size="14" />
-                    </button>
-                </li>
-                <li v-if="!notes.length" class="empty">No notes yet — create one.</li>
-                <li v-else-if="!filtered.length" class="empty">No matches.</li>
-            </ul>
+            <NotesSidebarList v-else :notes="folderScopedNotes" :selected-id="selectedId"
+                :selected-folder-id="selectedFolderId" :search-query="searchQuery"
+                @select="(id: string) => emit('select', id)" @delete="(id: string) => emit('delete', id)" />
         </section>
     </aside>
 </template>
 
 <style scoped>
 /**
- * Notes sidebar redesign.
- *
- * The sidebar is now a compact instrument panel: folder navigation is a
- * bounded deck, search/new/mode are one command surface, and the notes
- * list is the only large scroll region. This fixes the previous visual
- * stack of oversized blocks and prevents the folder tree from being
- * squeezed until rows clip at the top.
+ * Notes sidebar shell. Per-row styling lives in
+ * `NotesSidebarList.vue` / `NotesSidebarSearchResults.vue`; this file
+ * only owns the deck/command layout.
  */
 .sidebar {
     display: flex;
@@ -444,169 +378,6 @@ onMounted(() => {
     color: var(--danger);
     font-size: var(--text-xs);
     line-height: 1.35;
-}
-
-.note-list {
-    list-style: none;
-    padding: var(--space-px) 0 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
-}
-
-.note-row {
-    display: grid;
-    grid-template-columns: 30px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: 46px;
-    padding: var(--space-2);
-    border: var(--border-width-1) solid transparent;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    color: var(--fg);
-    transition:
-        background-color var(--duration-fast) var(--ease-standard),
-        border-color var(--duration-fast) var(--ease-standard),
-        color var(--duration-fast) var(--ease-standard);
-}
-
-.note-row:hover {
-    background: var(--bg-soft);
-    border-color: var(--border);
-}
-
-.note-row.active {
-    background: var(--bg-elevated);
-    border-color: var(--border-strong);
-    color: var(--fg-strong);
-}
-
-.note-row.active .title {
-    color: var(--fg-strong);
-}
-
-.kind-mark {
-    width: 26px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    border: var(--border-width-1) solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-soft);
-    flex-shrink: 0;
-}
-
-.note-row:hover .kind-mark,
-.note-row.active .kind-mark {
-    background: var(--bg-elev);
-    border-color: var(--border-strong);
-}
-
-.dot {
-    position: absolute;
-    right: 5px;
-    bottom: 5px;
-    width: 6px;
-    height: 6px;
-    border-radius: var(--radius-circle);
-    box-shadow: 0 0 0 2px var(--bg-soft);
-}
-
-.kind-icon {
-    color: var(--fg-subtle);
-    flex-shrink: 0;
-}
-
-.meta {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-0-5);
-    min-width: 0;
-}
-
-.title {
-    color: var(--fg);
-    font-size: var(--text-base);
-    font-weight: var(--font-weight-semibold);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.kind-label,
-.snippet {
-    color: var(--fg-subtle);
-    font-size: var(--text-xs);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.kind-label {
-    text-transform: capitalize;
-}
-
-.snippet {
-    color: var(--fg-muted);
-}
-
-.del {
-    background: transparent;
-    border: none;
-    color: var(--fg-subtle);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border-radius: var(--radius-xs);
-    opacity: 0;
-    cursor: pointer;
-    transition:
-        opacity var(--duration-fast) var(--ease-standard),
-        background-color var(--duration-fast) var(--ease-standard),
-        color var(--duration-fast) var(--ease-standard);
-}
-
-.note-row:hover .del,
-.note-row.active .del {
-    opacity: 1;
-}
-
-.del:hover {
-    background: var(--danger-soft);
-    color: var(--danger);
-}
-
-.empty {
-    display: flex;
-    align-items: center;
-    color: var(--fg-subtle);
-    font-size: var(--text-sm);
-    cursor: default;
-    justify-content: center;
-    padding: var(--space-7) var(--space-4);
-    text-align: center;
-}
-
-.empty:hover {
-    background: transparent;
-}
-
-.empty.searching {
-    gap: var(--space-4);
-}
-
-.note-list.refreshing {
-    opacity: 0.62;
-    transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
 @keyframes ui-spin {

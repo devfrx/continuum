@@ -7,7 +7,7 @@
  * (x, y) coordinates and clamps to the viewport so submenus never
  * overflow off-screen.
  *
- * Items can be nested (children) — submenus open on hover or via
+ * Items can be nested (`children`) — submenus open on hover or via
  * ArrowRight, close on ArrowLeft, and follow the parent menu's row.
  *
  * Behaviour:
@@ -19,11 +19,21 @@
  *
  * Items with `divider: true` render as a 1px separator (label ignored).
  * Items with `children` render an end chevron and never fire `select`.
+ *
+ * Composition:
+ *   - `useContextMenuPosition` — point-anchored root + per-submenu DOM
+ *     positioning with viewport flip.
+ *   - `useContextMenuKeyboard` — Arrow / Enter / Esc navigation across
+ *     the open path.
+ *   - `ContextMenuPanel` — recursive presentational panel rendering one
+ *     level + its open child.
  */
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue';
 import type { ContextMenuItem as SharedContextMenuItem } from '@continuum/shared';
-import Icon from './Icon.vue';
-import type { IconName } from './icons';
+import type { AppIconName as IconName } from '@/assets/icons';
+import { useContextMenuPosition } from '@/composables/useContextMenuPosition';
+import { useContextMenuKeyboard } from '@/composables/useContextMenuKeyboard';
+import ContextMenuPanel from './ContextMenuPanel.vue';
 
 /**
  * Local re-typing that narrows `icon` to the apps/web `IconName` union
@@ -51,66 +61,39 @@ const emit = defineEmits<{
     select: [item: ContextMenuItem];
 }>();
 
-const rootRef = ref<HTMLElement | null>(null);
+/* ── State ───────────────────────────────────────────────────── */
 
-/** Stack of open submenu paths (root id chain). */
+const rootPanelRef = ref<{ panelEl: HTMLElement | null } | null>(null);
+const rootRef = computed<HTMLElement | null>(() => rootPanelRef.value?.panelEl ?? null);
+
 const openPath = ref<string[]>([]);
-/** Index of the focused item per menu level. */
 const focusIndex = ref<number[]>([0]);
+const open = computed(() => props.modelValue);
 
-const rootStyle = ref<{ top: string; left: string; minWidth: string; maxHeight: string }>({
-    top: '0px', left: '0px', minWidth: `${props.minWidth}px`, maxHeight: '70vh',
+/* ── Composables ─────────────────────────────────────────────── */
+
+const {
+    rootStyle,
+    subStyles,
+    repositionRoot,
+    panelMaxHeight,
+} = useContextMenuPosition({
+    open,
+    x: toRef(props, 'x'),
+    y: toRef(props, 'y'),
+    minWidth: toRef(props, 'minWidth'),
+    rootRef,
+    openPath,
 });
 
-function viewportBounds(): { left: number; top: number; width: number; height: number } {
-    const viewport = window.visualViewport;
-    return {
-        left: viewport?.offsetLeft ?? 0,
-        top: viewport?.offsetTop ?? 0,
-        width: viewport?.width ?? window.innerWidth,
-        height: viewport?.height ?? window.innerHeight,
-    };
-}
-
-function clampPosition(x: number, y: number, w: number, h: number) {
-    const pad = 8;
-    const viewport = viewportBounds();
-    const maxLeft = viewport.left + Math.max(pad, viewport.width - w - pad);
-    const maxTop = viewport.top + Math.max(pad, viewport.height - h - pad);
-    // Floor at `pad` so the panel never escapes off the top/left even when
-    // the content is taller/wider than the viewport (in which case the
-    // panel's own internal scroll handles overflow).
-    const left = Math.max(viewport.left + pad, Math.min(x, maxLeft));
-    const top = Math.max(viewport.top + pad, Math.min(y, maxTop));
-    return { top, left };
-}
-
-function panelMaxHeight(): string {
-    return `${Math.max(160, viewportBounds().height - 16)}px`;
-}
-
-async function reposition() {
-    await nextTick();
-    const el = rootRef.value;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const { top, left } = clampPosition(props.x, props.y, rect.width, rect.height);
-    rootStyle.value = {
-        top: `${top}px`,
-        left: `${left}px`,
-        minWidth: `${props.minWidth}px`,
-        maxHeight: panelMaxHeight(),
-    };
-}
-
-function close() {
+function close(): void {
     if (!props.modelValue) return;
     openPath.value = [];
     focusIndex.value = [0];
     emit('update:modelValue', false);
 }
 
-function onSelectItem(item: ContextMenuItem) {
+function onActivate(item: ContextMenuItem): void {
     if (item.disabled || item.divider || item.header) return;
     if (item.children?.length) return; // submenu trigger only
     item.onSelect?.();
@@ -118,102 +101,30 @@ function onSelectItem(item: ContextMenuItem) {
     close();
 }
 
-function onItemPointerEnter(level: number, item: ContextMenuItem, idx: number) {
-    focusIndex.value = focusIndex.value.slice(0, level + 1);
-    focusIndex.value[level] = idx;
+function onHover(depth: number, item: ContextMenuItem, idx: number): void {
+    const focus = focusIndex.value.slice(0, depth + 1);
+    focus[depth] = idx;
     if (item.children?.length) {
-        openPath.value = [...openPath.value.slice(0, level), item.id];
-        focusIndex.value[level + 1] = 0;
+        openPath.value = [...openPath.value.slice(0, depth), item.id];
+        focus[depth + 1] = 0;
     } else {
-        openPath.value = openPath.value.slice(0, level);
+        openPath.value = openPath.value.slice(0, depth);
     }
+    focusIndex.value = focus;
 }
 
-function isOpenSubmenu(level: number, item: ContextMenuItem): boolean {
-    return openPath.value[level] === item.id;
-}
-// Suppress "declared but unused" — kept as a public helper for templates
-// that might want to introspect submenu state in the future.
-void isOpenSubmenu;
+useContextMenuKeyboard<ContextMenuItem>({
+    open,
+    items: toRef(props, 'items'),
+    openPath,
+    focusIndex,
+    onActivate,
+    onClose: close,
+});
 
-/* ── keyboard ─────────────────────────────────────────────────── */
+/* ── Outside-click ───────────────────────────────────────────── */
 
-function visibleItems(level: number): ContextMenuItem[] {
-    if (level === 0) return props.items;
-    // Walk the path to find the current submenu items.
-    let current = props.items;
-    for (let i = 0; i < level; i += 1) {
-        const id = openPath.value[i];
-        const node = current.find((n) => n.id === id);
-        if (!node?.children) return [];
-        current = node.children;
-    }
-    return current;
-}
-
-function moveFocus(level: number, delta: number) {
-    const items = visibleItems(level).filter((i) => !i.divider && !i.header && !i.disabled);
-    if (!items.length) return;
-    const cur = focusIndex.value[level] ?? 0;
-    let next = cur + delta;
-    if (next < 0) next = items.length - 1;
-    if (next >= items.length) next = 0;
-    // Map back to absolute index in the unfiltered list.
-    const target = items[next];
-    const all = visibleItems(level);
-    focusIndex.value = focusIndex.value.slice(0, level + 1);
-    focusIndex.value[level] = all.indexOf(target);
-}
-
-function onKeydown(e: KeyboardEvent) {
-    if (!props.modelValue) return;
-    const level = openPath.value.length;
-    if (e.key === 'Escape') {
-        e.preventDefault();
-        if (level > 0) {
-            openPath.value = openPath.value.slice(0, -1);
-            focusIndex.value = focusIndex.value.slice(0, level);
-        } else {
-            close();
-        }
-        return;
-    }
-    if (e.key === 'ArrowDown') { e.preventDefault(); moveFocus(level, 1); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); moveFocus(level, -1); return; }
-    if (e.key === 'ArrowRight') {
-        const items = visibleItems(level);
-        const cur = items[focusIndex.value[level] ?? 0];
-        if (cur?.children?.length) {
-            e.preventDefault();
-            openPath.value = [...openPath.value, cur.id];
-            focusIndex.value[level + 1] = 0;
-        }
-        return;
-    }
-    if (e.key === 'ArrowLeft') {
-        if (level > 0) {
-            e.preventDefault();
-            openPath.value = openPath.value.slice(0, -1);
-            focusIndex.value = focusIndex.value.slice(0, level);
-        }
-        return;
-    }
-    if (e.key === 'Enter') {
-        const items = visibleItems(level);
-        const cur = items[focusIndex.value[level] ?? 0];
-        if (cur) {
-            e.preventDefault();
-            if (cur.children?.length) {
-                openPath.value = [...openPath.value, cur.id];
-                focusIndex.value[level + 1] = 0;
-            } else {
-                onSelectItem(cur);
-            }
-        }
-    }
-}
-
-function onBackdropPointerDown(e: PointerEvent) {
+function onBackdropPointerDown(e: PointerEvent): void {
     const root = rootRef.value;
     if (!root) return;
     if (root.contains(e.target as Node)) return;
@@ -228,298 +139,63 @@ function onBackdropPointerDown(e: PointerEvent) {
 
 watch(
     () => props.modelValue,
-    async (open) => {
-        if (open) {
+    async (isOpen) => {
+        if (isOpen) {
             openPath.value = [];
             focusIndex.value = [0];
-            await reposition();
-            window.addEventListener('keydown', onKeydown, true);
+            await repositionRoot();
             window.addEventListener('pointerdown', onBackdropPointerDown, true);
-            window.addEventListener('resize', reposition);
-            window.addEventListener('scroll', reposition, true);
         } else {
-            window.removeEventListener('keydown', onKeydown, true);
             window.removeEventListener('pointerdown', onBackdropPointerDown, true);
-            window.removeEventListener('resize', reposition);
-            window.removeEventListener('scroll', reposition, true);
         }
     },
     { immediate: true },
 );
 
-watch(
-    () => [props.x, props.y],
-    () => { if (props.modelValue) reposition(); },
-);
-
 onBeforeUnmount(() => {
-    window.removeEventListener('keydown', onKeydown, true);
     window.removeEventListener('pointerdown', onBackdropPointerDown, true);
-    window.removeEventListener('resize', reposition);
-    window.removeEventListener('scroll', reposition, true);
 });
 
 defineExpose({ close });
 
-/* ── submenu position helper ──────────────────────────────────── */
+/* ── Computed style for the root panel ───────────────────────── */
 
-/**
- * Position styles per open submenu, keyed by `${level}:${itemId}`.
- *
- * Computed in two passes:
- *   1. Initial pass on `openPath` change uses the parent row rect plus an
- *      estimated height (so the panel doesn't render off-screen).
- *   2. After the panel mounts (`nextTick`), we re-measure its real height
- *      and shift it up if it would overflow the viewport bottom.
- *
- * This guarantees that — even when the root menu is opened near the bottom
- * of the page — long submenus (Color, Code language, …) stay fully visible
- * and clickable without internal scrolling artifacts.
- */
-const subStyles = ref<Record<string, { top: string; left: string }>>({});
-
-function computeSubmenuPosition(level: number, id: string, h: number): { top: string; left: string } | null {
-    const row = document.querySelector<HTMLElement>(
-        `[data-cm-level="${level}"][data-cm-id="${id}"]`,
-    );
-    if (!row) return null;
-    const pad = 8;
-    const viewport = viewportBounds();
-    const w = props.minWidth;
-    const rect = row.getBoundingClientRect();
-    const viewportRight = viewport.left + viewport.width;
-    const viewportBottom = viewport.top + viewport.height;
-    const left = rect.right + 4 + w > viewportRight - pad
-        ? Math.max(viewport.left + pad, rect.left - w - 4)
-        : rect.right + 4;
-    // Default: align top with parent row. Then clamp so bottom fits.
-    let top = rect.top;
-    if (top + h > viewportBottom - pad) top = Math.max(viewport.top + pad, viewportBottom - pad - h);
-    return { top: `${top}px`, left: `${left}px` };
-}
-
-async function repositionSubmenus() {
-    await nextTick();
-    const next: Record<string, { top: string; left: string }> = {};
-    // First pass: estimate using a conservative 320px so panels don't flash
-    // off-screen before measurement.
-    for (let level = 0; level < openPath.value.length; level += 1) {
-        const id = openPath.value[level];
-        const pos = computeSubmenuPosition(level, id, 320);
-        if (pos) next[`${level}:${id}`] = pos;
-    }
-    subStyles.value = next;
-    // Second pass: measure each rendered panel and adjust if needed.
-    await nextTick();
-    const adjusted: Record<string, { top: string; left: string }> = { ...next };
-    for (let level = 0; level < openPath.value.length; level += 1) {
-        const id = openPath.value[level];
-        const panel = document.querySelector<HTMLElement>(
-            `.ui-context-menu__panel[data-cm-panel="${level + 1}:${id}"]`,
-        );
-        if (!panel) continue;
-        const realH = panel.getBoundingClientRect().height;
-        const pos = computeSubmenuPosition(level, id, realH);
-        if (pos) adjusted[`${level}:${id}`] = pos;
-    }
-    subStyles.value = adjusted;
-}
-
-watch(openPath, () => { if (props.modelValue) repositionSubmenus(); }, { deep: true });
+const rootPanelStyle = computed<Record<string, string>>(() => ({
+    top: rootStyle.value.top,
+    left: rootStyle.value.left,
+    minWidth: rootStyle.value.minWidth,
+    maxHeight: rootStyle.value.maxHeight,
+}));
 </script>
 
 <template>
     <Teleport to="body">
         <Transition name="ui-cm">
-            <div v-if="modelValue" ref="rootRef" class="ui-context-menu ui-context-menu__panel" role="menu"
-                :style="rootStyle">
-                <div v-for="(item, idx) in items" :key="item.id" class="ui-cm__item">
-                    <div v-if="item.divider" class="ui-cm__divider" role="separator" />
-                    <div v-else-if="item.header" class="ui-cm__header">{{ item.label }}</div>
-                    <button v-else type="button" class="ui-cm__row" role="menuitem" :data-cm-level="0"
-                        :data-cm-id="item.id" :class="{
-                            'is-active': item.active,
-                            'is-disabled': item.disabled,
-                            'is-danger': item.danger,
-                            'is-focused': focusIndex[0] === idx,
-                            'has-children': !!item.children?.length,
-                        }" :disabled="item.disabled" @pointerenter="onItemPointerEnter(0, item, idx)" @click="onSelectItem(item)">
-                        <span v-if="item.swatch" class="ui-cm__swatch" :style="{ background: item.swatch }" />
-                        <Icon v-else-if="item.icon" :name="item.icon" :size="14" class="ui-cm__icon" />
-                        <span v-else class="ui-cm__icon ui-cm__icon--placeholder" />
-                        <span class="ui-cm__label">{{ item.label }}</span>
-                        <span v-if="item.active" class="ui-cm__check">
-                            <Icon name="check" :size="12" />
-                        </span>
-                        <span v-else-if="item.shortcut" class="ui-cm__shortcut">{{ item.shortcut }}</span>
-                        <span v-else-if="item.children?.length" class="ui-cm__chev">
-                            <Icon name="chevron-right" :size="12" />
-                        </span>
-                    </button>
-                </div>
+            <div v-if="modelValue" class="ui-cm-mount">
+                <ContextMenuPanel
+                    ref="rootPanelRef"
+                    :items="items"
+                    :depth="0"
+                    :panel-style="rootPanelStyle"
+                    :open-path="openPath"
+                    :focus-index="focusIndex"
+                    :min-width="minWidth"
+                    :max-height="panelMaxHeight()"
+                    :sub-styles="subStyles"
+                    @hover="onHover"
+                    @activate="onActivate"
+                />
             </div>
-
-            <!-- Submenu panels: one per open level -->
         </Transition>
-
-        <div v-for="(id, level) in openPath" v-show="modelValue" :key="`sub-${level}-${id}`"
-            class="ui-context-menu ui-context-menu__panel" role="menu"
-                :data-cm-panel="`${level + 1}:${id}`" :style="{
-                    ...subStyles[`${level}:${id}`],
-                    minWidth: `${minWidth}px`,
-                    maxHeight: panelMaxHeight(),
-                }">
-                <div v-for="(item, idx) in visibleItems(level + 1)" :key="item.id" class="ui-cm__item">
-                    <div v-if="item.divider" class="ui-cm__divider" role="separator" />
-                    <div v-else-if="item.header" class="ui-cm__header">{{ item.label }}</div>
-                    <button v-else type="button" class="ui-cm__row" role="menuitem" :data-cm-level="level + 1"
-                        :data-cm-id="item.id" :class="{
-                            'is-active': item.active,
-                            'is-disabled': item.disabled,
-                            'is-danger': item.danger,
-                            'is-focused': focusIndex[level + 1] === idx,
-                            'has-children': !!item.children?.length,
-                        }" :disabled="item.disabled" @pointerenter="onItemPointerEnter(level + 1, item, idx)"
-                        @click="onSelectItem(item)">
-                        <span v-if="item.swatch" class="ui-cm__swatch" :style="{ background: item.swatch }" />
-                        <Icon v-else-if="item.icon" :name="item.icon" :size="14" class="ui-cm__icon" />
-                        <span v-else class="ui-cm__icon ui-cm__icon--placeholder" />
-                        <span class="ui-cm__label">{{ item.label }}</span>
-                        <span v-if="item.active" class="ui-cm__check">
-                            <Icon name="check" :size="12" />
-                        </span>
-                        <span v-else-if="item.shortcut" class="ui-cm__shortcut">{{ item.shortcut }}</span>
-                        <span v-else-if="item.children?.length" class="ui-cm__chev">
-                            <Icon name="chevron-right" :size="12" />
-                        </span>
-                    </button>
-                </div>
-            </div>
     </Teleport>
 </template>
 
 <style scoped>
-.ui-context-menu {
-    position: fixed;
-    z-index: var(--z-tooltip);
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: var(--space-3);
-    background: var(--bg-elev);
-    border: var(--border-width-1) solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg, var(--shadow-md));
-    font-size: var(--text-sm);
-    color: var(--fg);
-    max-height: min(70vh, var(--ui-context-menu-max-height, 70vh));
-    overflow-y: auto;
-}
-
-.ui-cm__item {
+.ui-cm-mount {
+    /* Layout-neutral wrapper so <Transition> has a single root to track
+       while ContextMenuPanel's own multi-root template (panel + recursive
+       child) stays free to render submenus as siblings. */
     display: contents;
-}
-
-.ui-cm__row {
-    display: grid;
-    grid-template-columns: 18px 1fr auto;
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-3) var(--space-4);
-    background: transparent;
-    border: var(--border-width-1) solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--fg);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition:
-        background-color var(--duration-fast) var(--ease-standard),
-        color var(--duration-fast) var(--ease-standard);
-}
-
-.ui-cm__row:hover,
-.ui-cm__row.is-focused {
-    background: var(--bg-soft);
-    color: var(--fg-strong);
-}
-
-.ui-cm__row.is-active {
-    color: var(--accent);
-}
-
-.ui-cm__row.is-danger {
-    color: var(--danger);
-}
-
-.ui-cm__row.is-danger:hover {
-    background: var(--danger-soft);
-}
-
-.ui-cm__row.is-disabled,
-.ui-cm__row:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    background: transparent;
-}
-
-.ui-cm__icon {
-    width: 14px;
-    height: 14px;
-    color: var(--fg-muted);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.ui-cm__icon--placeholder {
-    background: transparent;
-}
-
-.ui-cm__swatch {
-    width: 14px;
-    height: 14px;
-    border-radius: var(--radius-xs);
-    border: var(--border-width-1) solid var(--border);
-}
-
-.ui-cm__label {
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.ui-cm__shortcut {
-    font-size: var(--text-xs);
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    letter-spacing: 0;
-}
-
-.ui-cm__check {
-    color: var(--accent);
-    display: inline-flex;
-}
-
-.ui-cm__chev {
-    color: var(--fg-subtle);
-    display: inline-flex;
-}
-
-.ui-cm__divider {
-    height: 1px;
-    margin: var(--space-2) calc(-1 * var(--space-3));
-    background: var(--border);
-}
-
-.ui-cm__header {
-    padding: var(--space-3) var(--space-4) var(--space-2);
-    font-size: var(--text-2xs);
-    font-weight: var(--font-weight-semibold);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-widest);
-    color: var(--fg-subtle);
 }
 
 .ui-cm-enter-active,

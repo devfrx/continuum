@@ -25,6 +25,7 @@ import {
   rankBetween,
   wouldCreateCycle,
 } from '../services/folder-tree.js';
+import { slugify } from '../lib/slugify.js';
 
 /** Slug must match `[a-z0-9][a-z0-9-]*`. Auto-derived from name when missing. */
 const slugRegex = /^[a-z0-9][a-z0-9-]*$/;
@@ -62,17 +63,6 @@ const moveSchema = z.object({
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
-
-/** Lowercase + dashes; collapses runs and trims leading/trailing dashes. */
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 120);
-}
 
 export const folderRoutes: FastifyPluginAsync = async (app) => {
   /** Forest with note counts (notes directly inside each folder). */

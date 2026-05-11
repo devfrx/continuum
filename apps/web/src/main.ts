@@ -1,5 +1,5 @@
+// Shared reactive state lives in composable singletons under src/composables/. No global store framework is used.
 import { createApp } from 'vue';
-import { createPinia } from 'pinia';
 import { router } from './router';
 import App from './App.vue';
 import './iconify';
@@ -10,4 +10,4 @@ import { initTheme } from './composables/useTheme';
 // on first paint.
 initTheme();
 
-createApp(App).use(createPinia()).use(router).mount('#app');
+createApp(App).use(router).mount('#app');

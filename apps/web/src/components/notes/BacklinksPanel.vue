@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { colorForKind } from '@continuum/graph';
+import { colorForKind } from '@continuum/shared';
 import { UiSection, UiCard, UiBadge, UiEmpty, Icon } from '@/components/ui';
 import { graphDisplayLabel } from '@/utils/graphLabels';
 import type { BacklinkEntry } from '@/api';

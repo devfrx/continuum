@@ -10,12 +10,13 @@ import type { Settings } from 'sigma/settings';
 export type LinkType = 'wikilink' | 'related' | string;
 
 /**
- * Base node radius (graph units). Sized for legibility at typical zoom
- * with labels sitting comfortably below.
+ * Base node radius (graph units). Kept intentionally modest for dense
+ * knowledge graphs: large discs look friendly in tiny demos, but turn
+ * real notebooks into a blob once the graph reaches 100+ nodes.
  */
-export const NODE_BASE_SIZE = 13;
-/** Extra radius per edge (sqrt-scaled) so hubs are visibly larger. */
-export const NODE_DEGREE_SCALE = 2.2;
+export const NODE_BASE_SIZE = 7.2;
+/** Extra radius per edge (sqrt-scaled) so hubs are visible without dominating. */
+export const NODE_DEGREE_SCALE = 1.05;
 
 /** Subtle light rim that reads on the dark canvas without overpowering the kind colour. */
 export const NODE_BORDER_COLOR = 'rgba(255, 255, 255, 0.18)';
@@ -34,13 +35,13 @@ export const HIDDEN_EDGE_COLOR = 'rgba(0, 0, 0, 0)';
 export const ACCENT_EDGE_COLOR = 'rgba(232, 220, 200, 0.95)';
 
 export const EDGE_STYLES: Record<string, { color: string; size: number }> = {
-  wikilink: { color: 'rgba(232, 220, 200, 0.42)', size: 0.82 },
-  related: { color: 'rgba(160, 155, 144, 0.32)', size: 0.72 },
+  wikilink: { color: 'rgba(232, 220, 200, 0.24)', size: 0.46 },
+  related: { color: 'rgba(160, 155, 144, 0.18)', size: 0.38 },
 };
 
 export const FALLBACK_EDGE_STYLE = {
-  color: 'rgba(160, 155, 144, 0.32)',
-  size: 0.72,
+  color: 'rgba(160, 155, 144, 0.18)',
+  size: 0.38,
 };
 
 export function edgeStyleFor(linkType: LinkType): { color: string; size: number } {

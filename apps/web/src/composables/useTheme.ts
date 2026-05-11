@@ -6,10 +6,11 @@
  */
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue';
+import { STORAGE_KEYS } from '@/lib/storageKeys';
 
 export type ThemeMode = 'light' | 'dark';
 
-const STORAGE_KEY = 'continuum:theme';
+const STORAGE_KEY = STORAGE_KEYS.theme;
 
 const mode: Ref<ThemeMode> = ref(loadStoredMode());
 

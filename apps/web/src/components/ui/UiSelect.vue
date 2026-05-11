@@ -17,14 +17,18 @@
  *   - keyboard: Up/Down move the active option (wrapping), Home/End jump,
  *     Enter/Space select, Escape/Tab close
  *   - typeahead: typing characters jumps to the next option whose label
- *     starts with the buffer (cleared after 700 ms idle)
+ *     starts with the buffer (cleared after 700 ms idle) — handled by
+ *     `useTypeahead`
  *   - the panel teleports into <body> so the popup is never clipped by
  *     overflow:hidden parents (modals, panes, popovers)
  *   - panel is anchored to the trigger and clamped to the viewport;
- *     flips above when there isn't enough room below
+ *     flips above when there isn't enough room below — handled by
+ *     `useFloatingPosition`
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import Icon from './Icon.vue';
+import { useFloatingPosition } from '@/composables/useFloatingPosition';
+import { useTypeahead } from '@/composables/useTypeahead';
 
 interface Option {
     label: string;
@@ -54,10 +58,6 @@ const panelRef = ref<HTMLDivElement | null>(null);
 /** Index of the keyboard-active option (-1 = nothing active). */
 const activeIndex = ref(-1);
 
-const panelStyle = ref<{ top: string; left: string; width: string; minWidth: string; maxHeight: string }>(
-    { top: '0px', left: '0px', width: 'auto', minWidth: '0px', maxHeight: '320px' },
-);
-
 const selectedIndex = computed(() =>
     props.options.findIndex((o) => String(o.value) === String(props.modelValue)),
 );
@@ -65,6 +65,16 @@ const selectedIndex = computed(() =>
 const selectedLabel = computed<string>(() => {
     const i = selectedIndex.value;
     return i >= 0 ? props.options[i]!.label : '';
+});
+
+// ---------- Positioning ----------
+
+const { style: panelStyle, reposition } = useFloatingPosition({
+    triggerRef,
+    panelRef,
+    open,
+    maxHeight: 320,
+    minWidth: 160,
 });
 
 // ---------- Open / close ----------
@@ -88,44 +98,6 @@ function closePanel(): void {
 function toggle(): void {
     if (open.value) closePanel();
     else void openPanel();
-}
-
-// ---------- Positioning ----------
-
-/**
- * Anchor the panel under the trigger, match its width (with a min so very
- * narrow triggers stay readable), and flip above when below would
- * overflow the viewport.
- */
-function reposition(): void {
-    const trigger = triggerRef.value;
-    const panel = panelRef.value;
-    if (!trigger || !panel) return;
-
-    const tRect = trigger.getBoundingClientRect();
-    const pad = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    const panelHeight = Math.min(panel.scrollHeight, 320);
-    const spaceBelow = vh - tRect.bottom - pad;
-    const spaceAbove = tRect.top - pad;
-    const placeAbove = spaceBelow < panelHeight && spaceAbove > spaceBelow;
-
-    const top = placeAbove
-        ? Math.max(pad, tRect.top - panelHeight - 4)
-        : Math.min(vh - panelHeight - pad, tRect.bottom + 4);
-
-    const width = Math.max(tRect.width, 160);
-    const left = Math.max(pad, Math.min(tRect.left, vw - width - pad));
-
-    panelStyle.value = {
-        top: `${top}px`,
-        left: `${left}px`,
-        width: `${width}px`,
-        minWidth: `${tRect.width}px`,
-        maxHeight: `${Math.max(120, placeAbove ? spaceAbove : spaceBelow)}px`,
-    };
 }
 
 function scrollActiveIntoView(): void {
@@ -169,6 +141,13 @@ function onTriggerKeydown(e: KeyboardEvent): void {
     }
 }
 
+const { handleKey: handleTypeahead } = useTypeahead<Option>({
+    items: () => props.options,
+    getLabel: (o) => o.label,
+    onMatch: (idx) => { activeIndex.value = idx; scrollActiveIntoView(); },
+    startFrom: () => activeIndex.value,
+});
+
 function onPanelKeydown(e: KeyboardEvent): void {
     switch (e.key) {
         case 'ArrowDown': e.preventDefault(); moveActive(1); break;
@@ -192,29 +171,7 @@ function onPanelKeydown(e: KeyboardEvent): void {
     }
 }
 
-// ---------- Typeahead ----------
-
-let typeBuffer = '';
-let typeTimer: number | null = null;
-
-function handleTypeahead(e: KeyboardEvent): void {
-    if (e.key.length !== 1 || e.metaKey || e.ctrlKey || e.altKey) return;
-    typeBuffer += e.key.toLowerCase();
-    if (typeTimer !== null) window.clearTimeout(typeTimer);
-    typeTimer = window.setTimeout(() => { typeBuffer = ''; typeTimer = null; }, 700);
-    const start = activeIndex.value < 0 ? 0 : activeIndex.value;
-    const n = props.options.length;
-    for (let off = 0; off < n; off++) {
-        const idx = (start + off) % n;
-        if (props.options[idx]!.label.toLowerCase().startsWith(typeBuffer)) {
-            activeIndex.value = idx;
-            scrollActiveIntoView();
-            return;
-        }
-    }
-}
-
-// ---------- Outside-click + scroll/resize re-anchor ----------
+// ---------- Outside-click ----------
 
 function onDocPointerDown(e: PointerEvent): void {
     if (!open.value) return;
@@ -225,27 +182,16 @@ function onDocPointerDown(e: PointerEvent): void {
     closePanel();
 }
 
-function onWindowReposition(): void {
-    if (open.value) reposition();
-}
-
 watch(open, (isOpen) => {
     if (isOpen) {
         document.addEventListener('pointerdown', onDocPointerDown, true);
-        window.addEventListener('resize', onWindowReposition);
-        window.addEventListener('scroll', onWindowReposition, true);
     } else {
         document.removeEventListener('pointerdown', onDocPointerDown, true);
-        window.removeEventListener('resize', onWindowReposition);
-        window.removeEventListener('scroll', onWindowReposition, true);
     }
 });
 
 onBeforeUnmount(() => {
     document.removeEventListener('pointerdown', onDocPointerDown, true);
-    window.removeEventListener('resize', onWindowReposition);
-    window.removeEventListener('scroll', onWindowReposition, true);
-    if (typeTimer !== null) window.clearTimeout(typeTimer);
 });
 </script>
 

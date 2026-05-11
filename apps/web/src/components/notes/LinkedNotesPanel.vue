@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { colorForKind } from '@continuum/graph';
+import { colorForKind, getWikilinkPattern } from '@continuum/shared';
 import { UiSection, UiChip, UiEmpty } from '@/components/ui';
 import { graphDisplayLabel } from '@/utils/graphLabels';
 import type { Note } from '@continuum/shared';
@@ -11,8 +11,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ (e: 'select', id: string): void }>();
-
-const WIKILINK_RE = /(\\)?\[\[([^\n]+?)\]\]/g;
 
 interface LinkRef {
     name: string;
@@ -31,9 +29,9 @@ const links = computed<LinkRef[]>(() => {
     const text = props.content || '';
     const seen = new Set<string>();
     const out: Array<{ target: string; label: string }> = [];
+    const pattern = getWikilinkPattern();
     let m: RegExpExecArray | null;
-    WIKILINK_RE.lastIndex = 0;
-    while ((m = WIKILINK_RE.exec(text)) !== null) {
+    while ((m = pattern.exec(text)) !== null) {
         if (m[1]) continue;
         const parsed = parseWikilink(m[2] ?? '');
         if (!parsed) continue;

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, asc, desc } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { kinds, notes } from '../db/schema.js';
+import { slugify } from '../lib/slugify.js';
 
 const idParamSchema = z.object({ id: z.string().min(1).max(60) });
 
@@ -26,20 +27,6 @@ const updateSchema = z.object({
 });
 
 /**
- * Slugify a label into a kind id: lowercase, non-alphanumerics collapsed to
- * a single dash, trimmed of leading/trailing dashes.
- */
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-}
-
-/**
  * REST CRUD for user-defined note categories. The `'note'` kind is the only
  * built-in row and is protected from edits and deletion.
  */
@@ -51,7 +38,7 @@ export const kindRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/', async (req, reply) => {
     const body = createSchema.parse(req.body);
-    const id = (body.id?.trim() ? slugify(body.id) : slugify(body.label));
+    const id = (body.id?.trim() ? slugify(body.id, 60) : slugify(body.label, 60));
     if (!id) return reply.badRequest('Could not derive a valid id from the label');
 
     const [existing] = await db.select().from(kinds).where(eq(kinds.id, id)).limit(1);

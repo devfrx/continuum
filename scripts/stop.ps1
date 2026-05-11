@@ -10,7 +10,8 @@
 [CmdletBinding()]
 param(
   [switch]$KeepDocker,
-  [switch]$Wipe
+  [switch]$Wipe,
+  [switch]$ForcePorts
 )
 
 $ErrorActionPreference = 'Continue'
@@ -18,21 +19,25 @@ $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 . "$PSScriptRoot/_lib.ps1"
 
-# 1. Kill processes on our ports --------------------------------------------
+# 1. Kill Continuum processes on our ports ----------------------------------
 $ports = @(3001, 5174, 1235)
 $portList = $ports -join ", "
 Write-Step "Releasing ports: $portList"
-foreach ($port in $ports) {
-  try {
-    $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-    foreach ($c in $conns) {
-      $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
-      if ($proc) {
-        Write-Ok "Killing $($proc.ProcessName) (PID $($proc.Id)) on :$port"
-        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+if ($ForcePorts) {
+  foreach ($port in $ports) {
+    try {
+      $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+      foreach ($c in $conns) {
+        $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
+        if ($proc) {
+          Write-Ok "Killing $($proc.ProcessName) (PID $($proc.Id)) on :$port"
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        }
       }
-    }
-  } catch { }
+    } catch { }
+  }
+} else {
+  Stop-ContinuumPortListeners -Ports $ports -RepoPath $repo | Out-Null
 }
 
 # 2. Docker -----------------------------------------------------------------

@@ -18,10 +18,4 @@ export { default as UiNotePickerModal } from './UiNotePickerModal.vue';
 export { default as UiContextMenu } from './UiContextMenu.vue';
 export type { ContextMenuItem } from './UiContextMenu.vue';
 export { default as Icon } from './Icon.vue';
-export type { IconName } from './icons';
-export {
-  KIND_ICON_GROUPS,
-  KIND_ICONS_FLAT,
-  DEFAULT_KIND_ICON,
-  type KindIconGroup,
-} from './kindIcons';
+

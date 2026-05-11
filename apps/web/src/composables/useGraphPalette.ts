@@ -21,6 +21,12 @@ export interface GraphPalette {
   edgeFocus: string;
   nodeDim: string;
   nodeHidden: string;
+  /**
+   * Neutral fill used when the user enables the "monochrome" filter —
+   * every node renders in this single shade so the chromatic kind
+   * dimension is removed and only topology is visible.
+   */
+  nodeDefault: string;
   accent: string;
   accentSoft: string;
 }
@@ -45,6 +51,7 @@ function snapshot(): GraphPalette {
     edgeFocus: readVar('--graph-edge-focus', 'rgba(232,220,200,0.95)'),
     nodeDim: readVar('--graph-node-dim', '#323232'),
     nodeHidden: readVar('--graph-node-hidden', 'rgba(255,255,255,0.04)'),
+    nodeDefault: readVar('--graph-node-default', '#9A9286'),
     accent: readVar('--accent', '#E8DCC8'),
     accentSoft: readVar('--accent-soft', 'rgba(232,220,200,0.10)'),
   };

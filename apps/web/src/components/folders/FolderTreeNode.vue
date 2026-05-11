@@ -19,7 +19,7 @@ import { ref, computed } from 'vue';
 import { Icon, UiContextMenu, type ContextMenuItem } from '@/components/ui';
 import { useFolders } from '@/composables/useFolders';
 import type { FolderNode } from '@continuum/shared';
-import type { IconName } from '@/components/ui/icons';
+import type { AppIconName as IconName } from '@/assets/icons';
 
 const props = defineProps<{
     node: FolderNode;

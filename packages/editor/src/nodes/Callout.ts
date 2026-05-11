@@ -1,12 +1,20 @@
 /**
- * Callout node — Notion-style highlighted info block with leading emoji.
+ * Callout node — Notion-style highlighted info block with leading icon.
  *
- * Renders as `<div data-type="callout" data-emoji="💡">…</div>` so it
- * round-trips through HTML/markdown serializers. The emoji is stored as a
- * single attribute and rendered with `contenteditable="false"` to keep it
- * out of the document's text flow.
+ * Renders as `<div data-type="callout" data-icon="…">…</div>` so it
+ * round-trips through HTML/markdown serializers. The leading symbol is
+ * stored in a single `icon` attribute that uses a tiny prefixed scheme:
+ *
+ *   - `name:foo`   → an icon from the host app's registry (e.g. `name:flame`)
+ *   - `url:https…` → an external image URL (e.g. icons8 link)
+ *   - anything else → treated as a literal grapheme (legacy emoji form)
+ *
+ * Pre-existing notes used a `data-emoji` attribute; `parseHTML` migrates
+ * those silently so older content keeps rendering.
  */
 import { Node, mergeAttributes } from '@tiptap/core';
+
+const DEFAULT_ICON = 'name:info';
 
 export const Callout = Node.create({
   name: 'callout',
@@ -16,10 +24,17 @@ export const Callout = Node.create({
 
   addAttributes() {
     return {
-      emoji: {
-        default: '💡',
-        parseHTML: (el) => el.getAttribute('data-emoji') ?? '💡',
-        renderHTML: (attrs) => ({ 'data-emoji': String(attrs.emoji ?? '💡') }),
+      icon: {
+        default: DEFAULT_ICON,
+        parseHTML: (el) => {
+          const explicit = el.getAttribute('data-icon');
+          if (explicit) return explicit;
+          // Back-compat: older notes stored a literal emoji in `data-emoji`.
+          const legacy = el.getAttribute('data-emoji');
+          if (legacy) return legacy;
+          return DEFAULT_ICON;
+        },
+        renderHTML: (attrs) => ({ 'data-icon': String(attrs.icon ?? DEFAULT_ICON) }),
       },
     };
   },
@@ -28,13 +43,11 @@ export const Callout = Node.create({
     return [{ tag: 'div[data-type="callout"]' }];
   },
 
-  renderHTML({ node, HTMLAttributes }) {
-    const emoji = String(node.attrs.emoji ?? '💡');
+  renderHTML({ HTMLAttributes }) {
     return [
       'div',
-      mergeAttributes(HTMLAttributes, { 'data-type': 'callout', class: 'lore-callout' }),
-      ['div', { class: 'lore-callout__emoji', contenteditable: 'false' }, emoji],
-      ['div', { class: 'lore-callout__body' }, 0],
+      mergeAttributes(HTMLAttributes, { 'data-type': 'callout', class: 'continuum-callout' }),
+      0,
     ];
   },
 });

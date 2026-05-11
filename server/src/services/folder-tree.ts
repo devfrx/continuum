@@ -18,13 +18,11 @@
 
 import type { FolderRow } from '../db/schema.js';
 import type { FolderNode, FolderEffective } from '@continuum/shared';
+import { ROOT_FALLBACK } from '@continuum/shared';
 
-/** Project-wide fallback when no ancestor defines a value. */
-export const ROOT_FALLBACK: FolderEffective = {
-  defaultKind: 'note',
-  icon: 'folder',
-  color: '#8C7B6A',
-};
+// Re-exported for backwards compatibility with anything that previously
+// imported `ROOT_FALLBACK` from this module.
+export { ROOT_FALLBACK };
 
 /** Convert a DB row to the shared `Folder` shape (ISO date strings). */
 function toFolder(row: FolderRow) {

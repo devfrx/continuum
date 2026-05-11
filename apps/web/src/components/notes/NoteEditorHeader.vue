@@ -36,7 +36,7 @@ const kindOptions = computed(() =>
 );
 const modeOptions = [
     { value: 'wysiwyg', label: 'WYSIWYG' },
-    { value: 'markdown', label: 'Markdown' },
+    { value: 'markdown', label: 'Source' },
 ];
 
 const tagDraft = ref('');
