@@ -114,6 +114,7 @@ const _ICONS = {
 
   // ── Editor — blocks & inline ────────────────────────────────────────────
   'image': { icon: 'solar:gallery-bold' },
+  'file': { icon: 'solar:document-bold' },
   'callout': { icon: 'solar:notification-unread-bold' },
   'toggle': { icon: 'solar:square-alt-arrow-right-bold' },
   'task': { icon: 'solar:checklist-bold' },
@@ -143,6 +144,7 @@ const _ICONS = {
   'layout': { icon: 'solar:widget-4-bold' },
   'drag': { icon: 'solar:posts-carousel-horizontal-bold' },
   'play': { icon: 'solar:play-bold' },
+  'loader': { icon: 'solar:refresh-bold' },
   'pause': { icon: 'solar:pause-bold' },
   'activity': { icon: 'solar:pulse-bold' },
   'snowflake': { icon: 'solar:snowflake-bold' },
@@ -206,8 +208,19 @@ const _ICONS = {
   'prop-url': { icon: 'solar:link-bold' },
   'prop-email': { icon: 'solar:letter-bold' },
   'prop-relation': { icon: 'solar:link-circle-bold' },
-  'prop-clock': { icon: 'solar:clock-circle-bold' },
-} as const;
+  'prop-clock': { icon: 'solar:clock-circle-bold' },  'prop-phone': { icon: 'solar:phone-bold' },
+  'prop-files': { icon: 'solar:paperclip-bold' },
+  'prop-status': { icon: 'solar:hourglass-bold' },
+  'prop-rollup': { icon: 'solar:layers-bold' },
+  'prop-formula': { icon: 'solar:calculator-bold' },
+  'prop-button': { icon: 'solar:bolt-circle-bold' },
+  'prop-created-time': { icon: 'solar:calendar-add-bold' },
+  'prop-created-by': { icon: 'solar:user-bold' },
+  'prop-edited-time': { icon: 'solar:pen-2-bold' },
+  'prop-edited-by': { icon: 'solar:user-rounded-bold' },
+  'prop-unique-id': { icon: 'solar:hashtag-square-bold' },
+  'prop-verification': { icon: 'solar:verified-check-bold' },
+  'prop-progress': { icon: 'solar:graph-bold' },} as const;
 
 export type AppIconName = keyof typeof _ICONS;
 

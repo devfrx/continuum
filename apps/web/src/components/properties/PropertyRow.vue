@@ -13,10 +13,12 @@ import {
     type NoteProperty,
     type PropertyOption,
     type PropertyValue,
+    type StatusOption,
 } from '@continuum/shared';
 
 const props = defineProps<{
     entry: NoteProperty;
+    noteId?: string | null;
     readonly?: boolean;
     reorderable?: boolean;
     dragActive?: boolean;
@@ -27,6 +29,7 @@ const emit = defineEmits<{
     'update:value': [value: PropertyValue];
     'select': [id: string];
     'remove': [];
+    'reload': [];
     'drag-start': [event: DragEvent];
     'drag-over': [event: DragEvent];
     'drop': [event: DragEvent];
@@ -67,8 +70,9 @@ function formatDate(value: string): string {
 
 function optionsForEntry(): PropertyOption[] {
     const config = props.entry.definition.config;
-    if (config.type !== 'select' && config.type !== 'multiSelect') return [];
-    return config.options;
+    if (config.type === 'select' || config.type === 'multiSelect') return config.options;
+    if (config.type === 'status') return config.options as StatusOption[];
+    return [];
 }
 
 function optionChip(id: string): ReadonlyChip {
@@ -126,6 +130,44 @@ function readonlyValue(value: PropertyValue | null): ReadonlyDisplay {
         }
         case 'relation':
             return value.value.length ? { kind: 'relation', ids: value.value } : { kind: 'empty', text: 'Empty' };
+        case 'phone': {
+            const text = value.value.trim();
+            return text ? { kind: 'link', text, href: `tel:${text.replace(/\s+/g, '')}` } : { kind: 'empty', text: 'Empty' };
+        }
+        case 'status':
+            return value.value ? { kind: 'chips', chips: [optionChip(value.value)] } : { kind: 'empty', text: 'Empty' };
+        case 'progress':
+            return { kind: 'text', text: `${value.value}` };
+        case 'verification':
+            return value.state === 'verified'
+                ? { kind: 'text', text: '✓ Verified' }
+                : value.state === 'expired'
+                    ? { kind: 'text', text: '⚠ Expired' }
+                    : { kind: 'empty', text: 'Not verified' };
+        case 'files':
+            return value.value.length
+                ? { kind: 'chips', chips: value.value.map((f) => ({ label: f.name })) }
+                : { kind: 'empty', text: 'Empty' };
+        case 'uniqueId':
+            return value.value ? { kind: 'text', text: value.value } : { kind: 'empty', text: '—' };
+        case 'createdTime':
+        case 'lastEditedTime': {
+            const text = value.value ? formatDate(value.value) : '';
+            return text ? { kind: 'text', text } : { kind: 'empty', text: '—' };
+        }
+        case 'createdBy':
+        case 'lastEditedBy':
+            return value.value ? { kind: 'text', text: value.value } : { kind: 'empty', text: '—' };
+        case 'formula':
+            return value.value === null || value.value === undefined
+                ? { kind: 'empty', text: '—' }
+                : { kind: 'text', text: String(value.value) };
+        case 'rollup':
+            return value.value === null || value.value === undefined
+                ? { kind: 'empty', text: '—' }
+                : { kind: 'text', text: String(value.value) };
+        case 'button':
+            return { kind: 'empty', text: '—' };
     }
 }
 
@@ -208,7 +250,10 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                 <span v-else class="prop-row__readonly-text">{{ readonlyDisplay.text }}</span>
             </div>
             <component v-else :is="editor" :value="entry.value" :definition="entry.definition"
-                @update:value="emit('update:value', $event)" @select="emit('select', $event)" />
+                :note-id="noteId"
+                @update:value="emit('update:value', $event)"
+                @select="emit('select', $event)"
+                @reload="emit('reload')" />
         </div>
 
         <div v-if="menuOpen && !readonly" class="prop-row__menu" role="menu" @click="close">
@@ -265,10 +310,14 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 }
 
 .prop-row--text,
+.prop-row--longText,
 .prop-row--dateRange,
 .prop-row--url,
 .prop-row--email,
-.prop-row--relation {
+.prop-row--relation,
+.prop-row--files,
+.prop-row--progress,
+.prop-row--button {
     grid-column: 1 / -1;
 }
 

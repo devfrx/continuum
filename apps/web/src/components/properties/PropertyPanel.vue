@@ -141,6 +141,7 @@ function clearDragState(): void {
         <template v-else>
             <div v-if="noteProps.entries.value.length" class="pp-list" :class="{ 'is-reordering': reorderBusy }">
                 <PropertyRow v-for="entry in noteProps.entries.value" :key="entry.definition.id" :entry="entry"
+                    :note-id="props.noteId"
                     :readonly="readonly" :reorderable="!readonly && noteProps.entries.value.length > 1 && !reorderBusy"
                     :drag-active="draggedPropertyId === entry.definition.id"
                     :drop-target="dragOverPropertyId === entry.definition.id && draggedPropertyId !== entry.definition.id"
@@ -150,6 +151,7 @@ function clearDragState(): void {
                     @drag-end="clearDragState"
                     @update:value="setValue(entry.definition.id, $event)"
                     @select="emit('select', $event)"
+                    @reload="noteProps.reload()"
                     @remove="requestDelete(entry.definition.id, entry.definition.label)" />
             </div>
             <p v-else-if="noteProps.loaded.value && !readonly" class="pp-empty-msg">

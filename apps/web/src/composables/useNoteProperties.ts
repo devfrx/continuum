@@ -56,10 +56,14 @@ export function useNoteProperties(
   async function set(propertyId: string, value: PropertyValue): Promise<void> {
     const id = noteIdRef.value;
     if (!id) return;
+    // Optimistic local patch keeps the editor snappy...
     const { value: stored } = await api.properties.setValue(id, propertyId, value);
     entries.value = entries.value.map((e) =>
       e.definition.id === propertyId ? { ...e, value: stored } : e,
     );
+    // ...then refetch so formulas, rollups and auto-managed values that
+    // depend on this property recompute server-side and show fresh data.
+    await reload();
   }
 
   async function clear(propertyId: string): Promise<void> {
@@ -69,6 +73,7 @@ export function useNoteProperties(
     entries.value = entries.value.map((e) =>
       e.definition.id === propertyId ? { ...e, value: null } : e,
     );
+    await reload();
   }
 
   watch(

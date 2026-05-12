@@ -1,6 +1,8 @@
 import type {
   AiHealthResponse,
   AiSearchHit,
+  ButtonAction,
+  FileRef,
   Folder,
   FolderEffective,
   FolderNode,
@@ -208,5 +210,36 @@ export const api = {
       http<{ ok: true }>(`/notes/${noteId}/properties/${propertyId}`, {
         method: 'DELETE',
       }),
+    /**
+     * Trigger a `button` property's configured action server-side. The
+     * server returns the updated target value when the action mutates a
+     * property (e.g. set-property / increment-property); for `open-url`
+     * the server returns `null` and the client opens the URL itself.
+     */
+    runButton: (noteId: string, propertyId: string) =>
+      http<{
+        ok: true;
+        result: { targetPropertyId: string; value: PropertyValue | null } | null;
+      }>(`/notes/${noteId}/properties/${propertyId}/run`, { method: 'POST' }),
+  },
+  /**
+   * File uploads backing the `files` property type. Multipart upload via
+   * a bare `fetch` (we can't use the json-only `http` helper because the
+   * body is a `FormData`).
+   */
+  uploads: {
+    /** Upload a single file and return the persisted reference. */
+    create: async (file: File): Promise<FileRef> => {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const res = await fetch(`${BASE}/uploads`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return (await res.json()) as FileRef;
+    },
+    /** Delete an uploaded file from disk by id. */
+    remove: (id: string) =>
+      http<{ ok: true }>(`/uploads/${id}`, { method: 'DELETE' }),
   },
 };
+
+export type { ButtonAction };
