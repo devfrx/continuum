@@ -173,6 +173,12 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
   function applyAdaptiveLabelThreshold(): void {
     const s = sigmaInstance.value;
     if (!s) return;
+    if (filters.filters.showNodeLabels || filters.filters.showNodeIcons) {
+      s.setSetting('labelDensity', 1);
+      s.setSetting('labelRenderedSizeThreshold', 0);
+      return;
+    }
+    s.setSetting('labelDensity', 0.16);
     const threshold = 16 - filters.filters.labelFadeThreshold * 12;
     s.setSetting('labelRenderedSizeThreshold', threshold);
   }
@@ -219,6 +225,28 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
         return;
       }
 
+      // Sigma v3 hard-codes `antialias: false` on the WebGL context it
+      // creates internally — which means every disc, edge and arrowhead
+      // is drawn without hardware multi-sampling and reads as visibly
+      // pixelated, especially at fractional DPRs (e.g. Windows 156%
+      // scaling). Temporarily patch `getContext` so Sigma's canvases
+      // request hardware MSAA, then restore the original immediately.
+      const origGetContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function patchedGetContext(
+        this: HTMLCanvasElement,
+        type: string,
+        attrs?: WebGLContextAttributes & CanvasRenderingContext2DSettings,
+      ) {
+        if (type === 'webgl2' || type === 'webgl') {
+          return origGetContext.call(this, type, {
+            ...(attrs ?? {}),
+            antialias: true,
+            powerPreference: 'high-performance',
+          } as WebGLContextAttributes) as RenderingContext | null;
+        }
+        return origGetContext.call(this, type as '2d', attrs as CanvasRenderingContext2DSettings) as RenderingContext | null;
+      } as typeof HTMLCanvasElement.prototype.getContext;
+
       const sigma = new Sigma(g, container.value, {
         ...buildSigmaProgramSettings(),
         // Sigma's WebGL `hoverNodes` layer falls back to the regular
@@ -246,10 +274,19 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
         // Clamp edge thickness on screen so links remain crisp at any
         // zoom level — the "spider web" effect at zoom-out happens
         // when Sigma renders sub-pixel thin edges.
-        minEdgeThickness: 1.4,
+        minEdgeThickness: 1.5,
+        // With hardware MSAA enabled (via webGLContextAttributes above),
+        // a touch of fragment-shader feather still helps soften the
+        // outer rim of node discs at fractional DPRs without blurring
+        // them. 0.5 was too tight (visible pixel staircase), 1.85 was
+        // too soft. 1.0 hits the sweet spot.
+        antiAliasingFeather: 1.0,
         stagePadding: 104,
         zIndex: true,
       });
+      // Restore the native getContext now that every Sigma canvas has
+      // been created with the MSAA-enabled WebGL context.
+      HTMLCanvasElement.prototype.getContext = origGetContext;
       sigmaInstance.value = sigma;
 
       const labelCtx = (): { palette: GraphPalette; iconOf: (k: string) => IconName } => ({
@@ -270,6 +307,8 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
           hideOrphans: filters.filters.hideOrphans,
           monochrome: filters.filters.monochrome,
           arrows: filters.filters.arrows,
+          showNodeLabels: filters.filters.showNodeLabels,
+          showNodeIcons: filters.filters.showNodeIcons,
           nodeSizeMultiplier: filters.filters.nodeSizeMultiplier,
           edgeSizeMultiplier: filters.filters.edgeSizeMultiplier,
           solidNodes: filters.filters.solidNodes,
@@ -479,6 +518,8 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
           monochrome: filters.filters.monochrome,
           arrows: filters.filters.arrows,
           labelFadeThreshold: filters.filters.labelFadeThreshold,
+          showNodeLabels: filters.filters.showNodeLabels,
+          showNodeIcons: filters.filters.showNodeIcons,
           nodeSizeMultiplier: filters.filters.nodeSizeMultiplier,
           edgeSizeMultiplier: filters.filters.edgeSizeMultiplier,
           solidNodes: filters.filters.solidNodes,

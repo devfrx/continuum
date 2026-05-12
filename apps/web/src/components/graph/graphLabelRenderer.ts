@@ -28,6 +28,8 @@ export type NodeRenderData = {
   color?: string;
   highlighted?: boolean;
   dimmed?: boolean;
+  showIcon?: boolean;
+  showLabel?: boolean;
 };
 export type RenderSettings = { labelSize: number; labelFont: string };
 export type NodeRenderFn = (
@@ -78,12 +80,12 @@ function drawIconAndLabel(
     ctx.stroke();
   }
 
-  if (img && data.size >= 6) {
+  if (data.showIcon && img && data.size >= 6) {
     const px = data.size * 1.15;
     const half = px / 2;
     ctx.drawImage(img, data.x - half, data.y - half, px, px);
   }
-  if (!data.label) return;
+  if (!data.showLabel || !data.label) return;
 
   const label = graphDisplayLabel(data.label, isHover ? 40 : 30);
   if (!label) return;
@@ -133,7 +135,7 @@ export function makeLabelRenderer(sigma: Sigma, getCtx: () => LabelRendererConte
     sigma.refresh({ skipIndexation: true });
   };
   return (ctx, data, settings) => {
-    if (data.dimmed || !data.label) return;
+    if (data.dimmed || (!data.showLabel && !data.showIcon)) return;
     const lc = getCtx();
     const kind = String(data.kind ?? 'custom');
     const img = getIconImage(lc.iconOf(kind), refresh);
@@ -155,6 +157,6 @@ export function makeHoverRenderer(sigma: Sigma, getCtx: () => LabelRendererConte
     const lc = getCtx();
     const kind = String(data.kind ?? 'custom');
     const img = getIconImage(lc.iconOf(kind), refresh);
-    drawIconAndLabel(ctx, data, settings, img, 'hover', lc.palette);
+    drawIconAndLabel(ctx, { ...data, showIcon: true }, settings, img, 'hover', lc.palette);
   };
 }

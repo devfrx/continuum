@@ -22,7 +22,7 @@
  *   { path: '/', query: { note: <id> } }
  * NotesView (owned by another agent) auto-selects the matching note.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Icon, UiButton, UiCard, UiEmpty, type ContextMenuItem as UiContextMenuItem } from '@/components/ui';
 import type { AppIconName as IconName } from '@/assets/icons';
@@ -66,6 +66,13 @@ const graph3dRef = ref<Graph3DHandle | null>(null);
 const graphError = ref('');
 const filtersOpen = ref(false);
 const helpOpen = ref(false);
+
+// The Filtri panel is exclusive to the 2D view (sliders drive Sigma /
+// d3-force settings). Auto-close on switch to 3D so it doesn't pop
+// back open the next time the user returns to 2D.
+watch(() => prefs.viewMode.value, (mode) => {
+  if (mode !== '2d' && filtersOpen.value) filtersOpen.value = false;
+});
 
 const contextMenu = reactive<ContextMenuState>({
   visible: false, x: 0, y: 0, nodeId: null, highlighted: false,
@@ -419,9 +426,10 @@ onBeforeUnmount(() => {
       @isolate="hideOtherKindsForSelected" @export="exportSelectedNote" />
 
     <transition name="filters-pop">
-      <GraphFiltersPanel v-if="filtersOpen" :model-value="filters.filters" :search-query="filters.searchQuery.value"
-        @update:model-value="applyFiltersUpdate" @update:search-query="filters.searchQuery.value = $event"
-        @reset="resetGraphFilters" @close="filtersOpen = false" @rerun-layout="sigma.reRunLayout" />
+      <GraphFiltersPanel v-if="filtersOpen && prefs.viewMode.value === '2d'" :model-value="filters.filters"
+        :search-query="filters.searchQuery.value" @update:model-value="applyFiltersUpdate"
+        @update:search-query="filters.searchQuery.value = $event" @reset="resetGraphFilters"
+        @close="filtersOpen = false" @rerun-layout="sigma.reRunLayout" />
     </transition>
 
     <div class="help-pill" role="button" tabindex="0" aria-label="Show graph shortcuts" @focus="helpOpen = true"
@@ -487,8 +495,18 @@ onBeforeUnmount(() => {
   background-color: var(--bg);
   background-image: radial-gradient(circle, var(--border-subtle) 1px, transparent 1px);
   background-size: 24px 24px;
-  border: var(--border-width-1) solid var(--border);
-  border-radius: var(--radius-md);
+}
+
+.canvas :deep(canvas) {
+  image-rendering: auto;
+  /*
+   * Promote each Sigma WebGL layer to its own GPU-backed compositing
+   * layer so the browser samples them at the native device pixel
+   * ratio without re-rasterising the parent (which used to soften
+   * the 2D graph at fractional DPRs like 156.25%).
+   */
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /*

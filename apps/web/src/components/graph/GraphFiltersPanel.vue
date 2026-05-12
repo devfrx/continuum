@@ -8,6 +8,8 @@
  * Persistence uses STORAGE_KEYS.graphFilters (R-26).
  */
 import { Icon } from '@/components/ui';
+import FilterSlider from '@/components/graph/FilterSlider.vue';
+import FilterToggle from '@/components/graph/FilterToggle.vue';
 import type { GraphFilters } from '@/composables/graph/useGraphFilters';
 
 interface Props {
@@ -52,17 +54,10 @@ function update<K extends keyof GraphFilters>(key: K, value: GraphFilters[K]): v
                     @input="emit('update:search-query', ($event.target as HTMLInputElement).value)" />
             </div>
 
-            <label class="filters-row">
-                <span class="filters-row-label">Orfani (nodi senza collegamenti)</span>
-                <input type="checkbox" class="filters-toggle" :checked="!modelValue.hideOrphans"
-                    @change="update('hideOrphans', !($event.target as HTMLInputElement).checked)" />
-            </label>
-
-            <label class="filters-row">
-                <span class="filters-row-label">Mostra colori categorie</span>
-                <input type="checkbox" class="filters-toggle" :checked="!modelValue.monochrome"
-                    @change="update('monochrome', !($event.target as HTMLInputElement).checked)" />
-            </label>
+            <FilterToggle label="Orfani (nodi senza collegamenti)" :model-value="!modelValue.hideOrphans"
+                @update:model-value="update('hideOrphans', !$event)" />
+            <FilterToggle label="Mostra colori categorie" :model-value="!modelValue.monochrome"
+                @update:model-value="update('monochrome', !$event)" />
 
             <details class="filters-section" open>
                 <summary>
@@ -70,36 +65,24 @@ function update<K extends keyof GraphFilters>(key: K, value: GraphFilters[K]): v
                     <span>Aspetto</span>
                 </summary>
                 <div class="filters-section-body">
-                    <label class="filters-row">
-                        <span class="filters-row-label">Frecce</span>
-                        <input type="checkbox" class="filters-toggle" :checked="modelValue.arrows"
-                            @change="update('arrows', ($event.target as HTMLInputElement).checked)" />
-                    </label>
-                    <label class="filters-row">
-                        <span class="filters-row-label">Nodi solidi</span>
-                        <input type="checkbox" class="filters-toggle" :checked="modelValue.solidNodes"
-                            @change="update('solidNodes', ($event.target as HTMLInputElement).checked)" />
-                    </label>
-                    <label class="filters-row">
-                        <span class="filters-row-label">LOD adattivo</span>
-                        <input type="checkbox" class="filters-toggle" :checked="modelValue.lodEnabled"
-                            @change="update('lodEnabled', ($event.target as HTMLInputElement).checked)" />
-                    </label>
-                    <div class="filters-slider">
-                        <span class="filters-row-label">Soglia dissolvenza testo</span>
-                        <input type="range" min="0" max="1" step="0.01" :value="modelValue.labelFadeThreshold"
-                            @input="update('labelFadeThreshold', Number(($event.target as HTMLInputElement).value))" />
-                    </div>
-                    <div class="filters-slider">
-                        <span class="filters-row-label">Dimensione nodo</span>
-                        <input type="range" min="0.3" max="3" step="0.05" :value="modelValue.nodeSizeMultiplier"
-                            @input="update('nodeSizeMultiplier', Number(($event.target as HTMLInputElement).value))" />
-                    </div>
-                    <div class="filters-slider">
-                        <span class="filters-row-label">Spessore linea</span>
-                        <input type="range" min="0.3" max="4" step="0.05" :value="modelValue.edgeSizeMultiplier"
-                            @input="update('edgeSizeMultiplier', Number(($event.target as HTMLInputElement).value))" />
-                    </div>
+                    <FilterToggle label="Frecce" :model-value="modelValue.arrows"
+                        @update:model-value="update('arrows', $event)" />
+                    <FilterToggle label="Nomi nodi" :model-value="modelValue.showNodeLabels"
+                        @update:model-value="update('showNodeLabels', $event)" />
+                    <FilterToggle label="Icone categorie" :model-value="modelValue.showNodeIcons"
+                        @update:model-value="update('showNodeIcons', $event)" />
+                    <FilterToggle label="Nodi solidi" :model-value="modelValue.solidNodes"
+                        @update:model-value="update('solidNodes', $event)" />
+                    <FilterToggle label="LOD adattivo" :model-value="modelValue.lodEnabled"
+                        @update:model-value="update('lodEnabled', $event)" />
+                    <FilterSlider label="Soglia dissolvenza testo" :model-value="modelValue.labelFadeThreshold" :min="0"
+                        :max="1" :step="0.01" @update:model-value="update('labelFadeThreshold', $event)" />
+                    <FilterSlider label="Dimensione nodo" :model-value="modelValue.nodeSizeMultiplier" :min="0.3"
+                        :max="3" :step="0.05" :format="(v) => `${v.toFixed(2)}×`"
+                        @update:model-value="update('nodeSizeMultiplier', $event)" />
+                    <FilterSlider label="Spessore linea" :model-value="modelValue.edgeSizeMultiplier" :min="0.3"
+                        :max="4" :step="0.05" :format="(v) => `${v.toFixed(2)}×`"
+                        @update:model-value="update('edgeSizeMultiplier', $event)" />
                     <button type="button" class="filters-action-btn" @click="emit('rerun-layout')">
                         Animazione
                     </button>
@@ -112,26 +95,17 @@ function update<K extends keyof GraphFilters>(key: K, value: GraphFilters[K]): v
                     <span>Forze</span>
                 </summary>
                 <div class="filters-section-body">
-                    <div class="filters-slider">
-                        <span class="filters-row-label">Forza di centratura</span>
-                        <input type="range" min="0" max="0.5" step="0.005" :value="modelValue.centerForce"
-                            @input="update('centerForce', Number(($event.target as HTMLInputElement).value))" />
-                    </div>
-                    <div class="filters-slider">
-                        <span class="filters-row-label">Forza di repulsione</span>
-                        <input type="range" min="-2000" max="-10" step="10" :value="modelValue.repelForce"
-                            @input="update('repelForce', Number(($event.target as HTMLInputElement).value))" />
-                    </div>
-                    <div class="filters-slider">
-                        <span class="filters-row-label">Forza collegamenti</span>
-                        <input type="range" min="0" max="2" step="0.05" :value="modelValue.linkForce"
-                            @input="update('linkForce', Number(($event.target as HTMLInputElement).value))" />
-                    </div>
-                    <div class="filters-slider">
-                        <span class="filters-row-label">Distanza collegamenti</span>
-                        <input type="range" min="30" max="500" step="5" :value="modelValue.linkDistance"
-                            @input="update('linkDistance', Number(($event.target as HTMLInputElement).value))" />
-                    </div>
+                    <FilterSlider label="Forza di centratura" :model-value="modelValue.centerForce" :min="0" :max="0.5"
+                        :step="0.005" :format="(v) => v.toFixed(3)"
+                        @update:model-value="update('centerForce', $event)" />
+                    <FilterSlider label="Forza di repulsione" :model-value="modelValue.repelForce" :min="-2000"
+                        :max="-10" :step="10" :format="(v) => Math.round(v).toString()"
+                        @update:model-value="update('repelForce', $event)" />
+                    <FilterSlider label="Forza collegamenti" :model-value="modelValue.linkForce" :min="0" :max="2"
+                        :step="0.05" :format="(v) => v.toFixed(2)" @update:model-value="update('linkForce', $event)" />
+                    <FilterSlider label="Distanza collegamenti" :model-value="modelValue.linkDistance" :min="30"
+                        :max="500" :step="5" :format="(v) => Math.round(v).toString()"
+                        @update:model-value="update('linkDistance', $event)" />
                 </div>
             </details>
         </div>
@@ -231,54 +205,6 @@ function update<K extends keyof GraphFilters>(key: K, value: GraphFilters[K]): v
     min-width: 0;
 }
 
-.filters-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    font-size: var(--text-sm);
-    color: var(--fg);
-    cursor: pointer;
-    padding: var(--space-1) 0;
-}
-
-.filters-row-label {
-    flex: 1;
-    color: var(--fg-muted);
-}
-
-.filters-toggle {
-    appearance: none;
-    width: 32px;
-    height: 18px;
-    border-radius: 999px;
-    background: var(--surface-3, #404040);
-    position: relative;
-    cursor: pointer;
-    outline: none;
-    transition: background-color var(--duration-fast) var(--ease-standard);
-}
-
-.filters-toggle::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #f5f5f5;
-    transition: transform var(--duration-fast) var(--ease-standard);
-}
-
-.filters-toggle:checked {
-    background: var(--accent);
-}
-
-.filters-toggle:checked::after {
-    transform: translateX(14px);
-}
-
 .filters-section {
     border-top: var(--border-width-1) solid var(--border);
     padding-top: var(--space-3);
@@ -318,41 +244,6 @@ function update<K extends keyof GraphFilters>(key: K, value: GraphFilters[K]): v
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-}
-
-.filters-slider {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-}
-
-.filters-slider input[type="range"] {
-    appearance: none;
-    width: 100%;
-    height: 4px;
-    border-radius: 999px;
-    background: var(--surface-3, #404040);
-    outline: none;
-    cursor: pointer;
-}
-
-.filters-slider input[type="range"]::-webkit-slider-thumb {
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #f5f5f5;
-    border: 2px solid var(--accent);
-    cursor: pointer;
-}
-
-.filters-slider input[type="range"]::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #f5f5f5;
-    border: 2px solid var(--accent);
-    cursor: pointer;
 }
 
 .filters-action-btn {

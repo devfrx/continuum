@@ -5,6 +5,7 @@
  * package stays usable without the web app's CSS layer.
  */
 import { createNodeBorderProgram } from '@sigma/node-border';
+import { NodeCircleProgram, createEdgeArrowProgram } from 'sigma/rendering';
 import type { Settings } from 'sigma/settings';
 
 export type LinkType = 'wikilink' | 'related' | string;
@@ -49,13 +50,18 @@ export function edgeStyleFor(linkType: LinkType): { color: string; size: number 
 }
 
 /**
- * Computes node visual size based on its degree.
- *   size = sqrt(degree) * scale + base
+ * Computes node visual size. The 2D Knowledge Graph treats every node
+ * identically — the only nodes allowed to differ in size are the ones
+ * the user explicitly highlights — so this returns the constant
+ * `NODE_BASE_SIZE` regardless of the node's degree. The `degree`
+ * parameter is kept for API compatibility but ignored.
  */
-export function nodeSizeForDegree(degree: number): number {
-  return Math.sqrt(Math.max(0, degree)) * NODE_DEGREE_SCALE + NODE_BASE_SIZE;
+export function nodeSizeForDegree(_degree: number): number {
+  return NODE_BASE_SIZE;
 }
 
+/** Outer ring used by the `hollow` node program (no-fill mode). */
+export const HOLLOW_BORDER_PIXELS = 2.4;
 /**
  * Returns Sigma settings overrides for the custom node-border + curved-arrow
  * edge programs. Spread into `new Sigma(graph, container, { ...overrides })`.
@@ -69,19 +75,28 @@ export function buildSigmaProgramSettings(): Partial<Settings> {
     defaultNodeType: 'bordered',
     defaultEdgeType: 'arrow',
     nodeProgramClasses: {
-      bordered: createNodeBorderProgram({
+      bordered: NodeCircleProgram,
+      // Hollow / outline-only program — used when "Nodi solidi" is OFF.
+      // The outer ring carries the kind colour (via `borderColor`) and
+      // the inner fill is the canvas background, producing a Roam/Logseq
+      // style hollow disc that reads topology over chroma.
+      hollow: createNodeBorderProgram({
         borders: [
-          // Outer border colour is attribute-driven so per-node reducers
-          // can paint a vivid ring on user-highlighted / selected nodes
-          // (the reducer sets `borderColor` on the node attributes).
-          // Falls back to the muted default so untouched nodes keep their
-          // current look.
           {
             color: { attribute: 'borderColor', defaultValue: NODE_BORDER_COLOR },
-            size: { value: NODE_BORDER_PIXELS, mode: 'pixels' },
+            size: { value: HOLLOW_BORDER_PIXELS, mode: 'pixels' },
           },
           { color: { attribute: 'color' }, size: { fill: true } },
         ],
+      }),
+    },
+    edgeProgramClasses: {
+      // Sigma's default arrow head ratios (length 2.5, wideness 2) render
+      // a clean, compact triangular barb that reads against the uniform
+      // edge stroke without looking like a wedge.
+      arrow: createEdgeArrowProgram({
+        lengthToThicknessRatio: 2.5,
+        widenessToThicknessRatio: 2,
       }),
     },
     /** Minimal label fallback — palette-agnostic. */

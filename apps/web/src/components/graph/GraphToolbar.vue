@@ -97,9 +97,9 @@ const search = computed<string>({
             @click="emit('view-axis', 'x')">
             <span>X</span>
         </button>
-        <span class="tb-sep" />
-        <button class="tb-btn" :class="{ active: filtersOpen }" title="Filters, appearance & forces"
-            aria-label="Open graph filters panel" @click="emit('toggle-filters')">
+        <span v-if="viewMode === '2d'" class="tb-sep" />
+        <button v-if="viewMode === '2d'" class="tb-btn" :class="{ active: filtersOpen }"
+            title="Filters, appearance & forces" aria-label="Open graph filters panel" @click="emit('toggle-filters')">
             <Icon name="filter" size="16" />
         </button>
         <span class="tb-sep" />

@@ -15,9 +15,17 @@ export interface ReducerFiltersSnapshot {
   hideOrphans: boolean;
   monochrome: boolean;
   arrows: boolean;
+  showNodeLabels: boolean;
+  showNodeIcons: boolean;
   nodeSizeMultiplier: number;
   edgeSizeMultiplier: number;
-  /** When true, suppress the muted 1px node border ring. */
+  /**
+   * When `true` (default), nodes render as filled discs in their kind
+   * colour. When `false`, nodes switch to a hollow `ring` rendering:
+   * the kind colour migrates to a thicker outer border and the inner
+   * fill is replaced with the canvas background so topology reads
+   * over chroma (Roam / Logseq style).
+   */
   solidNodes: boolean;
 }
 
@@ -36,6 +44,19 @@ export interface ReducerContext {
   /** Current LOD tier; reducers gate detail rendering off this. */
   lodTier: LodTier;
 }
+
+type NodeVisualAttrs = Record<string, unknown> & {
+  color?: string;
+  label?: string;
+  size?: number;
+  type?: string;
+  forceLabel?: boolean;
+  zIndex?: number;
+  borderColor?: string;
+  dimmed?: boolean;
+  showIcon?: boolean;
+  showLabel?: boolean;
+};
 
 /** Hover trumps selection for the focus subgraph. */
 function activeFocusId(ctx: ReducerContext): string | null {
@@ -104,7 +125,7 @@ export function applyReducers(
   sigma.setSetting('nodeReducer', (node, data) => {
     const ctx = getCtx();
     const { filters, hiddenKinds, matchedNodes, searchQuery, prominentNodeIds, palette: pal, lodTier } = ctx;
-    const res: Record<string, unknown> = { ...data };
+    const res: NodeVisualAttrs = { ...data };
     const kind = String((data as { kind?: string }).kind ?? 'custom');
     const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 14);
     const rawLabel = String((data as { label?: string }).label ?? '');
@@ -115,23 +136,35 @@ export function applyReducers(
     const isProminent = prominentNodeIds.has(node);
     const isFocusOrSelected = ctx.selectedId === node || ctx.hoveredNode === node;
     let showLabel = false;
-    // Solid fill — no alpha bleed.
+    let showIcon = false;
+    // STRICT UNIFORMITY: every node renders at exactly the same radius.
+    // The only branch allowed to deviate is the user-highlight path
+    // below. Selection, hover, focus, search-match, prominence — none
+    // of them bump size or stroke; they only modulate colour / z-index
+    // / borders so the visual hierarchy never produces "fat" nodes.
+    const uniformSize = baseSize * filters.nodeSizeMultiplier;
     res.color = baseColor;
-    res.size = baseSize * filters.nodeSizeMultiplier;
+    res.size = uniformSize;
     res.label = '';
-    // Solid-nodes default — hide the muted 1px outline ring; per-node
-    // overrides below (selection / highlight) still set borderColor.
     if (filters.solidNodes) {
-      (res as { borderColor?: string }).borderColor = 'rgba(0,0,0,0)';
+      res.type = 'bordered';
+      res.borderColor = 'rgba(0,0,0,0)';
+    } else {
+      res.type = 'hollow';
+      res.borderColor = baseColor;
+      res.color = pal.bg;
     }
+
+    if (filters.showNodeLabels) showLabel = true;
+    if (filters.showNodeIcons) showIcon = true;
 
     // 1. Hidden kind → near-invisible micro dot, no label, no icon.
     if (hiddenKinds.has(kind)) {
       res.color = pal.nodeHidden;
-      res.size = baseSize * 0.35 * filters.nodeSizeMultiplier;
+      res.size = uniformSize * 0.35;
       res.label = '';
       res.zIndex = 0;
-      (res as { dimmed?: boolean }).dimmed = true;
+      res.dimmed = true;
       return res;
     }
 
@@ -141,29 +174,28 @@ export function applyReducers(
       res.size = 0;
       res.label = '';
       res.zIndex = -1;
-      (res as { dimmed?: boolean }).dimmed = true;
+      res.dimmed = true;
       return res;
     }
 
     // 2. Search filter — keep non-matches visible but desaturated.
+    //    Matches keep the uniform size; only colour + z-index reflect the hit.
     const hasQuery = matchedNodes.size > 0 || searchQuery.trim().length > 0;
     if (hasQuery && !matchedNodes.has(node)) {
       res.color = pal.nodeDim;
-      (res as { dimmed?: boolean }).dimmed = true;
+      res.dimmed = true;
     } else if (hasQuery && matchedNodes.has(node)) {
       res.color = baseColor;
-      res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.12 * filters.nodeSizeMultiplier);
       res.zIndex = 2;
       showLabel = true;
+      showIcon = true;
     }
 
-    // 3. Selection / hover focus — vivid focus subgraph, dim background.
+    // 3. Selection / hover focus — promote z-index but keep size uniform.
     const focusId = activeFocusId(ctx);
     const isUserHighlighted = Boolean((data as { userHighlight?: boolean }).userHighlight);
     if (!focusId && !hasQuery && isProminent) {
-      res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.08 * filters.nodeSizeMultiplier);
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 1);
-      showLabel = true;
     }
     if (focusId) {
       const { nodes } = highlightNeighbors(graph, focusId);
@@ -172,60 +204,68 @@ export function applyReducers(
         if (!isUserHighlighted) {
           res.color = pal.nodeDim;
           res.label = '';
-          (res as { dimmed?: boolean }).dimmed = true;
+          res.dimmed = true;
         }
       } else if (node === focusId) {
         res.color = baseColor;
-        res.size = baseSize * 1.26 * filters.nodeSizeMultiplier;
         res.zIndex = 3;
         showLabel = true;
+        showIcon = true;
       } else {
         res.color = baseColor;
-        res.size = baseSize * 1.08 * filters.nodeSizeMultiplier;
         res.zIndex = 2;
         showLabel = true;
+        showIcon = true;
       }
     }
 
     if (ctx.selectedId === node) {
       res.color = baseColor;
-      res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.18 * filters.nodeSizeMultiplier);
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 2);
-      (res as { borderColor?: string }).borderColor = pal.edgeFocus;
+      res.borderColor = pal.edgeFocus;
       showLabel = true;
+      showIcon = true;
     }
 
-    // 4. Persistent user highlight — accent border + bumped size.
+    // 4. Persistent user highlight — the ONLY exception to uniform size.
     if (isUserHighlighted) {
       res.color = baseColor;
-      res.size = Math.max(Number(res.size ?? baseSize), baseSize * 1.28 * filters.nodeSizeMultiplier);
+      res.size = uniformSize * 1.28;
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 3);
-      (res as { borderColor?: string }).borderColor = pal.accent;
+      res.borderColor = pal.accent;
       showLabel = true;
+      showIcon = true;
     }
 
-    if (showLabel) {
+    if (showLabel || showIcon) {
       // LOD gate — in `mid` / `far` tiers, suppress all labels except
       // the actively hovered or selected node. Search matches in `mid`
       // remain (user is hunting); in `far` only focus/selection survive.
-      const allowLabel = lodTier === 'near'
+      const allowLabel = filters.showNodeLabels
+        || isUserHighlighted
+        || lodTier === 'near'
         || isFocusOrSelected
         || (lodTier === 'mid' && (matchedNodes.has(node) || prominentNodeIds.has(node)));
-      if (allowLabel) res.label = graphDisplayLabel(rawLabel, 32);
+      if (allowLabel || showIcon) res.label = graphDisplayLabel(rawLabel, 32) || ' ';
+      res.showLabel = showLabel && allowLabel;
+      res.forceLabel = filters.showNodeLabels || filters.showNodeIcons || isUserHighlighted || isFocusOrSelected;
     }
+    res.showIcon = showIcon;
 
     return res;
   });
 
   sigma.setSetting('edgeReducer', (edge, data) => {
     const ctx = getCtx();
-    const { filters, hiddenKinds, matchedNodes, searchQuery, prominentEdgeIds, palette: pal, hoveredEdge, lodTier } = ctx;
+    const { filters, hiddenKinds, matchedNodes, searchQuery, palette: pal, hoveredEdge, lodTier } = ctx;
     const res: Record<string, unknown> = { ...data };
-    const baseSize = Number((data as { baseSize?: number }).baseSize ?? data.size ?? 1);
-    const linkType = String((data as { linkType?: unknown }).linkType ?? 'related');
-    const isWikilink = linkType === 'wikilink';
     const sizeMult = filters.edgeSizeMultiplier;
     const defaultEdgeType = filters.arrows ? 'arrow' : 'line';
+    // STRICT UNIFORMITY: every edge ships with the same stroke width
+    // and the same colour saturation. Only the focus subgraph and the
+    // hovered edge get a separate (still uniform) accent treatment.
+    const baseSize = 1.35 * sizeMult;
+    const baseColor = colorWithAlpha(pal.edge, 0.7);
 
     // Hide edges connecting hidden-kind / orphan-filtered endpoints.
     const [src, tgt] = graph.extremities(edge);
@@ -244,45 +284,37 @@ export function applyReducers(
 
     // Uniform Obsidian-style baseline.
     res.type = defaultEdgeType;
-    res.color = colorWithAlpha(pal.edge, isWikilink ? 0.78 : 0.62);
-    res.size = Math.max(isWikilink ? 0.9 : 0.75, baseSize * (isWikilink ? 1.0 : 0.85)) * sizeMult;
+    res.color = baseColor;
+    res.size = baseSize;
 
     const hasQuery = matchedNodes.size > 0 || searchQuery.trim().length > 0;
     if (hasQuery) {
       if (matchedNodes.has(src) && matchedNodes.has(tgt)) {
         res.color = colorWithAlpha(pal.edgeFocus, 0.85);
-        res.size = Math.max(0.4, baseSize * 1.35) * sizeMult;
         res.zIndex = 1;
       } else {
         res.color = colorWithAlpha(pal.edge, 0.12);
-        res.size = Math.max(0.18, baseSize * 0.45) * sizeMult;
       }
-    } else if (prominentEdgeIds.has(edge)) {
-      res.color = colorWithAlpha(pal.edge, isWikilink ? 0.95 : 0.82);
-      res.size = Math.max(isWikilink ? 0.6 : 0.5, baseSize * (isWikilink ? 1.2 : 1.0)) * sizeMult;
     }
 
     const focusId = activeFocusId(ctx);
     if (focusId) {
       const { edges } = highlightNeighbors(graph, focusId);
       if (edges.has(edge)) {
-        // Focus subgraph — full saturation + extra weight, always with arrows
-        // even when the global toggle is off so the user can read direction
-        // when they actively interrogate a node.
+        // Focus subgraph — full saturation, always with arrows even
+        // when the global toggle is off so the user can read direction
+        // when they actively interrogate a node. Width stays uniform.
         res.type = 'arrow';
         res.color = pal.edgeFocus;
-        res.size = Math.max(0.6, baseSize * 1.45) * sizeMult;
         res.zIndex = 2;
       } else {
         res.color = colorWithAlpha(pal.edge, 0.08);
-        res.size = Math.max(0.2, baseSize * 0.55) * sizeMult;
       }
     }
 
     if (hoveredEdge && hoveredEdge === edge) {
       res.type = 'arrow';
       res.color = pal.edgeFocus;
-      res.size = Math.max(0.7, baseSize * 1.65) * sizeMult;
     }
 
     // LOD gate — in `far` tier, hide background edges (only the focus

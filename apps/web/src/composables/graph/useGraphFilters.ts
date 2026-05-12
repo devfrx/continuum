@@ -26,6 +26,10 @@ export interface GraphFilters {
   arrows: boolean;
   /** Aspetto → Soglia dissolvenza testo. 0 = labels always hidden, 1 = always shown. */
   labelFadeThreshold: number;
+  /** Aspetto → Nomi nodi. When true, node names render persistently. */
+  showNodeLabels: boolean;
+  /** Aspetto → Icone categorie. When true, category icons render persistently. */
+  showNodeIcons: boolean;
   /** Aspetto → Dimensione nodo. Multiplier applied to every node's `baseSize`. */
   nodeSizeMultiplier: number;
   /** Aspetto → Spessore linea. Multiplier applied to every edge's `baseSize`. */
@@ -58,6 +62,8 @@ export const GRAPH_FILTERS_DEFAULTS: GraphFilters = {
   monochrome: false,
   arrows: true,
   labelFadeThreshold: 0.55,
+  showNodeLabels: false,
+  showNodeIcons: false,
   nodeSizeMultiplier: 1,
   edgeSizeMultiplier: 1,
   centerForce: 0.08,
@@ -86,6 +92,12 @@ function readStoredFilters(): GraphFilters {
       monochrome: typeof parsed.monochrome === 'boolean' ? parsed.monochrome : GRAPH_FILTERS_DEFAULTS.monochrome,
       arrows: typeof parsed.arrows === 'boolean' ? parsed.arrows : GRAPH_FILTERS_DEFAULTS.arrows,
       labelFadeThreshold: clamp(parsed.labelFadeThreshold, 0, 1, GRAPH_FILTERS_DEFAULTS.labelFadeThreshold),
+      showNodeLabels: typeof parsed.showNodeLabels === 'boolean'
+        ? parsed.showNodeLabels
+        : GRAPH_FILTERS_DEFAULTS.showNodeLabels,
+      showNodeIcons: typeof parsed.showNodeIcons === 'boolean'
+        ? parsed.showNodeIcons
+        : GRAPH_FILTERS_DEFAULTS.showNodeIcons,
       nodeSizeMultiplier: clamp(parsed.nodeSizeMultiplier, 0.3, 3, GRAPH_FILTERS_DEFAULTS.nodeSizeMultiplier),
       edgeSizeMultiplier: clamp(parsed.edgeSizeMultiplier, 0.3, 4, GRAPH_FILTERS_DEFAULTS.edgeSizeMultiplier),
       centerForce: clamp(parsed.centerForce, 0, 0.5, GRAPH_FILTERS_DEFAULTS.centerForce),
