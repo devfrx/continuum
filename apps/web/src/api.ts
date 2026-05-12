@@ -1,6 +1,10 @@
 import type {
   AiHealthResponse,
   AiSearchHit,
+  ButtonAction,
+  DatabaseView,
+  DatabaseViewConfig,
+  FileRef,
   Folder,
   FolderEffective,
   FolderNode,
@@ -13,7 +17,20 @@ import type {
   PropertyDefinition,
   PropertyType,
   PropertyValue,
+  QueryRequest,
+  QueryResponse,
 } from '@continuum/shared';
+
+/** Compact view summary returned by the views list endpoint. */
+export interface ViewSummary {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  locked: boolean;
+  position: string;
+  layoutType: string;
+  updatedAt: string;
+}
 
 export interface BacklinkEntry {
   id: string;
@@ -208,5 +225,103 @@ export const api = {
       http<{ ok: true }>(`/notes/${noteId}/properties/${propertyId}`, {
         method: 'DELETE',
       }),
+    /**
+     * Trigger a `button` property's configured action server-side. The
+     * server returns the updated target value when the action mutates a
+     * property (e.g. set-property / increment-property); for `open-url`
+     * the server returns `null` and the client opens the URL itself.
+     */
+    runButton: (noteId: string, propertyId: string) =>
+      http<{
+        ok: true;
+        result: { targetPropertyId: string; value: PropertyValue | null } | null;
+      }>(`/notes/${noteId}/properties/${propertyId}/run`, { method: 'POST' }),
+  },
+  /**
+   * File uploads backing the `files` property type. Multipart upload via
+   * a bare `fetch` (we can't use the json-only `http` helper because the
+   * body is a `FormData`).
+   */
+  uploads: {
+    /** Upload a single file and return the persisted reference. */
+    create: async (file: File): Promise<FileRef> => {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const res = await fetch(`${BASE}/uploads`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return (await res.json()) as FileRef;
+    },
+    /** Delete an uploaded file from disk by id. */
+    remove: (id: string) =>
+      http<{ ok: true }>(`/uploads/${id}`, { method: 'DELETE' }),
+  },
+  /**
+   * Saved Database Views (Notion-class table/board/calendar/… per kind).
+   *
+   * Definitions live under `/api/kinds/:kindId/views[/:viewId]`; the row
+   * query endpoint at `/api/kinds/:kindId/query` returns paginated notes
+   * with their resolved property values + group buckets + calc-row totals.
+   */
+  views: {
+    /** List view tabs for a kind (compact summary, no config blob). */
+    list: (kindId: string) =>
+      http<ViewSummary[]>(`/kinds/${kindId}/views`),
+    /** Fetch one full view (config blob inflated). */
+    get: (kindId: string, viewId: string) =>
+      http<DatabaseView>(`/kinds/${kindId}/views/${viewId}`),
+    /** Create a new view. When `config` is omitted the server uses defaults. */
+    create: (kindId: string, data: { name: string; config?: DatabaseViewConfig }) =>
+      http<DatabaseView>(`/kinds/${kindId}/views`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    /** Patch a view (any of name, locked, isDefault, config). */
+    update: (
+      kindId: string,
+      viewId: string,
+      data: Partial<{ name: string; locked: boolean; isDefault: boolean; config: DatabaseViewConfig }>,
+    ) =>
+      http<DatabaseView>(`/kinds/${kindId}/views/${viewId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    /** Delete a view (refuses to remove the last view of a kind). */
+    remove: (kindId: string, viewId: string) =>
+      http<void>(`/kinds/${kindId}/views/${viewId}`, { method: 'DELETE' }),
+    /** Duplicate a view (server suffixes the name with " (copy)"). */
+    duplicate: (kindId: string, viewId: string) =>
+      http<DatabaseView>(`/kinds/${kindId}/views/${viewId}/duplicate`, {
+        method: 'POST',
+      }),
+    /** Persist a complete LexoRank ordering for the kind's view tabs. */
+    reorder: (kindId: string, ids: string[]) =>
+      http<ViewSummary[]>(`/kinds/${kindId}/views/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    /** Execute a view query (returns one paginated page of rows + facets). */
+    query: (kindId: string, body: QueryRequest) =>
+      http<QueryResponse>(`/kinds/${kindId}/query`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    /**
+     * Export the result of a view query as a CSV file. The server walks
+     * the query to completion (capped at 5000 rows) and returns the file
+     * as a `text/csv; charset=utf-8` blob with a `Content-Disposition`
+     * attachment header. The caller is responsible for triggering the
+     * browser download (see `useCsvExport` on the web side).
+     */
+    exportCsv: async (kindId: string, body: QueryRequest): Promise<Blob> => {
+      const res = await fetch(`${BASE}/kinds/${kindId}/export.csv`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`CSV export failed: ${res.status}`);
+      return res.blob();
+    },
   },
 };
+
+export type { ButtonAction };

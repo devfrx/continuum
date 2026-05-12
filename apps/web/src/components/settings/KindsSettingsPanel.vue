@@ -8,6 +8,7 @@
  * picks up changes automatically without prop wiring.
  */
 import { computed, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import {
     UiBadge,
     UiButton,
@@ -158,6 +159,14 @@ const confirmDeleteMessage = computed<string>(() =>
                         <div v-if="k.description" class="kind-row__desc">{{ k.description }}</div>
                     </div>
                     <div class="kind-row__actions">
+                        <RouterLink
+                            class="kind-row__db-link"
+                            :to="{ name: 'database-view', params: { kindId: k.id } }"
+                            :title="`Open ${k.label} as a database`"
+                        >
+                            <Icon name="prop-rollup" :size="14" />
+                            <span>Open as database</span>
+                        </RouterLink>
                         <UiButton v-if="!k.builtin" variant="subtle" size="sm" @click="startEdit(k)">Edit</UiButton>
                         <UiButton v-if="!k.builtin" variant="danger" size="sm" @click="removeKind(k)">Delete</UiButton>
                     </div>
@@ -294,8 +303,28 @@ const confirmDeleteMessage = computed<string>(() =>
 
 .kind-row__actions {
     display: flex;
+    align-items: center;
     gap: var(--space-3);
     flex-shrink: 0;
+}
+
+.kind-row__db-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-sm);
+    border: var(--border-width-1) solid var(--border);
+    color: var(--fg-muted);
+    font-size: var(--text-sm);
+    text-decoration: none;
+    transition: color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+}
+
+.kind-row__db-link:hover {
+    color: var(--accent);
+    border-color: var(--accent);
 }
 
 .kinds-empty {

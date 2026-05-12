@@ -45,6 +45,24 @@ const schema = z.object({
 
   HOCUSPOCUS_PORT: z.coerce.number().default(1235),
   HOCUSPOCUS_HOST: z.string().default('0.0.0.0'),
+
+  /**
+   * Display identity used by the auto-managed `createdBy` / `lastEditedBy`
+   * properties. Continuum is single-user / local-first so this defaults to
+   * the friendly placeholder "You". Override per-deployment by setting the
+   * `IDENTITY_NAME` env var.
+   */
+  IDENTITY_NAME: z.string().default('You'),
+
+  /**
+   * Directory where uploaded files (used by the `files` property type) are
+   * persisted. Resolved relative to the server's working directory unless
+   * an absolute path is provided. Served read-only at `/uploads/*`.
+   */
+  UPLOADS_DIR: z.string().default('./.docker-data/uploads'),
+
+  /** Max accepted upload size in bytes for a single file. Default 25 MiB. */
+  UPLOADS_MAX_BYTES: z.coerce.number().default(25 * 1024 * 1024),
 });
 
 export const env = schema.parse(process.env);

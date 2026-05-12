@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import * as path from 'node:path';
 
 const isDev = !app.isPackaged;
@@ -64,6 +64,17 @@ async function createWindow() {
         'Content-Security-Policy': [contentSecurityPolicy()],
       },
     });
+  });
+
+  // Hand off any new-window request (target=_blank, window.open, attachments)
+  // to the OS so we never spawn a duplicate Electron shell loading the SPA.
+  // Internal app navigations (same origin, no explicit "open in new window")
+  // never reach this handler — they go through `will-navigate` instead.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:') || url.startsWith('tel:')) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
   });
 
   if (isDev) {

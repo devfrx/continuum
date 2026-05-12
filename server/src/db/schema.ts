@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
@@ -255,3 +256,48 @@ export type PropertyDefinitionRow = typeof propertyDefinitions.$inferSelect;
 export type NewPropertyDefinition = typeof propertyDefinitions.$inferInsert;
 export type PropertyValueRow = typeof propertyValues.$inferSelect;
 export type NewPropertyValue = typeof propertyValues.$inferInsert;
+
+/**
+ * Saved Database Views.
+ *
+ * Each row is one saved view (Table / Board / Gallery / Calendar /
+ * Timeline / List) over a Kind. The full view configuration — layout,
+ * columns, sort, filter tree, group, calculation row, etc. — lives in
+ * the JSONB `config` column. Schema validation happens in the routes
+ * layer against the zod schemas exported by `@continuum/shared` so that
+ * adding a new layout/feature never requires a database migration.
+ *
+ * Invariants enforced by the routes layer:
+ *  - Exactly one view per kind has `is_default = true` (also guarded by
+ *    the `views_one_default_per_kind_uniq` partial unique index below).
+ *  - `name` is non-empty and trimmed.
+ *  - `position` is a LexoRank string used for tab ordering.
+ */
+export const views = pgTable(
+  'views',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kindId: text('kind_id')
+      .notNull()
+      .references(() => kinds.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+    name: text('name').notNull(),
+    isDefault: boolean('is_default').notNull().default(false),
+    locked: boolean('locked').notNull().default(false),
+    position: text('position').notNull().default('a0'),
+    /** Serialized DatabaseViewConfig — see @continuum/shared. */
+    config: jsonb('config').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    kindIdx: index('views_kind_idx').on(t.kindId),
+    positionIdx: index('views_position_idx').on(t.kindId, t.position),
+    // Partial unique index: at most one default view per kind.
+    defaultUniq: uniqueIndex('views_one_default_per_kind_uniq')
+      .on(t.kindId)
+      .where(sql`is_default`),
+  }),
+);
+
+export type ViewRow = typeof views.$inferSelect;
+export type NewView = typeof views.$inferInsert;

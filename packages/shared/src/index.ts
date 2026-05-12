@@ -283,3 +283,6 @@ export function colorForKind(kind: string): string {
 // ===== Custom Properties =====
 export * from './properties.js';
 
+// ===== Database Views =====
+export * from './views/index.js';
+

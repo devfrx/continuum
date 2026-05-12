@@ -36,12 +36,14 @@ import { slugify } from '../lib/slugify.js';
 import {
   configSchemaFor,
   definitionRowToDto,
+  isComputedPropertyType,
   propertyTypeSchema,
   valueDtoToRow,
   valueRowToDto,
   valueSchemaFor,
 } from '../services/properties.js';
-import type { NoteProperty, PropertyType } from '@continuum/shared';
+import { executeButtonAction, resolveNoteProperties } from '../services/property-computed.js';
+import type { ButtonConfig, NoteProperty, PropertyType } from '@continuum/shared';
 
 // ───────────────────────────── Schemas ─────────────────────────────────
 
@@ -255,29 +257,7 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
     const { noteId } = noteIdParamSchema.parse(req.params);
     const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
     if (!note) return reply.notFound('Note not found');
-
-    const defs = await db
-      .select()
-      .from(propertyDefinitions)
-      .where(eq(propertyDefinitions.kindId, note.kind))
-      .orderBy(asc(propertyDefinitions.position));
-
-    if (defs.length === 0) return [] satisfies NoteProperty[];
-
-    const vals = await db
-      .select()
-      .from(propertyValues)
-      .where(eq(propertyValues.noteId, noteId));
-    const byProp = new Map(vals.map((v) => [v.propertyId, v] as const));
-
-    return defs.map((d): NoteProperty => {
-      const row = byProp.get(d.id) ?? null;
-      const def = definitionRowToDto(d);
-      return {
-        definition: def,
-        value: row ? valueRowToDto(row, def.type) : null,
-      };
-    });
+    return resolveNoteProperties(noteId) satisfies Promise<NoteProperty[]>;
   });
 
   // ───────────── Values: PUT (upsert / clear-when-empty) ─────────────
@@ -300,6 +280,11 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
     if (!defRow) return reply.notFound('Property not found');
     if (defRow.scope === 'kind' && defRow.kindId !== note.kind) {
       return reply.badRequest("Property does not belong to this note's kind");
+    }
+    if (defRow.type === 'button' || isComputedPropertyType(defRow.type as PropertyType)) {
+      return reply.badRequest(
+        `Cannot set value for '${defRow.type}': this property is auto-managed.`,
+      );
     }
 
     const def = definitionRowToDto(defRow);
@@ -345,11 +330,54 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
         message: 'Note is locked. Unlock it before editing properties.',
       });
     }
+    const [defRow] = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.id, propId))
+      .limit(1);
+    if (defRow && (defRow.type === 'button' || isComputedPropertyType(defRow.type as PropertyType))) {
+      return reply.badRequest(
+        `Cannot clear value for '${defRow.type}': this property is auto-managed.`,
+      );
+    }
     await db
       .delete(propertyValues)
       .where(
         and(eq(propertyValues.noteId, noteId), eq(propertyValues.propertyId, propId)),
       );
     return { ok: true };
+  });
+
+  // ───────────── Values: trigger button action ─────────────
+  // POST /api/notes/:noteId/properties/:propId/run
+  // Runs the action declared in a button property's config and returns the
+  // updated target value (when the action mutates a property server-side).
+  app.post('/notes/:noteId/properties/:propId/run', async (req, reply) => {
+    const { noteId, propId } = notePropParamSchema.parse(req.params);
+    const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
+    if (!note) return reply.notFound('Note not found');
+    if (note.locked) {
+      return reply.code(423).send({
+        error: 'note-locked',
+        message: 'Note is locked. Unlock it before running button actions.',
+      });
+    }
+    const [defRow] = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.id, propId))
+      .limit(1);
+    if (!defRow) return reply.notFound('Property not found');
+    if (defRow.type !== 'button') {
+      return reply.badRequest('Property is not a button');
+    }
+    const cfg = defRow.config as ButtonConfig;
+    try {
+      const result = await executeButtonAction(noteId, cfg.action);
+      return { ok: true, result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'button-failed';
+      return reply.badRequest(message);
+    }
   });
 };
