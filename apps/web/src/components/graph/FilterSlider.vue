@@ -143,7 +143,11 @@ function onInput(event: Event): void {
             color-mix(in srgb, var(--accent) 88%, white 12%),
             var(--accent));
     pointer-events: none;
-    transition: width var(--duration-fast) var(--ease-standard);
+    /*
+     * No `transition` on `width` — the fill follows the cursor on
+     * every `input` event already, and a CSS animation here makes it
+     * lag visibly behind the thumb when the user drags fast.
+     */
 }
 
 .filter-slider__input {

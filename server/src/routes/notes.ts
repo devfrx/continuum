@@ -15,6 +15,7 @@ const upsertSchema = z.object({
   contentJson: z.unknown().optional(),
   tags: z.array(z.string()).default([]),
   folderId: z.string().uuid().nullable().optional(),
+  locked: z.boolean().optional(),
 });
 
 /**
@@ -28,7 +29,18 @@ const partialUpdateSchema = z.object({
   contentJson: z.unknown().optional(),
   tags: z.array(z.string()).optional(),
   folderId: z.string().uuid().nullable().optional(),
+  locked: z.boolean().optional(),
 });
+
+/** Fields that mutate user content; rejected when the note is locked. */
+const MUTATION_FIELDS = [
+  'title',
+  'kind',
+  'content',
+  'contentJson',
+  'tags',
+  'folderId',
+] as const;
 
 const searchSchema = z.object({
   query: z.string().min(1),
@@ -111,6 +123,27 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     if (body.folderId && !(await folderExists(body.folderId))) {
       return reply.notFound('Folder not found');
     }
+
+    // Enforce the lock contract server-side: when the existing note is
+    // locked, only `locked` itself may be mutated (typically to unlock).
+    // The UI already disables edits, but a stale client / direct API call
+    // must not be able to silently bypass the read-only state.
+    const [existing] = await db
+      .select({ locked: notes.locked })
+      .from(notes)
+      .where(eq(notes.id, id))
+      .limit(1);
+    if (!existing) return reply.notFound('Note not found');
+    if (existing.locked) {
+      const touchesContent = MUTATION_FIELDS.some((k) => k in body);
+      if (touchesContent) {
+        return reply.code(423).send({
+          error: 'note-locked',
+          message: 'Note is locked. Unlock it before editing.',
+        });
+      }
+    }
+
     const [updated] = await db
       .update(notes)
       .set({ ...body, updatedAt: new Date() })
@@ -144,8 +177,19 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     return updated;
   });
 
-  app.delete('/:id', async (req) => {
+  app.delete('/:id', async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
+    const [existing] = await db
+      .select({ locked: notes.locked })
+      .from(notes)
+      .where(eq(notes.id, id))
+      .limit(1);
+    if (existing?.locked) {
+      return reply.code(423).send({
+        error: 'note-locked',
+        message: 'Note is locked. Unlock it before deleting.',
+      });
+    }
     await db.delete(notes).where(eq(notes.id, id));
     return { ok: true };
   });
@@ -243,6 +287,18 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     if (folderId && !(await folderExists(folderId))) {
       return reply.notFound('Folder not found');
     }
+    const [existing] = await db
+      .select({ locked: notes.locked })
+      .from(notes)
+      .where(eq(notes.id, id))
+      .limit(1);
+    if (!existing) return reply.notFound('Note not found');
+    if (existing.locked) {
+      return reply.code(423).send({
+        error: 'note-locked',
+        message: 'Note is locked. Unlock it before moving.',
+      });
+    }
     const [updated] = await db
       .update(notes)
       .set({ folderId, updatedAt: new Date() })
@@ -269,9 +325,9 @@ export const noteRoutes: FastifyPluginAsync = async (app) => {
     const updated = await db
       .update(notes)
       .set({ folderId, updatedAt: new Date() })
-      .where(dsql`${notes.id} = ANY(${`{${ids.join(',')}}`}::uuid[])`)
+      .where(dsql`${notes.id} = ANY(${`{${ids.join(',')}}`}::uuid[]) AND ${notes.locked} = false`)
       .returning({ id: notes.id });
-    return { moved: updated.length };
+    return { moved: updated.length, skippedLocked: ids.length - updated.length };
   });
 
   // Backlinks: notes that link TO :id (any link type, wikilink or related).

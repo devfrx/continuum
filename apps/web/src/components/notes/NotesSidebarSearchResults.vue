@@ -10,6 +10,7 @@ import { computed } from 'vue';
 import { Icon, UiBadge } from '@/components/ui';
 import { useKinds } from '@/composables/useKinds';
 import { graphDisplayLabel } from '@/utils/graphLabels';
+import { cleanSnippet } from '@/utils/snippets';
 import type { AiSearchHit, Note } from '@continuum/shared';
 
 const props = defineProps<{
@@ -29,15 +30,6 @@ const semanticResults = computed(() => {
     const byId = new Map(props.notes.map((n) => [n.id, n]));
     return props.semanticHits.map((h) => ({ hit: h, note: byId.get(h.id) ?? null }));
 });
-
-function cleanSnippet(s: string): string {
-    return s
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
 
 function displayTitle(title: string | null | undefined): string {
     return graphDisplayLabel(title?.trim() || 'Untitled', 80);

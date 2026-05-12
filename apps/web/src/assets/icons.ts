@@ -130,6 +130,9 @@ const _ICONS = {
   'superscript': { icon: 'solar:text-bold' },
   'cut': { icon: 'solar:scissors-square-bold' },
   'paste': { icon: 'solar:clipboard-bold' },
+  'footnote': { icon: 'solar:bookmark-bold' },
+  'lock': { icon: 'solar:lock-keyhole-bold' },
+  'lock-open': { icon: 'solar:lock-keyhole-unlocked-bold' },
 
   // ── Graph ────────────────────────────────────────────────────────────────
   'node': { icon: 'solar:atom-bold' },
@@ -155,6 +158,7 @@ const _ICONS = {
   'warning': { icon: 'solar:danger-triangle-bold' },
   'info': { icon: 'solar:info-circle-bold' },
   'error': { icon: 'solar:close-circle-bold' },
+  'tag': { icon: 'solar:tag-bold' },
 
   // ── Loaders ──────────────────────────────────────────────────────────────
   /** Spinning refresh arrow — pair with a `.spin` CSS class on the consumer. */
@@ -189,6 +193,20 @@ const _ICONS = {
   'folder-add': { icon: 'solar:add-folder-bold' },
   'folder-favourite': { icon: 'solar:folder-favourite-bookmark-bold' },
   'inbox': { icon: 'solar:inbox-bold' },
+
+  // ── Property types ───────────────────────────────────────────────────────
+  'prop-text': { icon: 'solar:text-bold' },
+  'prop-long-text': { icon: 'solar:text-square-bold' },
+  'prop-number': { icon: 'solar:hashtag-bold' },
+  'prop-date': { icon: 'solar:calendar-bold' },
+  'prop-date-range': { icon: 'solar:calendar-mark-bold' },
+  'prop-checkbox': { icon: 'solar:check-square-bold' },
+  'prop-select': { icon: 'solar:list-bold' },
+  'prop-multi-select': { icon: 'solar:tag-horizontal-bold' },
+  'prop-url': { icon: 'solar:link-bold' },
+  'prop-email': { icon: 'solar:letter-bold' },
+  'prop-relation': { icon: 'solar:link-circle-bold' },
+  'prop-clock': { icon: 'solar:clock-circle-bold' },
 } as const;
 
 export type AppIconName = keyof typeof _ICONS;

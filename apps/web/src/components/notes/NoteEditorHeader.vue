@@ -14,6 +14,9 @@ const props = defineProps<{
     /** Folder this note lives in; `null` = root ("Inbox"). */
     folderId: string | null;
     editorMode: EditorMode;
+    fullWidth: boolean;
+    /** When true, the note is finalized: editing is disabled across the header. */
+    locked: boolean;
     savedAt: number | null;
     saving: boolean;
     nowTick: number;
@@ -24,6 +27,8 @@ const emit = defineEmits<{
     (e: 'update:kind', value: EntityKind): void;
     (e: 'update:tags', value: string[]): void;
     (e: 'update:editorMode', value: EditorMode): void;
+    (e: 'update:fullWidth', value: boolean): void;
+    (e: 'update:locked', value: boolean): void;
     (e: 'navigate-folder', folderId: string | null): void;
     (e: 'delete'): void;
 }>();
@@ -39,9 +44,20 @@ const modeOptions = [
     { value: 'markdown', label: 'Source' },
 ];
 
+const widthToggleLabel = computed(() =>
+    props.fullWidth ? 'Use reading width' : 'Use full width',
+);
+const widthToggleIcon = computed(() => (props.fullWidth ? 'minimize' : 'maximize'));
+
+const lockToggleLabel = computed(() =>
+    props.locked ? 'Unlock note (allow edits)' : 'Lock note (mark as finalized)',
+);
+const lockIcon = computed(() => (props.locked ? 'lock' : 'lock-open'));
+
 const tagDraft = ref('');
 
 const savedLabel = computed<string>(() => {
+    if (props.locked) return 'Locked';
     if (props.saving) return 'Saving…';
     if (!props.savedAt) return 'Not saved yet';
     const diff = Math.max(0, Math.floor((props.nowTick - props.savedAt) / 1000));
@@ -54,22 +70,24 @@ const savedLabel = computed<string>(() => {
 });
 
 function addTag(): void {
+    if (props.locked) return;
     const t = tagDraft.value.trim();
     if (!t) return;
     if (!props.tags.includes(t)) emit('update:tags', [...props.tags, t]);
     tagDraft.value = '';
 }
 function removeTag(tag: string): void {
+    if (props.locked) return;
     emit('update:tags', props.tags.filter((t) => t !== tag));
 }
 </script>
 
 <template>
-    <header class="editor-header">
+    <header class="editor-header" :class="{ 'is-locked': locked }">
         <FolderBreadcrumb :folder-id="folderId" class="header-breadcrumb"
             @select="(id) => emit('navigate-folder', id)" />
 
-        <input class="title-input" :value="title" placeholder="Untitled" spellcheck="false"
+        <input class="title-input" :value="title" placeholder="Untitled" spellcheck="false" :readonly="locked"
             @input="emit('update:title', ($event.target as HTMLInputElement).value)" />
 
         <div class="meta-row">
@@ -77,30 +95,45 @@ function removeTag(tag: string): void {
                 <div class="kind-chip" :style="{ '--kind-color': kindStore.colorOf(kind) }">
                     <span class="kind-dot" :style="{ background: kindStore.colorOf(kind) }" />
                     <UiSelect :model-value="kind" :options="kindOptions" variant="bare" class="kind-select"
+                        :disabled="locked"
                         @update:model-value="(v: string | number) => emit('update:kind', String(v) as EntityKind)" />
                 </div>
 
                 <div class="tags-inline">
-                    <UiChip v-for="t in tags" :key="t" closable @close="removeTag(t)">#{{ t }}</UiChip>
-                    <input v-model="tagDraft" class="tag-input" placeholder="add tag…" @keydown.enter.prevent="addTag"
-                        @keydown.,.prevent="addTag" />
+                    <UiChip v-for="t in tags" :key="t" :closable="!locked" @close="removeTag(t)">#{{ t }}</UiChip>
+                    <input v-if="!locked" v-model="tagDraft" class="tag-input" placeholder="add tag…"
+                        @keydown.enter.prevent="addTag" @keydown.,.prevent="addTag" />
                 </div>
             </div>
 
             <div class="meta-right">
-                <span class="status" :class="{ saving }" :title="savedLabel">
+                <span class="status" :class="{ saving, locked }" :title="savedLabel">
                     <span class="status-dot" />
                     <span class="status-label">{{ savedLabel }}</span>
                 </span>
 
-                <span class="meta-divider" aria-hidden="true" />
+                <template v-if="!locked">
+                    <span class="meta-divider" aria-hidden="true" />
 
-                <UiSegmented :model-value="editorMode" :options="modeOptions" aria-label="Editor mode"
-                    class="mode-segmented"
-                    @update:model-value="(v: string) => emit('update:editorMode', v as EditorMode)" />
+                    <UiSegmented :model-value="editorMode" :options="modeOptions" aria-label="Editor mode"
+                        class="mode-segmented"
+                        @update:model-value="(v: string) => emit('update:editorMode', v as EditorMode)" />
+                </template>
 
-                <button type="button" class="delete-btn" :title="'Delete note'" aria-label="Delete note"
-                    @click="emit('delete')">
+                <button type="button" class="width-btn" :class="{ 'is-active': fullWidth }"
+                    :title="widthToggleLabel" :aria-label="widthToggleLabel" :aria-pressed="fullWidth"
+                    @click="emit('update:fullWidth', !fullWidth)">
+                    <Icon :name="widthToggleIcon" :size="15" />
+                </button>
+
+                <button type="button" class="lock-btn" :class="{ 'is-active': locked }" :title="lockToggleLabel"
+                    :aria-label="lockToggleLabel" :aria-pressed="locked"
+                    @click="emit('update:locked', !locked)">
+                    <Icon :name="lockIcon" :size="15" />
+                </button>
+
+                <button type="button" class="delete-btn" :title="locked ? 'Unlock note to delete' : 'Delete note'"
+                    aria-label="Delete note" :disabled="locked" @click="emit('delete')">
                     <Icon name="trash" :size="15" />
                 </button>
             </div>
@@ -326,7 +359,9 @@ function removeTag(tag: string): void {
     --ui-seg-h: var(--ctrl-h);
 }
 
-/* ── Delete (icon-only ghost) ────────────────────────────────────── */
+/* ── Icon-only actions ───────────────────────────────────────────── */
+.width-btn,
+.lock-btn,
 .delete-btn {
     display: inline-flex;
     align-items: center;
@@ -345,15 +380,53 @@ function removeTag(tag: string): void {
         border-color var(--duration-fast) var(--ease-standard);
 }
 
-.delete-btn:hover {
+.width-btn:hover,
+.width-btn.is-active,
+.lock-btn:hover {
+    background: var(--bg-soft);
+    border-color: var(--border);
+    color: var(--fg);
+}
+
+.lock-btn.is-active {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+    color: var(--accent);
+}
+
+.width-btn:focus-visible,
+.lock-btn:focus-visible,
+.delete-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+}
+
+.delete-btn:hover:not(:disabled) {
     background: color-mix(in srgb, var(--danger) 12%, transparent);
     border-color: color-mix(in srgb, var(--danger) 28%, transparent);
     color: var(--danger);
 }
 
 .delete-btn:focus-visible {
-    outline: none;
-    box-shadow: var(--shadow-focus);
     color: var(--danger);
+}
+
+.delete-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ── Locked editor surface ───────────────────────────────────────── */
+.editor-header.is-locked .title-input {
+    color: var(--fg-muted);
+    cursor: default;
+}
+
+.editor-header.is-locked .tag-input {
+    display: none;
+}
+
+.status.locked .status-dot {
+    background: var(--accent);
 }
 </style>

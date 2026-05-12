@@ -95,6 +95,16 @@ function drawIconAndLabel(
   ctx.font = `${weight} ${fontPx}px ${settings.labelFont}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  // Smoother text rendering for the pill labels under each node.
+  // `textRendering: geometricPrecision` lets the browser pick the
+  // higher-quality rasterizer (Direct2D / CoreText), and the explicit
+  // image-smoothing flags guarantee bilinear filtering for the icon
+  // glyphs drawn just above. Both are no-ops on engines that ignore
+  // them, so the fallback is the same baseline antialiasing as before.
+  (ctx as CanvasRenderingContext2D & { textRendering?: string }).textRendering =
+    'geometricPrecision';
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
 
   const padX = 8;
   const padY = 4;
@@ -102,8 +112,12 @@ function drawIconAndLabel(
   const textW = ctx.measureText(label).width;
   const w = Math.ceil(textW + padX * 2);
   const h = Math.ceil(fontPx + padY * 2);
-  const x = data.x - w / 2;
-  const y = data.y + data.size + 6;
+  // Snap the pill to integer device pixels so the rounded-rect strokes
+  // stay crisp instead of being blurred across two columns/rows.
+  const x = Math.round(data.x - w / 2);
+  const y = Math.round(data.y + data.size + 6);
+  const labelX = Math.round(data.x);
+  const labelY = Math.round(y + h / 2);
 
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
@@ -123,7 +137,7 @@ function drawIconAndLabel(
   ctx.stroke();
 
   ctx.fillStyle = pal.labelFg;
-  ctx.fillText(label, data.x, y + h / 2);
+  ctx.fillText(label, labelX, labelY);
 }
 
 /**

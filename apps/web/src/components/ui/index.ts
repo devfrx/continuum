@@ -13,6 +13,7 @@ export { default as UiEmpty } from './UiEmpty.vue';
 export { default as UiModal } from './UiModal.vue';
 export { default as UiPromptModal } from './UiPromptModal.vue';
 export { default as UiConfirmModal } from './UiConfirmModal.vue';
+export { default as UiDatePicker } from './UiDatePicker.vue';
 export { default as UiIconPicker } from './UiIconPicker.vue';
 export { default as UiNotePickerModal } from './UiNotePickerModal.vue';
 export { default as UiContextMenu } from './UiContextMenu.vue';

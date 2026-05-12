@@ -173,12 +173,13 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
   function applyAdaptiveLabelThreshold(): void {
     const s = sigmaInstance.value;
     if (!s) return;
-    if (filters.filters.showNodeLabels || filters.filters.showNodeIcons) {
-      s.setSetting('labelDensity', 1);
-      s.setSetting('labelRenderedSizeThreshold', 0);
-      return;
-    }
-    s.setSetting('labelDensity', 0.16);
+    // The fade-threshold slider is always the source of truth: even
+    // when "Mostra nomi nodi" or "Icone categorie" are on, labels and
+    // icons must fade out at zoom-out exactly as the user dragged the
+    // slider. The previous short-circuit (`labelRenderedSizeThreshold = 0`)
+    // pinned every label visible regardless of the slider value.
+    const wantsAlwaysOn = filters.filters.showNodeLabels || filters.filters.showNodeIcons;
+    s.setSetting('labelDensity', wantsAlwaysOn ? 1 : 0.16);
     const threshold = 16 - filters.filters.labelFadeThreshold * 12;
     s.setSetting('labelRenderedSizeThreshold', threshold);
   }
@@ -278,9 +279,10 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
         // With hardware MSAA enabled (via webGLContextAttributes above),
         // a touch of fragment-shader feather still helps soften the
         // outer rim of node discs at fractional DPRs without blurring
-        // them. 0.5 was too tight (visible pixel staircase), 1.85 was
-        // too soft. 1.0 hits the sweet spot.
-        antiAliasingFeather: 1.0,
+        // them. 1.0 was a safe baseline; 1.25 trades a hair of crispness
+        // for a noticeably smoother edge on both node discs and link
+        // strokes (the same feather is consumed by Sigma's edge program).
+        antiAliasingFeather: 1.25,
         stagePadding: 104,
         zIndex: true,
       });

@@ -2,7 +2,19 @@
 import './styles/editor.css';
 import './styles/prosemirror.css';
 import './styles/nodes.css';
-import { onBeforeUnmount, watch, computed, ref, markRaw, provide, type Component } from 'vue';
+import './styles/slashCommand.css';
+import {
+  onBeforeUnmount,
+  watch,
+  computed,
+  ref,
+  markRaw,
+  provide,
+  createApp,
+  h,
+  type App,
+  type Component,
+} from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import Collaboration from '@tiptap/extension-collaboration';
 import { HocuspocusProvider } from '@hocuspocus/provider';
@@ -14,12 +26,20 @@ import CodeBlockNodeView from './CodeBlockNodeView.vue';
 import DetailsNodeView from './nodes/DetailsNodeView.vue';
 import CalloutNodeView from './nodes/CalloutNodeView.vue';
 import ChartNodeView from './nodes/ChartNodeView.vue';
+import FootnoteNodeView from './nodes/FootnoteNodeView.vue';
 import {
   ICON_CATALOG_KEY,
   ICON_COMPONENT_KEY,
   SELECT_COMPONENT_KEY,
   type IconCatalogEntry,
 } from './hostBridge';
+import {
+  createDefaultSlashCommands,
+  SlashCommandMenu,
+  type SlashCommandItem,
+  type SlashRendererInstance,
+  type SlashRendererProps,
+} from './extensions/slashCommand';
 
 interface CollaborationConfig {
   documentId: string;
@@ -53,14 +73,30 @@ const props = withDefaults(
      * `modelValue`, `options: { label; value }[]`, emits `update:modelValue`.
      */
     selectComponent?: Component | null;
+    /**
+     * Items shown in the slash-command popup. Defaults to the full
+     * Continuum command set (`createDefaultSlashCommands()`); pass an
+     * empty array to disable the slash menu entirely, or a custom list
+     * to extend / override per host.
+     */
+    slashCommandItems?: SlashCommandItem[];
+    /**
+     * When false, the editor becomes read-only: every Tiptap command is
+     * rejected, the toolbar buttons disable themselves, NodeViews still
+     * render but block their own mutating affordances. Used by the
+     * “Lock note” affordance in the host — see `NoteEditorHeader`.
+     */
+    editable?: boolean;
   }>(),
   {
     mode: 'wysiwyg',
-    placeholder: 'Start writingâ€¦',
+    placeholder: 'Start writing\u2026',
     collaboration: null,
     iconCatalog: () => [],
     iconComponent: null,
     selectComponent: null,
+    slashCommandItems: () => createDefaultSlashCommands(),
+    editable: true,
   },
 );
 
@@ -114,8 +150,76 @@ if (!isMarkdown.value && collab.value) {
   });
 }
 
+/**
+ * Slash-menu renderer.
+ *
+ * Each suggestion session mounts a fresh `SlashCommandMenu` Vue app
+ * into a detached `<div>` appended to `document.body`. We re-use the
+ * same app for the lifetime of the session and update it via the
+ * exposed `propsRef` so reactivity drives re-renders without the cost
+ * of unmount/remount on every keystroke. The host's icon catalog and
+ * icon component are forwarded through the app's `provide` so the
+ * popup shares the same visual identity as the editor proper.
+ */
+function createSlashRenderer(): SlashRendererInstance {
+  let app: App | null = null;
+  let container: HTMLDivElement | null = null;
+  const liveProps = ref<SlashRendererProps | null>(null);
+  // Public handle the popup exposes via `defineExpose` for keyboard nav.
+  const popupRef = ref<{ onKeyDown: (p: { event: KeyboardEvent }) => boolean } | null>(null);
+
+  function mount(initial: SlashRendererProps): void {
+    container = document.createElement('div');
+    container.className = 'continuum-slash-menu-host';
+    document.body.appendChild(container);
+    liveProps.value = initial;
+    app = createApp({
+      setup() {
+        return () => {
+          const p = liveProps.value;
+          if (!p) return null;
+          return h(SlashCommandMenu, {
+            ref: popupRef,
+            items: p.items,
+            query: p.query,
+            clientRect: p.clientRect,
+            onCommand: p.command,
+          });
+        };
+      },
+    });
+    // Forward host UI primitives so the popup uses the same Icon comp.
+    app.provide(ICON_CATALOG_KEY, props.iconCatalog);
+    if (props.iconComponent) app.provide(ICON_COMPONENT_KEY, markRaw(props.iconComponent));
+    app.mount(container);
+  }
+
+  function unmount(): void {
+    app?.unmount();
+    app = null;
+    container?.remove();
+    container = null;
+    liveProps.value = null;
+    popupRef.value = null;
+  }
+
+  return {
+    onStart: (p) => mount(p),
+    onUpdate: (p) => {
+      liveProps.value = p;
+    },
+    onKeyDown: ({ event }) => {
+      // Escape always closes the menu — let the suggestion plugin handle exit.
+      if (event.key === 'Escape') return false;
+      return popupRef.value?.onKeyDown({ event }) ?? false;
+    },
+    onExit: () => unmount(),
+  };
+}
+
 const editor = useEditor({
   content: collab.value ? '' : props.modelValue,
+  editable: props.editable,
   extensions: [
     ...buildExtensions({
       collaborative: !!collab.value,
@@ -124,6 +228,11 @@ const editor = useEditor({
       detailsView: markRaw(DetailsNodeView),
       calloutView: markRaw(CalloutNodeView),
       chartView: markRaw(ChartNodeView),
+      footnoteView: markRaw(FootnoteNodeView),
+      slashCommand: {
+        items: props.slashCommandItems,
+        render: createSlashRenderer,
+      },
     }),
     ...(collab.value && ydoc ? [Collaboration.configure({ document: ydoc })] : []),
   ],
@@ -156,6 +265,7 @@ const editor = useEditor({
      * working without a dedicated upload service.
      */
     handlePaste(_view, event: ClipboardEvent) {
+      if (!props.editable) return false;
       const data = event.clipboardData;
       if (!data || data.files.length === 0) return false;
       const images = Array.from(data.files).filter((f) => f.type.startsWith('image/'));
@@ -171,6 +281,7 @@ const editor = useEditor({
      * Tiptap's default handling (e.g. internal node drag).
      */
     handleDrop(_view, event: DragEvent) {
+      if (!props.editable) return false;
       const dt = event.dataTransfer;
       if (!dt || dt.files.length === 0) return false;
       const images = Array.from(dt.files).filter((f) => f.type.startsWith('image/'));
@@ -186,6 +297,7 @@ const editor = useEditor({
 });
 
 function openContextMenu(ev: MouseEvent): void {
+  if (!props.editable) return;
   const e = editor.value;
   if (!e) return;
   ev.preventDefault();
@@ -247,6 +359,7 @@ function scheduleEmit(): void {
 }
 
 function wrapWikilink(): void {
+  if (!props.editable) return;
   const e = editor.value;
   if (!e) return;
   const { from, to, empty } = e.state.selection;
@@ -395,6 +508,16 @@ watch(
   },
 );
 
+// React to editable toggle: pipe straight through to Tiptap so the
+// editor surface, the bubble menu, and every NodeView observe the same
+// `isEditable` flag without each one needing its own prop.
+watch(
+  () => props.editable,
+  (value) => {
+    editor.value?.setEditable(value);
+  },
+);
+
 const markdownRef = ref<HTMLTextAreaElement | null>(null);
 
 /**
@@ -444,6 +567,7 @@ function flushMdEmit(): void {
 }
 
 function onMarkdownInput(ev: Event): void {
+  if (!props.editable) return;
   const target = ev.target as HTMLTextAreaElement;
   mdPendingValue = target.value;
   if (mdEmitTimer !== null) return;
@@ -461,6 +585,7 @@ onBeforeUnmount(() => {
 });
 
 function toggle(cmd: string): void {
+  if (!props.editable) return;
   const e = editor.value;
   if (!e) return;
   const chain = e.chain().focus();
@@ -489,9 +614,9 @@ function isActive(name: string, attrs?: Record<string, unknown>): boolean {
 </script>
 
 <template>
-  <div class="continuum-editor" :class="{ 'is-markdown': isMarkdown }">
+  <div class="continuum-editor" :class="{ 'is-markdown': isMarkdown, 'is-readonly': !editable }">
     <template v-if="!isMarkdown">
-      <div class="toolbar" v-if="editor" role="toolbar" aria-label="Formatting">
+      <div class="toolbar" v-if="editor && editable" role="toolbar" aria-label="Formatting">
         <div class="tb-group">
           <button class="tb-btn" :class="{ active: isActive('bold') }" @click="toggle('bold')" title="Bold (Ctrl+B)"
             aria-label="Bold">
@@ -623,7 +748,7 @@ function isActive(name: string, attrs?: Record<string, unknown>): boolean {
         </div>
       </div>
       <textarea v-show="sourceView === 'source'" ref="markdownRef" class="content md-area" :value="modelValue"
-        :placeholder="placeholder" spellcheck="false" @input="onMarkdownInput" />
+        :placeholder="placeholder" spellcheck="false" :readonly="!editable" @input="onMarkdownInput" />
       <!-- Read-only preview: renders the same HTML the WYSIWYG would emit so
            authors can verify their source edits without leaving source mode.
            Uses .ProseMirror so saved tiptap styles apply identically. -->

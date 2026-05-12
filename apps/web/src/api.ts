@@ -8,6 +8,11 @@ import type {
   GraphNode,
   KindDefinition,
   Note,
+  NoteProperty,
+  PropertyConfig,
+  PropertyDefinition,
+  PropertyType,
+  PropertyValue,
 } from '@continuum/shared';
 
 export interface BacklinkEntry {
@@ -138,5 +143,70 @@ export const api = {
       data: { parentId: string | null; before?: string | null; after?: string | null },
     ) => http<Folder>(`/folders/${id}/move`, { method: 'POST', body: JSON.stringify(data) }),
     remove: (id: string) => http<{ ok: true }>(`/folders/${id}`, { method: 'DELETE' }),
+  },
+  /**
+   * Custom property catalogue (per-kind definitions) and per-note values.
+   * Definitions live under `/api/kinds/:kindId/properties` and
+   * `/api/properties/:id`; values under `/api/notes/:noteId/properties[/:propId]`.
+   */
+  properties: {
+    /** List all property definitions configured for a kind. */
+    listForKind: (kindId: string) =>
+      http<PropertyDefinition[]>(`/kinds/${kindId}/properties`),
+    /** Create a new property definition for a kind. */
+    create: (
+      kindId: string,
+      data: {
+        label: string;
+        type: PropertyType;
+        key?: string;
+        icon?: string | null;
+        description?: string | null;
+        config?: PropertyConfig;
+        position?: string;
+      },
+    ) =>
+      http<PropertyDefinition>(`/kinds/${kindId}/properties`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    /** Patch a definition (label, icon, description, config, position). */
+    update: (
+      id: string,
+      data: Partial<{
+        label: string;
+        icon: string | null;
+        description: string | null;
+        config: PropertyConfig;
+        position: string;
+      }>,
+    ) =>
+      http<PropertyDefinition>(`/properties/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    /** Persist the complete display order for a kind's property definitions. */
+    reorder: (kindId: string, ids: string[]) =>
+      http<PropertyDefinition[]>(`/kinds/${kindId}/properties/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    /** Delete a definition (cascades all stored values). */
+    remove: (id: string) =>
+      http<{ ok: true }>(`/properties/${id}`, { method: 'DELETE' }),
+    /** List every property + current value for a note. */
+    listForNote: (noteId: string) =>
+      http<NoteProperty[]>(`/notes/${noteId}/properties`),
+    /** Set / update one value. Sending an empty value clears it server-side. */
+    setValue: (noteId: string, propertyId: string, value: PropertyValue) =>
+      http<{ ok: true; value: PropertyValue | null }>(
+        `/notes/${noteId}/properties/${propertyId}`,
+        { method: 'PUT', body: JSON.stringify(value) },
+      ),
+    /** Explicitly clear a value (equivalent to setValue with an empty value). */
+    clearValue: (noteId: string, propertyId: string) =>
+      http<{ ok: true }>(`/notes/${noteId}/properties/${propertyId}`, {
+        method: 'DELETE',
+      }),
   },
 };

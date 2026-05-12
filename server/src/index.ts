@@ -7,6 +7,8 @@ import { noteRoutes } from './routes/notes.js';
 import { linkRoutes } from './routes/links.js';
 import { kindRoutes } from './routes/kinds.js';
 import { folderRoutes } from './routes/folders.js';
+import { propertyRoutes } from './routes/properties.js';
+import { ensureDatabaseSchema } from './db/schemaMaintenance.js';
 import { seedKinds } from './db/seed.js';
 import { waitForDatabase } from './db/readiness.js';
 import { startHocuspocus } from './collaboration/hocuspocus.js';
@@ -36,9 +38,12 @@ async function start() {
   await app.register(linkRoutes, { prefix: '/api/links' });
   await app.register(kindRoutes, { prefix: '/api/kinds' });
   await app.register(folderRoutes, { prefix: '/api/folders' });
+  // Properties span both kinds and notes, so they mount at the bare /api root.
+  await app.register(propertyRoutes, { prefix: '/api' });
 
   try {
     await waitForDatabase({ logger: app.log });
+    await ensureDatabaseSchema();
     const { inserted } = await seedKinds();
     if (inserted > 0) app.log.info(`Seeded ${inserted} default kinds`);
     await app.listen({ host: env.SERVER_HOST, port: env.SERVER_PORT });

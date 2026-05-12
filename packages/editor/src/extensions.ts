@@ -30,7 +30,13 @@ import { all, createLowlight } from 'lowlight';
 import { Details, DetailsSummary, DetailsContent } from './nodes/Details';
 import { Callout } from './nodes/Callout';
 import { Chart } from './nodes/Chart';
+import { Footnote } from './nodes/Footnote';
 import { TrailingNode } from './extensions/TrailingNode';
+import {
+  SlashCommand,
+  type SlashCommandItem,
+  type SlashRendererInstance,
+} from './extensions/slashCommand';
 
 export const lowlight = createLowlight(all);
 
@@ -49,6 +55,17 @@ interface BuildOptions {
   calloutView: Component;
   /** Vue NodeView component for the Chart block (provides editor + canvas). */
   chartView: Component;
+  /** Vue NodeView for the inline Footnote atom (marker + edit popover). */
+  footnoteView: Component;
+  /**
+   * Slash-menu wiring. When omitted (or `items` is empty) the slash
+   * extension is skipped entirely so embeds that don't want a command
+   * menu pay no runtime cost.
+   */
+  slashCommand?: {
+    items: SlashCommandItem[];
+    render: () => SlashRendererInstance;
+  };
 }
 
 export function buildExtensions(opts: BuildOptions) {
@@ -64,7 +81,19 @@ export function buildExtensions(opts: BuildOptions) {
     Superscript,
     Typography,
     Link.configure({ openOnClick: false }),
-    Placeholder.configure({ placeholder: opts.placeholder }),
+    Placeholder.configure({
+      // Two-tier placeholder: the host's prompt sits on the first empty
+      // block as a primary call-to-action, while every other empty
+      // paragraph the caret enters carries a discreet "Type '/' for
+      // commands" hint so the slash menu is discoverable without ever
+      // polluting the rest of the document.
+      includeChildren: false,
+      placeholder: ({ node, pos }) => {
+        if (pos === 0) return opts.placeholder;
+        if (node.type.name === 'paragraph') return "Type '/' for commands";
+        return '';
+      },
+    }),
     TaskList,
     TaskItem.configure({ nested: true }),
     TextStyle,
@@ -108,11 +137,25 @@ export function buildExtensions(opts: BuildOptions) {
         return VueNodeViewRenderer(opts.chartView);
       },
     }),
+    Footnote.extend({
+      addNodeView() {
+        return VueNodeViewRenderer(opts.footnoteView);
+      },
+    }),
     CodeBlockLowlight.extend({
       addNodeView() {
         return VueNodeViewRenderer(opts.codeBlockView);
       },
     }).configure({ lowlight, defaultLanguage: 'plaintext' }),
     TrailingNode,
+    ...(opts.slashCommand && opts.slashCommand.items.length > 0
+      ? [
+          SlashCommand.configure({
+            items: opts.slashCommand.items,
+            render: opts.slashCommand.render,
+            limit: 12,
+          }),
+        ]
+      : []),
   ];
 }

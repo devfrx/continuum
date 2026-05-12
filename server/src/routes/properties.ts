@@ -1,0 +1,355 @@
+/**
+ * Custom Properties REST API.
+ *
+ *  Definitions
+ *  ─────────────
+ *  GET    /api/kinds/:kindId/properties           list definitions for a kind
+ *  POST   /api/kinds/:kindId/properties           create a kind-scoped definition
+ *  POST   /api/kinds/:kindId/properties/reorder   persist the kind's definition order
+ *  PATCH  /api/properties/:id                     update a definition (label, icon, description, config, position)
+ *  DELETE /api/properties/:id                     delete a definition (cascades values)
+ *
+ *  Values (per-note)
+ *  ─────────────────
+ *  GET    /api/notes/:noteId/properties           list every property for the note's kind + current values
+ *  PUT    /api/notes/:noteId/properties/:propId   set / update a single value (DELETE-when-empty semantics)
+ *  DELETE /api/notes/:noteId/properties/:propId   clear a value
+ *
+ *  Filter (future kanban view)
+ *  ──────────────────────────
+ *  POST   /api/notes/query                        execute a FilterTree → returns matching note ids
+ *
+ * The routes are mounted with a generic `/api` prefix in `index.ts`.
+ */
+import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+import { and, asc, eq, isNull } from 'drizzle-orm';
+import { db } from '../db/client.js';
+import {
+  kinds,
+  notes,
+  propertyDefinitions,
+  propertyValues,
+  type PropertyDefinitionRow,
+} from '../db/schema.js';
+import { slugify } from '../lib/slugify.js';
+import {
+  configSchemaFor,
+  definitionRowToDto,
+  propertyTypeSchema,
+  valueDtoToRow,
+  valueRowToDto,
+  valueSchemaFor,
+} from '../services/properties.js';
+import type { NoteProperty, PropertyType } from '@continuum/shared';
+
+// ───────────────────────────── Schemas ─────────────────────────────────
+
+const idParamSchema = z.object({ id: z.string().uuid() });
+const noteIdParamSchema = z.object({ noteId: z.string().uuid() });
+const notePropParamSchema = z.object({
+  noteId: z.string().uuid(),
+  propId: z.string().uuid(),
+});
+const kindIdParamSchema = z.object({ kindId: z.string().min(1).max(60) });
+
+const createDefinitionSchema = z.object({
+  key: z.string().min(1).max(60).optional(),
+  label: z.string().min(1).max(60),
+  type: propertyTypeSchema,
+  icon: z.string().min(1).max(60).nullable().optional(),
+  description: z.string().max(500).nullable().optional(),
+  config: z.unknown().optional(),
+  position: z.string().max(120).optional(),
+});
+
+const updateDefinitionSchema = z.object({
+  label: z.string().min(1).max(60).optional(),
+  icon: z.string().min(1).max(60).nullable().optional(),
+  description: z.string().max(500).nullable().optional(),
+  config: z.unknown().optional(),
+  position: z.string().max(120).optional(),
+});
+
+const reorderDefinitionsSchema = z.object({
+  /** Complete ordered list of definition ids for the kind. */
+  ids: z.array(z.string().uuid()).max(500),
+});
+
+// ───────────────────────────── Helpers ─────────────────────────────────
+
+/** Find the next LexoRank-style position string for a kind (lexicographic). */
+async function nextPosition(kindId: string | null): Promise<string> {
+  const where = kindId === null
+    ? isNull(propertyDefinitions.kindId)
+    : eq(propertyDefinitions.kindId, kindId);
+  const rows = await db
+    .select({ position: propertyDefinitions.position })
+    .from(propertyDefinitions)
+    .where(where)
+    .orderBy(asc(propertyDefinitions.position));
+  if (rows.length === 0) return 'a0';
+  // Append a char beyond the last position to keep ordering stable without
+  // implementing a full LexoRank library. Good enough for a few hundred rows.
+  return `${rows[rows.length - 1].position}m`;
+}
+
+/** Normalised lexicographic rank used when a kind's properties are reordered. */
+function positionForIndex(index: number): string {
+  return `p${String((index + 1) * 1000).padStart(8, '0')}`;
+}
+
+// ─────────────────────────── Plugin export ─────────────────────────────
+
+export const propertyRoutes: FastifyPluginAsync = async (app) => {
+  // ───────────── Definitions: list per kind ─────────────
+  app.get('/kinds/:kindId/properties', async (req, reply) => {
+    const { kindId } = kindIdParamSchema.parse(req.params);
+    const [kind] = await db.select().from(kinds).where(eq(kinds.id, kindId)).limit(1);
+    if (!kind) return reply.notFound(`Kind "${kindId}" not found`);
+
+    const rows = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.kindId, kindId))
+      .orderBy(asc(propertyDefinitions.position));
+    return rows.map(definitionRowToDto);
+  });
+
+  // ───────────── Definitions: create per kind ─────────────
+  app.post('/kinds/:kindId/properties', async (req, reply) => {
+    const { kindId } = kindIdParamSchema.parse(req.params);
+    const body = createDefinitionSchema.parse(req.body);
+
+    const [kind] = await db.select().from(kinds).where(eq(kinds.id, kindId)).limit(1);
+    if (!kind) return reply.notFound(`Kind "${kindId}" not found`);
+
+    const key = body.key?.trim() ? slugify(body.key, 60) : slugify(body.label, 60);
+    if (!key) return reply.badRequest('Could not derive a valid key from the label');
+
+    const [existing] = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(
+        and(eq(propertyDefinitions.kindId, kindId), eq(propertyDefinitions.key, key)),
+      )
+      .limit(1);
+    if (existing) return reply.conflict(`A property with key "${key}" already exists for this kind`);
+
+    // Validate the config payload against the type. When omitted, default
+    // to `{ type }` so the type-specific defaults are applied client-side.
+    const configParser = configSchemaFor(body.type);
+    const config = configParser.parse(body.config ?? { type: body.type });
+
+    const position = body.position ?? (await nextPosition(kindId));
+
+    const [created] = await db
+      .insert(propertyDefinitions)
+      .values({
+        scope: 'kind',
+        kindId,
+        key,
+        label: body.label,
+        type: body.type,
+        icon: body.icon ?? null,
+        description: body.description ?? null,
+        config,
+        position,
+      })
+      .returning();
+    return definitionRowToDto(created);
+  });
+
+  // ───────────── Definitions: reorder per kind ─────────────
+  app.post('/kinds/:kindId/properties/reorder', async (req, reply) => {
+    const { kindId } = kindIdParamSchema.parse(req.params);
+    const body = reorderDefinitionsSchema.parse(req.body);
+
+    const [kind] = await db.select().from(kinds).where(eq(kinds.id, kindId)).limit(1);
+    if (!kind) return reply.notFound(`Kind "${kindId}" not found`);
+
+    const uniqueIds = new Set(body.ids);
+    if (uniqueIds.size !== body.ids.length) {
+      return reply.badRequest('Duplicate property ids in reorder payload');
+    }
+
+    const existing = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.kindId, kindId))
+      .orderBy(asc(propertyDefinitions.position));
+
+    const existingIds = new Set(existing.map((row) => row.id));
+    const payloadMatchesKind = body.ids.length === existing.length
+      && body.ids.every((id) => existingIds.has(id));
+    if (!payloadMatchesKind) {
+      return reply.badRequest(
+        'Reorder payload must include every property for this kind exactly once',
+      );
+    }
+
+    const updated = await db.transaction(async (tx) => {
+      for (const [index, id] of body.ids.entries()) {
+        await tx
+          .update(propertyDefinitions)
+          .set({ position: positionForIndex(index), updatedAt: new Date() })
+          .where(eq(propertyDefinitions.id, id));
+      }
+      return tx
+        .select()
+        .from(propertyDefinitions)
+        .where(eq(propertyDefinitions.kindId, kindId))
+        .orderBy(asc(propertyDefinitions.position));
+    });
+
+    return updated.map(definitionRowToDto);
+  });
+
+  // ───────────── Definitions: patch ─────────────
+  app.patch('/properties/:id', async (req, reply) => {
+    const { id } = idParamSchema.parse(req.params);
+    const body = updateDefinitionSchema.parse(req.body);
+
+    const [existing] = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.id, id))
+      .limit(1);
+    if (!existing) return reply.notFound('Property not found');
+
+    const patch: Partial<PropertyDefinitionRow> = { updatedAt: new Date() };
+    if (body.label !== undefined) patch.label = body.label;
+    if (body.icon !== undefined) patch.icon = body.icon;
+    if (body.description !== undefined) patch.description = body.description;
+    if (body.position !== undefined) patch.position = body.position;
+    if (body.config !== undefined) {
+      const parser = configSchemaFor(existing.type as PropertyType);
+      patch.config = parser.parse(body.config);
+    }
+
+    const [updated] = await db
+      .update(propertyDefinitions)
+      .set(patch)
+      .where(eq(propertyDefinitions.id, id))
+      .returning();
+    return definitionRowToDto(updated);
+  });
+
+  // ───────────── Definitions: delete ─────────────
+  app.delete('/properties/:id', async (req, reply) => {
+    const { id } = idParamSchema.parse(req.params);
+    const [existing] = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.id, id))
+      .limit(1);
+    if (!existing) return reply.notFound('Property not found');
+
+    // FK ON DELETE CASCADE removes all property_values rows.
+    await db.delete(propertyDefinitions).where(eq(propertyDefinitions.id, id));
+    return { ok: true };
+  });
+
+  // ───────────── Values: list per note ─────────────
+  app.get('/notes/:noteId/properties', async (req, reply) => {
+    const { noteId } = noteIdParamSchema.parse(req.params);
+    const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
+    if (!note) return reply.notFound('Note not found');
+
+    const defs = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.kindId, note.kind))
+      .orderBy(asc(propertyDefinitions.position));
+
+    if (defs.length === 0) return [] satisfies NoteProperty[];
+
+    const vals = await db
+      .select()
+      .from(propertyValues)
+      .where(eq(propertyValues.noteId, noteId));
+    const byProp = new Map(vals.map((v) => [v.propertyId, v] as const));
+
+    return defs.map((d): NoteProperty => {
+      const row = byProp.get(d.id) ?? null;
+      const def = definitionRowToDto(d);
+      return {
+        definition: def,
+        value: row ? valueRowToDto(row, def.type) : null,
+      };
+    });
+  });
+
+  // ───────────── Values: PUT (upsert / clear-when-empty) ─────────────
+  app.put('/notes/:noteId/properties/:propId', async (req, reply) => {
+    const { noteId, propId } = notePropParamSchema.parse(req.params);
+
+    const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
+    if (!note) return reply.notFound('Note not found');
+    if (note.locked) {
+      return reply.code(423).send({
+        error: 'note-locked',
+        message: 'Note is locked. Unlock it before editing properties.',
+      });
+    }
+    const [defRow] = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.id, propId))
+      .limit(1);
+    if (!defRow) return reply.notFound('Property not found');
+    if (defRow.scope === 'kind' && defRow.kindId !== note.kind) {
+      return reply.badRequest("Property does not belong to this note's kind");
+    }
+
+    const def = definitionRowToDto(defRow);
+    const parser = valueSchemaFor(def);
+    const value = parser.parse(req.body);
+    const encoded = valueDtoToRow(value);
+
+    if (encoded === null) {
+      // Empty value → delete the row entirely (sparse storage).
+      await db
+        .delete(propertyValues)
+        .where(
+          and(eq(propertyValues.noteId, noteId), eq(propertyValues.propertyId, propId)),
+        );
+      return { ok: true, value: null };
+    }
+
+    // Upsert via INSERT … ON CONFLICT DO UPDATE on (note_id, property_id).
+    const [row] = await db
+      .insert(propertyValues)
+      .values({
+        noteId,
+        propertyId: propId,
+        ...encoded,
+      })
+      .onConflictDoUpdate({
+        target: [propertyValues.noteId, propertyValues.propertyId],
+        set: { ...encoded, updatedAt: new Date() },
+      })
+      .returning();
+
+    return { ok: true, value: valueRowToDto(row, def.type) };
+  });
+
+  // ───────────── Values: clear ─────────────
+  app.delete('/notes/:noteId/properties/:propId', async (req, reply) => {
+    const { noteId, propId } = notePropParamSchema.parse(req.params);
+    const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
+    if (!note) return reply.notFound('Note not found');
+    if (note.locked) {
+      return reply.code(423).send({
+        error: 'note-locked',
+        message: 'Note is locked. Unlock it before editing properties.',
+      });
+    }
+    await db
+      .delete(propertyValues)
+      .where(
+        and(eq(propertyValues.noteId, noteId), eq(propertyValues.propertyId, propId)),
+      );
+    return { ok: true };
+  });
+};

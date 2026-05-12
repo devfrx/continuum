@@ -39,6 +39,13 @@ export interface Note {
   tags: string[];
   /** Optional parent folder. `null` = root ("Inbox"). */
   folderId?: UUID | null;
+  /**
+   * When true, the note is "finalized" and read-only across the stack.
+   * The editor disables all editing affordances and the API rejects every
+   * mutation except toggling `locked` itself. Set via the lock toggle in
+   * the note header.
+   */
+  locked: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -272,3 +279,7 @@ export const KIND_COLORS: Record<string, string> = {
 export function colorForKind(kind: string): string {
   return KIND_COLORS[kind] ?? KIND_COLORS.custom;
 }
+
+// ===== Custom Properties =====
+export * from './properties.js';
+

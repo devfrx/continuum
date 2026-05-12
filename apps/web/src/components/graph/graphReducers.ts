@@ -80,6 +80,34 @@ export function colorWithAlpha(color: string, alpha: number): string {
   return color;
 }
 
+type RgbColor = { r: number; g: number; b: number };
+
+function parseRgbColor(color: string): RgbColor | null {
+  const trimmed = color.trim();
+  const rgba = /^rgba?\(([^)]+)\)$/i.exec(trimmed);
+  if (rgba) {
+    const parts = rgba[1].split(',').map((p) => Number.parseFloat(p.trim()));
+    if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) {
+      return { r: parts[0], g: parts[1], b: parts[2] };
+    }
+  }
+  const hex = /^#([0-9a-f]{6})$/i.exec(trimmed);
+  if (!hex) return null;
+  const n = Number.parseInt(hex[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function mixOpaqueColor(foreground: string, background: string, amount: number): string {
+  const fg = parseRgbColor(foreground);
+  const bg = parseRgbColor(background);
+  if (!fg || !bg) return foreground;
+  const t = Math.max(0, Math.min(1, amount));
+  const r = Math.round(bg.r + (fg.r - bg.r) * t);
+  const g = Math.round(bg.g + (fg.g - bg.g) * t);
+  const b = Math.round(bg.b + (fg.b - bg.b) * t);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
 export function computeProminence(graph: Graph): { nodes: Set<string>; edges: Set<string> } {
   const ranked: Array<{ id: string; degree: number; label: string }> = [];
   graph.forEachNode((id, attrs) => {
@@ -194,6 +222,7 @@ export function applyReducers(
     // 3. Selection / hover focus — promote z-index but keep size uniform.
     const focusId = activeFocusId(ctx);
     const isUserHighlighted = Boolean((data as { userHighlight?: boolean }).userHighlight);
+    let isOutOfFocus = false;
     if (!focusId && !hasQuery && isProminent) {
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 1);
     }
@@ -201,11 +230,20 @@ export function applyReducers(
       const { nodes } = highlightNeighbors(graph, focusId);
       const inSet = nodes.has(node);
       if (!inSet) {
-        if (!isUserHighlighted) {
-          res.color = pal.nodeDim;
-          res.label = '';
-          res.dimmed = true;
+        isOutOfFocus = true;
+        // Out-of-focus nodes use one uniform dim shade — no selected,
+        // persisted-highlight or kind-colour exceptions — so the focus
+        // subgraph is the only non-background visual system on screen.
+        const dimUniform = mixOpaqueColor(pal.nodeDefault, pal.bg, 0.34);
+        res.color = dimUniform;
+        if (!filters.solidNodes) {
+          res.borderColor = dimUniform;
         }
+        res.label = '';
+        res.zIndex = 0;
+        res.dimmed = true;
+        showLabel = false;
+        showIcon = false;
       } else if (node === focusId) {
         res.color = baseColor;
         res.zIndex = 3;
@@ -219,7 +257,7 @@ export function applyReducers(
       }
     }
 
-    if (ctx.selectedId === node) {
+    if (!isOutOfFocus && ctx.selectedId === node) {
       res.color = baseColor;
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 2);
       res.borderColor = pal.edgeFocus;
@@ -228,7 +266,7 @@ export function applyReducers(
     }
 
     // 4. Persistent user highlight — the ONLY exception to uniform size.
-    if (isUserHighlighted) {
+    if (!isOutOfFocus && isUserHighlighted) {
       res.color = baseColor;
       res.size = uniformSize * 1.28;
       res.zIndex = Math.max(Number(res.zIndex ?? 0), 3);
@@ -248,7 +286,12 @@ export function applyReducers(
         || (lodTier === 'mid' && (matchedNodes.has(node) || prominentNodeIds.has(node)));
       if (allowLabel || showIcon) res.label = graphDisplayLabel(rawLabel, 32) || ' ';
       res.showLabel = showLabel && allowLabel;
-      res.forceLabel = filters.showNodeLabels || filters.showNodeIcons || isUserHighlighted || isFocusOrSelected;
+      // `forceLabel` makes Sigma bypass `labelRenderedSizeThreshold`
+      // entirely. We only want that for the actively focused/selected
+      // node and persistent user highlights — never for the global
+      // "Mostra nomi nodi" / "Icone categorie" toggles, otherwise the
+      // fade-threshold slider has no effect when those toggles are on.
+      res.forceLabel = isUserHighlighted || isFocusOrSelected;
     }
     res.showIcon = showIcon;
 
@@ -298,6 +341,7 @@ export function applyReducers(
     }
 
     const focusId = activeFocusId(ctx);
+    let isOutOfFocus = false;
     if (focusId) {
       const { edges } = highlightNeighbors(graph, focusId);
       if (edges.has(edge)) {
@@ -308,22 +352,27 @@ export function applyReducers(
         res.color = pal.edgeFocus;
         res.zIndex = 2;
       } else {
-        res.color = colorWithAlpha(pal.edge, 0.08);
+        isOutOfFocus = true;
+        // Out-of-focus edges share one uniform dim shade — same type,
+        // width and opacity for every link, regardless of endpoints.
+        res.color = mixOpaqueColor(pal.edge, pal.bg, 0.30);
+        res.zIndex = 0;
       }
     }
 
-    if (hoveredEdge && hoveredEdge === edge) {
+    if (!isOutOfFocus && hoveredEdge && hoveredEdge === edge) {
       res.type = 'arrow';
       res.color = pal.edgeFocus;
     }
 
-    // LOD gate — in `far` tier, hide background edges (only the focus
-    // subgraph + the actively hovered edge survive).
+    // LOD gate — in `far` tier, hide background edges. While a node
+    // focus is active, hover cannot make an out-of-focus edge escape
+    // the focus contract.
     if (lodTier === 'far') {
       const focusId = activeFocusId(ctx);
       const inFocus = focusId !== null
         && highlightNeighbors(graph, focusId).edges.has(edge);
-      const survives = inFocus || hoveredEdge === edge;
+      const survives = inFocus || (focusId === null && hoveredEdge === edge);
       if (!survives) {
         res.color = 'rgba(0,0,0,0)';
         res.size = 0;

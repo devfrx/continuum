@@ -12,6 +12,7 @@ import { Icon } from '@/components/ui';
 import { useFolders } from '@/composables/useFolders';
 import { useKinds } from '@/composables/useKinds';
 import { graphDisplayLabel } from '@/utils/graphLabels';
+import { excerptSnippet } from '@/utils/snippets';
 import { relativeTime } from '@/utils/time';
 import type { Note } from '@continuum/shared';
 
@@ -40,22 +41,8 @@ const filtered = computed<Note[]>(() => {
     );
 });
 
-function cleanSnippet(s: string): string {
-    return s
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
 function rowSnippet(content: string | null | undefined): string {
-    const text = cleanSnippet(content ?? '');
-    if (!text) return '';
-    if (text.length <= 140) return text;
-    const slice = text.slice(0, 140);
-    const lastSpace = slice.lastIndexOf(' ');
-    return `${(lastSpace > 80 ? slice.slice(0, lastSpace) : slice).trimEnd()}\u2026`;
+    return excerptSnippet(content ?? '', 140);
 }
 
 function rowFolderName(note: Note): string | null {

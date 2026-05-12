@@ -48,6 +48,18 @@ const { isDark, toggle: toggleTheme } = useTheme();
 const themeLabel = computed(() => (isDark.value ? 'Switch to light mode' : 'Switch to dark mode'));
 const themeIcon = computed<IconName>(() => (isDark.value ? 'theme-light' : 'theme-dark'));
 
+// Brand assets shipped from `public/brand/`. The `_dark` variant is the
+// foreground designed for dark surfaces (the sidebar) and vice versa, so
+// we pick by the active theme. Vite resolves `/brand/...` from `public/`.
+const brandMarkSrc = computed<string>(() =>
+    isDark.value ? '/brand/continuum_logo_light.webp' : '/brand/continuum_logo_dark.webp',
+);
+const brandWordmarkSrc = computed<string>(() =>
+    isDark.value
+        ? '/brand/continuum_text_logo_light.webp'
+        : '/brand/continuum_text_logo_dark.webp',
+);
+
 const { open, toggle } = useSidebar();
 const collapseLabel = computed(() => (open.value ? 'Collapse sidebar' : 'Expand sidebar'));
 const collapseIcon = computed<IconName>(() => (open.value ? 'sidebar-collapse' : 'sidebar-expand'));
@@ -75,9 +87,9 @@ const {
       :aria-label="'Primary navigation'">
       <header class="sidebar-header">
         <RouterLink to="/" class="sidebar-brand" :title="open ? undefined : 'Continuum'">
-          <span class="sidebar-mark" aria-hidden="true">C</span>
+          <img class="sidebar-mark" :src="brandMarkSrc" alt="" aria-hidden="true" draggable="false" />
           <span v-show="open" class="sidebar-brand-text">
-            <span class="sidebar-wordmark brand-wordmark">CONT\NUUM</span>
+            <img class="sidebar-wordmark-img" :src="brandWordmarkSrc" alt="Continuum" draggable="false" />
             <span class="sidebar-tagline">knowledge base</span>
           </span>
         </RouterLink>

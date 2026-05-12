@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { colorForKind } from '@continuum/shared';
-import { UiSection, UiCard, UiBadge, UiEmpty, Icon } from '@/components/ui';
+import { UiCard, UiBadge, UiEmpty, Icon } from '@/components/ui';
 import { graphDisplayLabel } from '@/utils/graphLabels';
+import { excerptSnippet } from '@/utils/snippets';
 import type { BacklinkEntry } from '@/api';
 
 defineProps<{
@@ -14,27 +15,29 @@ const emit = defineEmits<{ (e: 'select', id: string): void }>();
 function displayTitle(title: string): string {
     return graphDisplayLabel(title || 'Untitled', 42);
 }
+
+function displaySnippet(snippet: string): string {
+    return excerptSnippet(snippet, 240);
+}
 </script>
 
 <template>
-    <UiSection title="Backlinks">
-        <div v-if="loading && !backlinks.length" class="loading">Loading…</div>
-        <ul v-else-if="backlinks.length" class="link-list">
-            <li v-for="b in backlinks" :key="b.id">
-                <UiCard interactive class="card" @click="emit('select', b.id)">
-                    <div class="row">
-                        <span class="dot" :style="{ background: colorForKind(b.kind) }" />
-                        <Icon name="connection" :size="14" class="row-ico" />
-                        <span class="link-title">{{ displayTitle(b.title) }}</span>
-                        <UiBadge tone="neutral" size="sm" class="badge">{{ b.kind }}</UiBadge>
-                    </div>
-                    <p class="snippet">{{ b.snippet }}</p>
-                </UiCard>
-            </li>
-        </ul>
-        <UiEmpty v-else title="No backlinks yet"
-            description="Mention this note from another with [[Title]] to create one." />
-    </UiSection>
+    <div v-if="loading && !backlinks.length" class="loading">Loading…</div>
+    <ul v-else-if="backlinks.length" class="link-list">
+        <li v-for="b in backlinks" :key="b.id">
+            <UiCard interactive class="card" @click="emit('select', b.id)">
+                <div class="row">
+                    <span class="dot" :style="{ background: colorForKind(b.kind) }" />
+                    <Icon name="connection" :size="14" class="row-ico" />
+                    <span class="link-title">{{ displayTitle(b.title) }}</span>
+                    <UiBadge tone="neutral" size="sm" class="badge">{{ b.kind }}</UiBadge>
+                </div>
+                <p v-if="displaySnippet(b.snippet)" class="snippet">{{ displaySnippet(b.snippet) }}</p>
+            </UiCard>
+        </li>
+    </ul>
+    <UiEmpty v-else title="No backlinks yet"
+        description="Mention this note from another with [[Title]] to create one." />
 </template>
 
 <style scoped>

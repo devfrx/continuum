@@ -149,7 +149,6 @@
   --layout-sidebar-w: var(--sidebar-width);
   --layout-sidebar-w-collapsed: var(--sidebar-collapsed);
   --layout-notes-sidebar-w: 280px;
-  --layout-right-sidebar-w: 280px;
   --layout-content-max: 880px;
   --header-h: 56px;
   --topbar-h: 48px;

@@ -110,6 +110,17 @@ export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
           }
         },
       },
+      {
+        id: 'in-footnote',
+        label: 'Footnote',
+        icon: 'footnote',
+        onSelect: () =>
+          editor
+            .chain()
+            .focus()
+            .insertContent({ type: 'footnote', attrs: { content: '' } })
+            .run(),
+      },
     ],
   };
 }

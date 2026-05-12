@@ -8,7 +8,9 @@ import type { AiSearchHit, Note, EntityKind, FolderNode, ContextMenuItem } from 
 import NotesSidebar from '@/components/notes/NotesSidebar.vue';
 import NoteEditorHeader from '@/components/notes/NoteEditorHeader.vue';
 import NoteCreateModal from '@/components/notes/NoteCreateModal.vue';
-import RightSidebar from '@/components/notes/RightSidebar.vue';
+import NoteInlineProperties from '@/components/notes/NoteInlineProperties.vue';
+import NoteDetailsFooter from '@/components/notes/NoteDetailsFooter.vue';
+import NoteFootnotesPanel from '@/components/notes/NoteFootnotesPanel.vue';
 import EmptyEditor from '@/components/notes/EmptyEditor.vue';
 import { FolderForm } from '@/components/folders';
 import { UiConfirmModal, UiContextMenu, UiSelect, Icon, type ContextMenuItem as UiContextMenuItem } from '@/components/ui';
@@ -38,6 +40,14 @@ const draftKind = ref<EntityKind>('note');
 const draftContent = ref('');
 const draftJson = ref<unknown>(null);
 const draftTags = ref<string[]>([]);
+/**
+ * Mirror of the persisted `Note.locked` flag for the currently selected
+ * note. Toggling this updates the server immediately (see `onLockToggle`)
+ * and gates both the auto-save debounce and the editor's `editable` prop
+ * — a defence-in-depth strategy that pairs with the 423 response from
+ * the API for stale clients.
+ */
+const draftLocked = ref<boolean>(false);
 
 const search = ref('');
 const searchMode = ref<SearchMode>('filter');
@@ -204,13 +214,28 @@ const selectedFolderId = ref<string | null>(null);
 const semanticRecursive = ref(true);
 
 const editorMode = ref<EditorMode>('wysiwyg');
+const NOTE_WIDTH_STORAGE_KEY = 'continuum.notesView.noteFullWidth';
+
+function loadNoteFullWidth(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(NOTE_WIDTH_STORAGE_KEY) === '1';
+}
+
+const noteFullWidth = ref<boolean>(loadNoteFullWidth());
+
+function setNoteFullWidth(value: boolean): void {
+  noteFullWidth.value = value;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(NOTE_WIDTH_STORAGE_KEY, value ? '1' : '0');
+  }
+}
 
 const saving = ref(false);
 const lastSavedAt = ref<number | null>(null);
 const nowTick = ref(Date.now());
 let tickHandle: ReturnType<typeof setInterval> | null = null;
 
-const rightCollapsed = ref(false);
+// (Right sidebar removed: details now live inline within the note page.)
 
 // --- Editor right-click context menu ---
 const editorMenuOpen = ref(false);
@@ -291,6 +316,7 @@ function applyDraft(n: Note): void {
   draftContent.value = n.content ?? '';
   draftJson.value = n.contentJson ?? null;
   draftTags.value = Array.isArray(n.tags) ? [...n.tags] : [];
+  draftLocked.value = !!n.locked;
   lastSavedAt.value = Date.parse(n.updatedAt) || Date.now();
   recentNotes.record(n.id);
 }
@@ -470,8 +496,15 @@ async function confirmDeleteNote(): Promise<void> {
 }
 
 // --- Auto-save ---
+//
+// Locked notes are intentionally read-only at the persistence layer too:
+// `persist` short-circuits when the draft is locked so accidental drafts
+// from prop reactivity (e.g. JSON normalisation) don't round-trip back
+// to the server. Lock/unlock itself is handled by `onLockToggle`, which
+// bypasses the debounce because it is a discrete user intent.
 const persist = useDebounceFn(async () => {
   if (!selectedId.value) return;
+  if (draftLocked.value) return;
   saving.value = true;
   try {
     const updated = await api.notes.update(selectedId.value, {
@@ -495,6 +528,31 @@ watch(
   () => { if (selectedId.value) void persist(); },
   { deep: true },
 );
+
+/**
+ * Toggle the `locked` flag on the server and reflect it locally. We hit
+ * the API directly (not via `persist`) because:
+ *   1. The user expects an immediate state change — no 600ms debounce.
+ *   2. The PUT must succeed even when other fields would be rejected
+ *      (the route accepts a `locked`-only patch on a locked note as the
+ *      sanctioned unlock path).
+ */
+async function onLockToggle(value: boolean): Promise<void> {
+  if (!selectedId.value) return;
+  const id = selectedId.value;
+  const previous = draftLocked.value;
+  // Optimistic update so the icon flips instantly; rollback on failure.
+  draftLocked.value = value;
+  try {
+    const updated = await api.notes.update(id, { locked: value });
+    const idx = notes.value.findIndex((n) => n.id === id);
+    if (idx >= 0) notes.value[idx] = updated;
+    lastSavedAt.value = Date.parse(updated.updatedAt) || Date.now();
+  } catch (err) {
+    draftLocked.value = previous;
+    throw err;
+  }
+}
 
 // --- Semantic search ---
 //
@@ -622,7 +680,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="notes-layout" :class="{ 'right-collapsed': rightCollapsed }">
+  <div class="notes-layout">
     <NotesSidebar class="pane left" :notes="notes" :selected-id="selectedId" :selected-folder-id="selectedFolderId"
       :search-query="search" :search-mode="searchMode" :semantic-hits="semanticHits" :semantic-busy="semanticBusy"
       :semantic-available="embeddingsAvailable" :dev-mode="isDev" :seed-busy="seedNotesBusy"
@@ -634,22 +692,32 @@ onBeforeUnmount(() => {
       @delete-folder="requestDeleteFolder" @move-note="moveNoteToFolder" />
 
     <section v-if="selected" class="pane center">
-      <NoteEditorHeader :title="draftTitle" :kind="draftKind" :tags="draftTags" :folder-id="selected.folderId ?? null"
-        :editor-mode="editorMode" :saved-at="lastSavedAt" :saving="saving" :now-tick="nowTick"
-        @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
-        @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
-        @navigate-folder="(id: string | null) => (selectedFolderId = id)" @delete="remove(selected!.id)" />
+      <div class="note-document" :class="{ 'is-full-width': noteFullWidth }">
+        <NoteEditorHeader :title="draftTitle" :kind="draftKind" :tags="draftTags" :folder-id="selected.folderId ?? null"
+          :editor-mode="editorMode" :full-width="noteFullWidth" :locked="draftLocked" :saved-at="lastSavedAt"
+          :saving="saving" :now-tick="nowTick"
+          @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
+          @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
+          @update:full-width="setNoteFullWidth" @update:locked="onLockToggle"
+          @navigate-folder="(id: string | null) => (selectedFolderId = id)" @delete="remove(selected!.id)" />
 
-      <ContinuumEditor v-model="draftContent" v-model:json="draftJson" :mode="editorMode"
-        placeholder="Write lore, character notes, anythingâ€¦" :icon-catalog="editorIconCatalog" :icon-component="Icon"
-        :select-component="UiSelect" @request-context-menu="onEditorContextMenu" @request-prompt="onEditorPrompt" />
+        <NoteInlineProperties :note-id="selected.id" :kind-id="selected.kind" :readonly="draftLocked"
+          @select="selectById" />
+
+        <ContinuumEditor class="note-editor" v-model="draftContent" v-model:json="draftJson"
+          :mode="draftLocked ? 'wysiwyg' : editorMode"
+          :editable="!draftLocked"
+          placeholder="Write lore, character notes, anything…" :icon-catalog="editorIconCatalog" :icon-component="Icon"
+          :select-component="UiSelect" @request-context-menu="onEditorContextMenu" @request-prompt="onEditorPrompt" />
+
+        <NoteFootnotesPanel :content-json="draftJson" />
+
+        <NoteDetailsFooter :note="selected" :notes="notes" :backlinks="backlinks"
+          :backlinks-loading="backlinksLoading" @select="selectById" />
+      </div>
     </section>
 
     <EmptyEditor v-else class="pane center" @create="openCreateNote" />
-
-    <RightSidebar class="pane right" :note="selected" :notes="notes" :backlinks="backlinks"
-      :backlinks-loading="backlinksLoading" :collapsed="rightCollapsed"
-      @update:collapsed="(v: boolean) => (rightCollapsed = v)" @select="selectById" />
 
     <UiContextMenu v-model="editorMenuOpen" :x="editorMenuX" :y="editorMenuY" :items="editorMenuItems" />
 
@@ -672,14 +740,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .notes-layout {
   display: grid;
-  grid-template-columns: var(--layout-notes-sidebar-w) 1fr var(--layout-right-sidebar-w);
+  grid-template-columns: var(--layout-notes-sidebar-w) 1fr;
   gap: var(--space-4);
   height: 100%;
   min-height: 0;
-}
-
-.notes-layout.right-collapsed {
-  grid-template-columns: var(--layout-notes-sidebar-w) 1fr 40px;
 }
 
 .pane {
@@ -695,14 +759,55 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-/* When the right pane collapses to a narrow rail, drop the heavy padding
-   so the lone toggle button sits cleanly centred. */
-.notes-layout.right-collapsed .pane.right {
-  padding: var(--space-4) var(--space-2);
+/* Center pane scrolls vertically so the inline footer (Linked notes /
+   Backlinks) sits naturally below the editor body. */
+.pane.center {
+  gap: 0;
+  background: var(--bg);
+  overflow-y: auto;
 }
 
-.pane.center {
-  gap: var(--space-6);
-  background: var(--bg);
+.note-document {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(100%, var(--layout-content-max, 880px));
+  margin: 0 auto;
+  min-height: 100%;
+}
+
+.note-document.is-full-width {
+  width: 100%;
+}
+
+.note-editor {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 360px;
+}
+
+.note-document :deep(.continuum-editor) {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.note-document :deep(.continuum-editor .toolbar) {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.note-document :deep(.continuum-editor .content:not(.md-area):not(.md-preview)) {
+  flex: 0 0 auto;
+  min-height: 300px;
+  overflow: visible;
+}
+
+.note-document :deep(.continuum-editor .toolbar),
+.note-document :deep(.continuum-editor .md-hint) {
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 </style>

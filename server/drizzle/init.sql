@@ -110,3 +110,72 @@ EXCEPTION
 END $$;
 
 CREATE INDEX IF NOT EXISTS "notes_folder_idx" ON "notes" USING btree ("folder_id");
+
+-- Note "lock" flag: when true, the note is finalized (read-only).
+-- Idempotent so existing databases pick the column up on next boot.
+ALTER TABLE "notes" ADD COLUMN IF NOT EXISTS "locked" boolean NOT NULL DEFAULT false;
+
+-- ---------------------------------------------------------------------
+-- Custom Properties: per-kind schema definitions + per-note typed values.
+-- See packages/shared/src/properties.ts for the type system.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS "property_definitions" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+        "scope" text NOT NULL DEFAULT 'kind',
+        "kind_id" text,
+        "key" text NOT NULL,
+        "label" text NOT NULL,
+        "type" text NOT NULL,
+        "icon" text,
+        "description" text,
+        "config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "position" text NOT NULL DEFAULT 'a0',
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+DO $$ BEGIN
+ ALTER TABLE "property_definitions" ADD CONSTRAINT "property_definitions_kind_id_kinds_id_fk" FOREIGN KEY ("kind_id") REFERENCES "public"."kinds"("id") ON DELETE cascade ON UPDATE cascade;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+
+-- key must be unique per (scope, kind_id). Postgres treats NULL as distinct;
+-- 'global' (kind_id IS NULL) uniqueness is enforced by the routes layer.
+CREATE UNIQUE INDEX IF NOT EXISTS "property_definitions_scope_kind_key_uniq" ON "property_definitions" ("scope", "kind_id", "key");
+CREATE INDEX IF NOT EXISTS "property_definitions_kind_idx" ON "property_definitions" ("kind_id");
+CREATE INDEX IF NOT EXISTS "property_definitions_position_idx" ON "property_definitions" ("kind_id", "position");
+
+CREATE TABLE IF NOT EXISTS "property_values" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+        "note_id" uuid NOT NULL,
+        "property_id" uuid NOT NULL,
+        "value_text" text,
+        "value_number" double precision,
+        "value_bool" boolean,
+        "value_date" timestamp with time zone,
+        "value_json" jsonb,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+DO $$ BEGIN
+ ALTER TABLE "property_values" ADD CONSTRAINT "property_values_note_id_notes_id_fk" FOREIGN KEY ("note_id") REFERENCES "public"."notes"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+ ALTER TABLE "property_values" ADD CONSTRAINT "property_values_property_id_property_definitions_id_fk" FOREIGN KEY ("property_id") REFERENCES "public"."property_definitions"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "property_values_note_property_uniq" ON "property_values" ("note_id", "property_id");
+CREATE INDEX IF NOT EXISTS "property_values_note_idx" ON "property_values" ("note_id");
+CREATE INDEX IF NOT EXISTS "property_values_property_idx" ON "property_values" ("property_id");
+CREATE INDEX IF NOT EXISTS "property_values_filter_text_idx" ON "property_values" ("property_id", "value_text");
+CREATE INDEX IF NOT EXISTS "property_values_filter_number_idx" ON "property_values" ("property_id", "value_number");
+CREATE INDEX IF NOT EXISTS "property_values_filter_date_idx" ON "property_values" ("property_id", "value_date");
+
