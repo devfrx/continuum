@@ -50,7 +50,13 @@ export function rebuildRuntimeGraph(
     const s = nodesById.get(e.source);
     const t = nodesById.get(e.target);
     if (!s || !t) continue;
-    links.push({ source: e.source, target: e.target, type: e.type });
+    links.push({
+      source: e.source,
+      target: e.target,
+      type: e.type,
+      sourceKind: e.sourceKind ?? 'link',
+      propertyId: e.propertyId ?? null,
+    });
     s.neighbors.add(t.id);
     t.neighbors.add(s.id);
     s.outDegree++;

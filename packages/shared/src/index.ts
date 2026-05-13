@@ -54,6 +54,39 @@ export interface GraphNode {
   id: UUID;
   label: string;
   kind: EntityKind;
+  /**
+   * Folder the note belongs to (`null` = root / Inbox). Populated only by
+   * the `POST /api/graph/query` endpoint so existing graph callers that
+   * load the legacy lightweight payload keep working unchanged.
+   */
+  folderId?: UUID | null;
+  /**
+   * Note tags. Populated only by the new graph-query endpoint when the
+   * caller filters on or projects `note.tags`.
+   */
+  tags?: string[];
+  /**
+   * ISO-8601 creation timestamp. Populated only by the new graph-query
+   * endpoint; absent on legacy graph payloads.
+   */
+  createdAt?: string;
+  /**
+   * ISO-8601 last-updated timestamp. Populated only by the new graph-query
+   * endpoint; absent on legacy graph payloads.
+   */
+  updatedAt?: string;
+  /**
+   * Materialised property snapshots — present only when the request asked
+   * for them via `GraphQueryRequest.includeProperties`. Order matches the
+   * `includeProperties` array so the client can render columns predictably.
+   */
+  properties?: import('./query/graph.js').GraphPropertySnapshot[];
+  /**
+   * Graph metrics (degree / inDegree / outDegree) — present only when the
+   * request set `includeMetrics: true`. Computed at request time, never
+   * persisted.
+   */
+  metrics?: import('./query/graph.js').GraphNodeMetrics;
 }
 
 export interface GraphEdge {
@@ -61,6 +94,17 @@ export interface GraphEdge {
   source: UUID;
   target: UUID;
   type: string;
+  /**
+   * Where this edge came from. Populated only by the new graph-query
+   * endpoint so the client can style and filter edges by origin without a
+   * second round-trip.
+   */
+  sourceKind?: import('./query/graph.js').GraphEdgeSourceKind;
+  /**
+   * Originating relation-property id. Present only when
+   * `sourceKind === 'relationProperty'`.
+   */
+  propertyId?: UUID;
 }
 
 // ===== AI types =====
@@ -282,4 +326,7 @@ export function colorForKind(kind: string): string {
 
 // ===== Custom Properties =====
 export * from './properties.js';
+
+// ===== Query layer =====
+export * from './query/index.js';
 

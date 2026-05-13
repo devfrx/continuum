@@ -126,8 +126,8 @@ function onInput(event: Event): void {
     transform: translateY(-50%);
     height: 6px;
     border-radius: 999px;
-    background: var(--surface-3, #2a2a2a);
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+    border: 0;
+    background: transparent;
     pointer-events: none;
 }
 
@@ -158,21 +158,27 @@ function onInput(event: Event): void {
     height: 18px;
     margin: 0;
     padding: 0;
+    border: 0;
+    border-radius: 0;
     background: transparent;
+    box-shadow: none;
     outline: none;
     cursor: pointer;
 }
 
 .filter-slider__input::-webkit-slider-runnable-track {
+    -webkit-appearance: none;
     background: transparent;
     height: 18px;
-    border: none;
+    border: 0;
+    box-shadow: none;
 }
 
 .filter-slider__input::-moz-range-track {
     background: transparent;
     height: 18px;
-    border: none;
+    border: 0;
+    box-shadow: none;
 }
 
 .filter-slider__input::-webkit-slider-thumb {
@@ -183,12 +189,10 @@ function onInput(event: Event): void {
     margin-top: 1px;
     border: none;
     border-radius: 50%;
-    background: #f5f0e2;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+    background: var(--accent-inverted, #613d2a);
+    box-shadow: none;
     cursor: grab;
-    transition:
-        transform var(--duration-fast) var(--ease-standard),
-        box-shadow var(--duration-fast) var(--ease-standard);
+    transition: transform var(--duration-fast) var(--ease-standard);
 }
 
 .filter-slider__input::-webkit-slider-thumb:hover {
@@ -198,7 +202,6 @@ function onInput(event: Event): void {
 .filter-slider__input::-webkit-slider-thumb:active {
     cursor: grabbing;
     transform: scale(1.14);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
 }
 
 .filter-slider__input::-moz-range-thumb {
@@ -206,21 +209,17 @@ function onInput(event: Event): void {
     height: 16px;
     border: none;
     border-radius: 50%;
-    background: #f5f0e2;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+    background: var(--accent-inverted, #613d2a);
+    box-shadow: none;
     cursor: grab;
 }
 
 .filter-slider__input:focus-visible::-webkit-slider-thumb {
-    box-shadow:
-        0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent),
-        0 1px 4px rgba(0, 0, 0, 0.55);
+    box-shadow: none;
 }
 
 .filter-slider__input:focus-visible::-moz-range-thumb {
-    box-shadow:
-        0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent),
-        0 1px 4px rgba(0, 0, 0, 0.55);
+    box-shadow: none;
 }
 
 .filter-slider__input::-moz-range-thumb:active {

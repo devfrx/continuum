@@ -75,8 +75,10 @@ export function useNodeFactory(opts: NodeFactoryOptions): NodeFactoryApi {
       + NODE_BASE_R;
   }
 
-  function linkColorFor(linkType: string): string {
-    return linkType === 'wikilink' ? p().edgeFocus : p().edge;
+  function linkColorFor(link: RtLink): string {
+    if (link.sourceKind === 'relationProperty') return p().edge;
+    // Direct links are primary — use the accent/focus colour so they stand out.
+    return p().accent || (link.type === 'wikilink' ? p().edgeFocus : p().edge);
   }
 
   function focusedId(): string | null {
@@ -180,19 +182,21 @@ export function useNodeFactory(opts: NodeFactoryOptions): NodeFactoryApi {
     const sId = linkIdOf(link.source);
     const tId = linkIdOf(link.target);
     const f = focusedId();
+    const relationLink = link.sourceKind === 'relationProperty';
     if (f) {
-      if (sId === f || tId === f) return p().edgeFocus;
+      if (sId === f || tId === f) return relationLink ? p().edgeFocus : (p().accent || p().edgeFocus);
       return p().edgeDim;
     }
-    return cssWithAlpha(linkColorFor(link.type), 0.18);
+    return cssWithAlpha(linkColorFor(link), relationLink ? 0.14 : 0.32);
   }
 
   function linkWidthReducer(link: RtLink): number {
     const sId = linkIdOf(link.source);
     const tId = linkIdOf(link.target);
     const f = focusedId();
-    if (f && (sId === f || tId === f)) return 1.25;
-    return 0.24;
+    const relationLink = link.sourceKind === 'relationProperty';
+    if (f && (sId === f || tId === f)) return relationLink ? 1.0 : 1.55;
+    return relationLink ? 0.18 : 0.38;
   }
 
   function particlesFor(link: RtLink): number {
@@ -200,7 +204,8 @@ export function useNodeFactory(opts: NodeFactoryOptions): NodeFactoryApi {
     if (!f) return 0;
     const sId = linkIdOf(link.source);
     const tId = linkIdOf(link.target);
-    return sId === f || tId === f ? 3 : 0;
+    if (sId !== f && tId !== f) return 0;
+    return link.sourceKind === 'relationProperty' ? 2 : 4;
   }
 
   function makeNodeObject(node: RtNode): THREE.Object3D {

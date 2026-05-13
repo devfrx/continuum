@@ -2,12 +2,15 @@ import type {
   AiHealthResponse,
   AiSearchHit,
   ButtonAction,
+  FieldCatalog,
   FileRef,
   Folder,
   FolderEffective,
   FolderNode,
   GraphEdge,
   GraphNode,
+  GraphQueryRequest,
+  GraphQueryResponse,
   KindDefinition,
   Note,
   NoteProperty,
@@ -239,6 +242,27 @@ export const api = {
     /** Delete an uploaded file from disk by id. */
     remove: (id: string) =>
       http<{ ok: true }>(`/uploads/${id}`, { method: 'DELETE' }),
+  },
+  /**
+   * Property Query Layer — field catalogue used by filter / encoding pickers.
+   * The catalogue is surface-scoped because the same field set may be
+   * exposed differently on the graph view vs. note views.
+   */
+  query: {
+    fields: (surface: 'graph' | 'note' = 'graph') =>
+      http<FieldCatalog>(`/query/fields?surface=${surface}`),
+  },
+  /**
+   * Property Query Layer — graph endpoint that consumes a `GraphQueryRequest`
+   * and returns the filtered/projected graph payload. Replaces the legacy
+   * `links.graph()` call site for the new query-driven graph view.
+   */
+  graph: {
+    query: (req: GraphQueryRequest) =>
+      http<GraphQueryResponse>(`/graph/query`, {
+        method: 'POST',
+        body: JSON.stringify(req),
+      }),
   },
 };
 

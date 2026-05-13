@@ -326,10 +326,30 @@ export async function resolveNoteProperties(noteId: string): Promise<NotePropert
     .select()
     .from(propertyValues)
     .where(eq(propertyValues.noteId, noteId));
+  return resolveFromPrefetched(note, defs, valueRows);
+}
+
+/**
+ * Inner resolver shared by `resolveNoteProperties` (single-note path) and
+ * `resolveNotePropertiesBatch` (graph projection path). Takes a fully
+ * pre-fetched bundle so the caller decides how to batch the SQL.
+ *
+ * Steps:
+ *   1. Allocate any missing `uniqueId` sequences for this note.
+ *   2. Pass 1 — materialise stored + auto-managed values.
+ *   3. Pass 2 — resolve rollup/formula values that may read pass-1 output.
+ */
+async function resolveFromPrefetched(
+  note: NoteRow,
+  defs: PropertyDefinitionRow[],
+  valueRows: PropertyValueRow[],
+): Promise<NoteProperty[]> {
+  if (defs.length === 0) return [];
+
   let byProp = new Map(valueRows.map((row) => [row.propertyId, row] as const));
 
   // Auto-allocate uniqueId sequences before pass 1 so they show up.
-  byProp = await ensureUniqueIdValues(noteId, defs, byProp);
+  byProp = await ensureUniqueIdValues(note.id, defs, byProp);
 
   // Pass 1 — stored + auto-managed.
   const pass1: NoteProperty[] = defs.map((row) => {
@@ -406,6 +426,99 @@ export async function resolveNoteProperties(noteId: string): Promise<NotePropert
   }
 
   return pass2;
+}
+
+/**
+ * Resolve `NoteProperty[]` for many notes at once. Used by the graph-query
+ * endpoint to materialise property snapshots for every node in a single
+ * request without falling back to N+1 calls of `resolveNoteProperties`.
+ *
+ * Batching strategy:
+ *
+ *  – `notes` rows fetched once with `inArray`.
+ *  – Property definitions fetched once for the union of (kindId IN kinds)
+ *    OR `scope='global'`, then optionally narrowed to `propertyIds` when
+ *    the caller passes an allow-list (graph projection case).
+ *  – `property_values` rows fetched once per (note × def) pair, indexed
+ *    by `noteId` for fast per-note lookup.
+ *  – `uniqueId` allocation, rollup resolution and formula evaluation
+ *    still happen per-note (they intrinsically need per-note context),
+ *    but in parallel via `Promise.all`.
+ *
+ * Notes whose row is missing from the database silently produce an empty
+ * `NoteProperty[]` so the caller can pass an arbitrary id list without a
+ * separate validation step.
+ */
+export async function resolveNotePropertiesBatch(
+  noteIds: string[],
+  propertyIds?: string[] | null,
+): Promise<Map<string, NoteProperty[]>> {
+  const out = new Map<string, NoteProperty[]>();
+  if (noteIds.length === 0) return out;
+
+  const noteRows = await db.select().from(notes).where(inArray(notes.id, noteIds));
+  const notesById = new Map(noteRows.map((n) => [n.id, n] as const));
+
+  const kindIds = Array.from(new Set(noteRows.map((n) => n.kind)));
+  if (kindIds.length === 0) {
+    for (const id of noteIds) out.set(id, []);
+    return out;
+  }
+
+  const defConds = [inArray(propertyDefinitions.kindId, kindIds)];
+  if (propertyIds && propertyIds.length > 0) {
+    defConds.push(inArray(propertyDefinitions.id, propertyIds));
+  }
+  const defs = await db
+    .select()
+    .from(propertyDefinitions)
+    .where(and(...defConds))
+    .orderBy(asc(propertyDefinitions.position));
+
+  // Group defs by kindId for per-note lookup.
+  const defsByKind = new Map<string, PropertyDefinitionRow[]>();
+  for (const def of defs) {
+    if (!def.kindId) continue;
+    const arr = defsByKind.get(def.kindId) ?? [];
+    arr.push(def);
+    defsByKind.set(def.kindId, arr);
+  }
+
+  const allDefIds = defs.map((d) => d.id);
+  const valueRows =
+    allDefIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(propertyValues)
+          .where(
+            and(
+              inArray(propertyValues.noteId, noteIds),
+              inArray(propertyValues.propertyId, allDefIds),
+            ),
+          );
+
+  const valuesByNote = new Map<string, PropertyValueRow[]>();
+  for (const row of valueRows) {
+    const arr = valuesByNote.get(row.noteId) ?? [];
+    arr.push(row);
+    valuesByNote.set(row.noteId, arr);
+  }
+
+  await Promise.all(
+    noteIds.map(async (id) => {
+      const note = notesById.get(id);
+      if (!note) {
+        out.set(id, []);
+        return;
+      }
+      const noteDefs = defsByKind.get(note.kind) ?? [];
+      const noteValues = valuesByNote.get(id) ?? [];
+      out.set(id, await resolveFromPrefetched(note, noteDefs, noteValues));
+    }),
+  );
+
+  return out;
 }
 
 /**

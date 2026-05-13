@@ -22,7 +22,7 @@
  *   { path: '/', query: { note: <id> } }
  * NotesView (owned by another agent) auto-selects the matching note.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Icon, UiButton, UiCard, UiEmpty, type ContextMenuItem as UiContextMenuItem } from '@/components/ui';
 import type { AppIconName as IconName } from '@/assets/icons';
@@ -33,6 +33,11 @@ import GraphLegend from '@/components/graph/GraphLegend.vue';
 import GraphFiltersPanel from '@/components/graph/GraphFiltersPanel.vue';
 import GraphSelectedCard from '@/components/graph/GraphSelectedCard.vue';
 import GraphContextMenus from '@/components/graph/GraphContextMenus.vue';
+import ActiveFilterChips from '@/components/query/ActiveFilterChips.vue';
+import {
+  GRAPH_PROPERTY_ENCODINGS_KEY,
+  GRAPH_QUERY_KEY,
+} from '@/components/query/graphQueryInjection';
 import { useGraphPreferences } from '@/composables/graph/useGraphPreferences';
 import { useGraphFilters, type GraphFilters } from '@/composables/graph/useGraphFilters';
 import { useGraphSelection } from '@/composables/graph/useGraphSelection';
@@ -41,7 +46,14 @@ import { useGraphNoteActions } from '@/composables/graph/useGraphNoteActions';
 import { useNoteExport } from '@/composables/graph/useNoteExport';
 import { useKinds } from '@/composables/useKinds';
 import { useGraphPalette } from '@/composables/useGraphPalette';
+import { useGraphPropertyEncodings } from '@/composables/query/useGraphPropertyEncodings';
+import { useGraphQuery } from '@/composables/query/useGraphQuery';
+import { useProperties } from '@/composables/useProperties';
 import { computeLodTier, lodDensity3D } from '@/components/graph/lodConfig';
+import {
+  buildGraphEncodingMaps,
+  type GraphEncodingMaps,
+} from '@/components/graph/graphEncodingMaps';
 import type { KindDefinition } from '@continuum/shared';
 
 interface ContextMenuState {
@@ -56,11 +68,33 @@ interface ContextMenuState {
 const router = useRouter();
 const kindStore = useKinds();
 const palette = useGraphPalette();
+const properties = useProperties();
 
 const prefs = useGraphPreferences();
 const filters = useGraphFilters();
 const selection = useGraphSelection({ highlightedIds: prefs.highlightedIds });
 const noteExport = useNoteExport({ onError: (msg) => { graphError.value = msg; } });
+
+// ───────── Property Query Layer ─────────
+//
+// `useGraphPropertyEncodings` owns the user's color/size/badge mapping plus
+// the derived `requiredPropertyIds` / `requiresMetrics` flags consumed by
+// `useGraphQuery`. The query composable is configured once with these
+// references — every nested panel reads the same singleton via
+// `useGraphQuery()` (no args).
+const graphPropertyEncodings = useGraphPropertyEncodings();
+const graphQuery = useGraphQuery({
+  encodings: graphPropertyEncodings.encodings,
+  requiredPropertyIds: graphPropertyEncodings.requiredPropertyIds,
+  requiresMetrics: graphPropertyEncodings.requiresMetrics,
+});
+
+// Share the singletons with every nested query/encoding panel so they
+// don't have to construct their own (each call to `useGraphQuery` /
+// `useGraphPropertyEncodings` instantiates fresh state — only `GraphView`
+// owns the canonical instances for this surface).
+provide(GRAPH_QUERY_KEY, graphQuery);
+provide(GRAPH_PROPERTY_ENCODINGS_KEY, graphPropertyEncodings);
 
 const graph3dRef = ref<Graph3DHandle | null>(null);
 const graphError = ref('');
@@ -78,12 +112,32 @@ const contextMenu = reactive<ContextMenuState>({
   visible: false, x: 0, y: 0, nodeId: null, highlighted: false,
 });
 
+// ───────── Encoding maps for the Sigma reducers ─────────
+//
+// Sigma is constructed below, but the encoding maps need to read its latest
+// payload. The computed is only sampled by reducers after construction.
+let sigmaRef: ReturnType<typeof useGraphSigma> | null = null;
+
+const encodingMaps = computed<GraphEncodingMaps | undefined>(() => {
+  const payload = sigmaRef?.payload.value;
+  if (!payload) return undefined;
+  return buildGraphEncodingMaps({
+    nodes: payload.nodes,
+    encodings: graphPropertyEncodings.encodings.value,
+    propertyById: (id) => properties.byId(id),
+    colorOfKind: (kind) => kindStore.colorOf(kind),
+    iconOfKind: (kind) => kindStore.iconOf(kind),
+  });
+});
+
 const sigma = useGraphSigma({
   prefs,
   filters,
   selection,
   palette,
   graph3dRef,
+  graphQuery,
+  encodingMaps,
   kindStore: {
     load: (force?: boolean) => kindStore.load(force),
     kinds: kindStore.kinds,
@@ -94,6 +148,35 @@ const sigma = useGraphSigma({
   onOpenNote: (id) => openNote(id),
   onCloseContextMenu: closeContextMenu,
 });
+sigmaRef = sigma;
+
+// Reload the graph payload whenever the structured query, edge sources,
+// or property encodings change. Debounced manually to coalesce bursty
+// FilterBuilder edits without pulling in lodash.
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleQueryReload(): void {
+  if (reloadTimer != null) clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null;
+    void sigma.load();
+  }, 200);
+}
+watch(
+  () => [
+    graphQuery.filter.root.value,
+    graphQuery.edgeSources.value,
+    graphPropertyEncodings.encodings.value,
+  ],
+  scheduleQueryReload,
+  { deep: true },
+);
+onBeforeUnmount(() => {
+  if (reloadTimer != null) {
+    clearTimeout(reloadTimer);
+    reloadTimer = null;
+  }
+});
+
 // Local alias so the template can use `ref="container"` directly.
 const container = sigma.container;
 
@@ -403,6 +486,11 @@ onBeforeUnmount(() => {
       @toggle-filters="filtersOpen = !filtersOpen" @update:search-query="filters.searchQuery.value = $event"
       @clear-search="filters.clearSearch" @submit-search="focusSearchResult" />
 
+    <div class="active-filter-chips-row">
+      <ActiveFilterChips :filter="graphQuery.filter.root.value" surface="graph"
+        @remove-condition="(id: string) => graphQuery.filter.remove(id)" />
+    </div>
+
     <div v-if="graphError" class="panel graph-error" role="status" @click.stop>
       <Icon name="error" size="14" />
       <span>{{ graphError }}</span>
@@ -518,6 +606,16 @@ onBeforeUnmount(() => {
  */
 .canvas :deep(canvas.sigma-hoverNodes) {
   display: none !important;
+}
+
+.active-filter-chips-row {
+  position: absolute;
+  top: calc(var(--space-5) + 64px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-raised);
+  pointer-events: auto;
+  max-width: min(70%, 720px);
 }
 
 .panel {

@@ -1,8 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { and, eq, or } from 'drizzle-orm';
+import { DEFAULT_EDGE_SOURCE_SELECTION, EMPTY_FILTER_GROUP } from '@continuum/shared';
 import { db } from '../db/client.js';
 import { links, notes } from '../db/schema.js';
+import { executeGraphQuery } from '../services/graph/graph-query.js';
 
 const upsertSchema = z.object({
   sourceId: z.string().uuid(),
@@ -59,27 +61,19 @@ export const linkRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
-   * Graph payload for the visualization. Returns every node and every edge
-   * regardless of link type (wikilink, related, …) so the UI can colour /
-   * filter on the client side.
+   * Graph payload for the visualization. Thin wrapper over the
+   * full-featured `executeGraphQuery` so this legacy endpoint shares
+   * exactly one assembly path with `POST /api/graph/query`. The response
+   * shape is unchanged — `properties` and `metrics` are absent because
+   * the request asks for neither.
    */
   app.get('/graph', async () => {
-    const [nodeRows, edgeRows] = await Promise.all([
-      db.select({ id: notes.id, title: notes.title, kind: notes.kind }).from(notes).orderBy(notes.updatedAt),
-      db.select().from(links).orderBy(links.createdAt),
-    ]);
-    const nodeIds = new Set(nodeRows.map((n) => n.id));
-    return {
-      nodes: nodeRows.map((n) => ({ id: n.id, label: n.title, kind: n.kind })),
-      edges: edgeRows
-        .filter((e) => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId) && e.sourceId !== e.targetId)
-        .map((e) => ({
-          id: e.id,
-          source: e.sourceId,
-          target: e.targetId,
-          type: e.type,
-        })),
-    };
+    return executeGraphQuery({
+      filter: EMPTY_FILTER_GROUP,
+      edgeSources: DEFAULT_EDGE_SOURCE_SELECTION,
+      includeProperties: [],
+      includeMetrics: false,
+    });
   });
 
   /** All links touching a given note (either as source or target). */

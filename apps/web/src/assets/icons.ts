@@ -93,6 +93,7 @@ const _ICONS = {
 
   // ── Editor — text formatting ─────────────────────────────────────────────
   'bold': { icon: 'solar:text-bold-bold' },
+  'note-title': { icon: 'solar:text-bold' },
   'italic': { icon: 'solar:text-italic-bold' },
   'strike': { icon: 'solar:text-cross-bold' },
   'underline': { icon: 'solar:text-underline-bold' },
@@ -161,6 +162,7 @@ const _ICONS = {
   'info': { icon: 'solar:info-circle-bold' },
   'error': { icon: 'solar:close-circle-bold' },
   'tag': { icon: 'solar:tag-bold' },
+  'clock': { icon: 'solar:clock-circle-bold' },
 
   // ── Loaders ──────────────────────────────────────────────────────────────
   /** Spinning refresh arrow — pair with a `.spin` CSS class on the consumer. */
@@ -208,7 +210,8 @@ const _ICONS = {
   'prop-url': { icon: 'solar:link-bold' },
   'prop-email': { icon: 'solar:letter-bold' },
   'prop-relation': { icon: 'solar:link-circle-bold' },
-  'prop-clock': { icon: 'solar:clock-circle-bold' },  'prop-phone': { icon: 'solar:phone-bold' },
+  'prop-clock': { icon: 'solar:clock-circle-bold' },
+  'prop-phone': { icon: 'solar:phone-bold' },
   'prop-files': { icon: 'solar:paperclip-bold' },
   'prop-status': { icon: 'solar:hourglass-bold' },
   'prop-rollup': { icon: 'solar:layers-bold' },

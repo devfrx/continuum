@@ -6,9 +6,11 @@
  *
  * Owns the legend popover open state via v-model:open.
  */
-import { computed } from 'vue';
+import { computed, inject, onMounted } from 'vue';
 import { Icon, UiChip } from '@/components/ui';
-import type { KindDefinition } from '@continuum/shared';
+import { fieldRefKey, type FieldRef, type KindDefinition } from '@continuum/shared';
+import { GRAPH_PROPERTY_ENCODINGS_KEY } from '@/components/query/graphQueryInjection';
+import { useFieldCatalog } from '@/composables/query/useFieldCatalog';
 import type { ViewMode } from '@/composables/graph/useGraphPreferences';
 
 interface Props {
@@ -33,6 +35,41 @@ const emit = defineEmits<{
 }>();
 
 const hiddenCount = computed(() => props.hiddenKinds.size);
+const encodings = inject(GRAPH_PROPERTY_ENCODINGS_KEY, null);
+const catalog = useFieldCatalog();
+
+onMounted(() => {
+    void catalog.load('graph');
+});
+
+function fieldLabel(ref: FieldRef | null | undefined, fallback: string): string {
+    if (!ref) return fallback;
+    return catalog.fieldByKey('graph', fieldRefKey(ref))?.label ?? 'Campo salvato';
+}
+
+const styleRows = computed(() => {
+    const active = encodings?.encodings.value ?? { color: null, size: null, badge: null };
+    return [
+        {
+            id: 'color',
+            icon: 'palette',
+            label: 'Colore',
+            value: fieldLabel(active.color, 'Tipo nodo'),
+        },
+        {
+            id: 'size',
+            icon: 'circle',
+            label: 'Dimensione',
+            value: fieldLabel(active.size, 'Uniforme'),
+        },
+        {
+            id: 'badge',
+            icon: 'sparkles',
+            label: 'Badge',
+            value: fieldLabel(active.badge, 'Nessuno'),
+        },
+    ];
+});
 </script>
 
 <template>
@@ -53,33 +90,64 @@ const hiddenCount = computed(() => props.hiddenKinds.size);
             </button>
             <button class="legend-btn" :class="{ open: legendOpen }"
                 @click.stop="emit('update:legend-open', !legendOpen)">
-                <span>Legend</span>
+                <span>Legenda</span>
                 <Icon :name="legendOpen ? 'chevron-down' : 'chevron-right'" :size="14" class="chev" />
             </button>
         </div>
         <transition name="rail-pop">
             <div v-if="legendOpen" class="panel legend-pop" @click.stop>
-                <div class="legend-head">
-                    <span>Entity kinds</span>
-                    <button v-if="hiddenCount" class="legend-reset" @click="emit('show-all-kinds')">
-                        Show all
-                    </button>
+                <div class="legend-section">
+                    <div class="legend-head">
+                        <span>Tipi nodo</span>
+                        <button v-if="hiddenCount" class="legend-reset" @click="emit('show-all-kinds')">
+                            Mostra tutti
+                        </button>
+                    </div>
+                    <div class="legend-body">
+                        <button v-for="k in kinds" :key="k.id" class="legend-row" :class="{ off: hiddenKinds.has(k.id) }"
+                            @click="emit('toggle-kind', k.id)">
+                            <span class="dot" :style="{ background: k.color }" />
+                            <span>{{ k.label }}</span>
+                            <Icon :name="hiddenKinds.has(k.id) ? 'eye-off' : 'eye'" size="14" />
+                        </button>
+                    </div>
                 </div>
-                <div class="legend-body">
-                    <button v-for="k in kinds" :key="k.id" class="legend-row" :class="{ off: hiddenKinds.has(k.id) }"
-                        @click="emit('toggle-kind', k.id)">
-                        <span class="dot" :style="{ background: k.color }" />
-                        <span>{{ k.label }}</span>
-                        <Icon :name="hiddenKinds.has(k.id) ? 'eye-off' : 'eye'" size="14" />
-                    </button>
+
+                <div class="legend-section">
+                    <div class="legend-head legend-head--plain">
+                        <span>Collegamenti</span>
+                    </div>
+                    <div class="legend-body">
+                        <div class="legend-row legend-row--static">
+                            <span class="line-sample line-sample--direct" />
+                            <span>Collegamento diretto</span>
+                        </div>
+                        <div class="legend-row legend-row--static">
+                            <span class="line-sample line-sample--relation" />
+                            <span>Proprietà di relazione</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="legend-section">
+                    <div class="legend-head legend-head--plain">
+                        <span>Stile</span>
+                    </div>
+                    <div class="legend-body">
+                        <div v-for="row in styleRows" :key="row.id" class="legend-row legend-row--static">
+                            <Icon :name="row.icon" size="14" class="style-icon" />
+                            <span>{{ row.label }}</span>
+                            <span class="style-value">{{ row.value }}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </transition>
         <div v-if="activeFilters.length" class="panel filter-chips" @click.stop>
             <div class="chips-head">
                 <Icon name="filter" size="12" />
-                <span>Hidden</span>
-                <button class="chip-clear" @click="emit('show-all-kinds')">Clear</button>
+                <span>Nascosti</span>
+                <button class="chip-clear" @click="emit('show-all-kinds')">Pulisci</button>
             </div>
             <div class="chips-body">
                 <UiChip v-for="k in activeFilters" :key="k.id" closable @close="emit('toggle-kind', k.id)">
@@ -212,6 +280,12 @@ const hiddenCount = computed(() => props.hiddenKinds.size);
 .legend-pop {
     padding: var(--space-3);
     box-shadow: var(--shadow-lg);
+    max-height: min(560px, calc(100dvh - 96px));
+    overflow-y: auto;
+}
+
+.legend-section + .legend-section {
+    margin-top: var(--space-3);
 }
 
 .legend-head {
@@ -225,6 +299,10 @@ const hiddenCount = computed(() => props.hiddenKinds.size);
     color: var(--fg-muted);
     border-bottom: var(--border-width-1) solid var(--border);
     margin-bottom: var(--space-2);
+}
+
+.legend-head--plain {
+    padding-top: var(--space-1);
 }
 
 .legend-reset {
@@ -268,8 +346,17 @@ const hiddenCount = computed(() => props.hiddenKinds.size);
     flex: 1;
 }
 
+.legend-row--static {
+    cursor: default;
+    text-transform: none;
+}
+
 .legend-row:hover {
     background: var(--bg-soft);
+}
+
+.legend-row--static:hover {
+    background: transparent;
 }
 
 .legend-row.off {
@@ -325,6 +412,41 @@ const hiddenCount = computed(() => props.hiddenKinds.size);
     border-radius: var(--radius-circle);
     display: inline-block;
     flex-shrink: 0;
+}
+
+.line-sample {
+    width: 28px;
+    height: 0;
+    border-top-style: solid;
+    border-radius: var(--radius-pill);
+    flex-shrink: 0;
+}
+
+.line-sample--direct {
+    border-top-width: 3px;
+    border-color: var(--accent, #e8dcc8);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.line-sample--relation {
+    border-top-width: 1.5px;
+    border-color: var(--graph-edge, rgba(160, 155, 144, 0.5));
+    opacity: 0.7;
+}
+
+.style-icon {
+    color: var(--fg-muted);
+    flex-shrink: 0;
+}
+
+.style-value {
+    color: var(--fg-subtle);
+    font-size: var(--text-xs);
+    min-width: 0;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Pop-in transition for the legend dropdown */

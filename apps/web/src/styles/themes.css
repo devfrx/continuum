@@ -43,6 +43,7 @@
   /* Alice accent: warm cream Panna */
   --accent: #E8DCC8;
   --accent-hover: #F5EDE0;
+  --accent-inverted: #613D2A;
   --accent-dim: rgba(232, 220, 200, 0.10);
   --accent-border: rgba(232, 220, 200, 0.20);
   --accent-glow: rgba(232, 220, 200, 0.06);
@@ -196,6 +197,7 @@
   /* Alice light accent: warm espresso / cedar */
   --accent: #7A5540;
   --accent-hover: #613D2A;
+  --accent-inverted: #E8DCC8;
   --accent-dim: rgba(122, 85, 64, 0.10);
   --accent-border: rgba(122, 85, 64, 0.25);
   --accent-glow: rgba(122, 85, 64, 0.08);

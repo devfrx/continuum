@@ -11,6 +11,8 @@ import { linkRoutes } from './routes/links.js';
 import { kindRoutes } from './routes/kinds.js';
 import { folderRoutes } from './routes/folders.js';
 import { propertyRoutes } from './routes/properties.js';
+import { queryRoutes } from './routes/query.js';
+import { graphRoutes } from './routes/graph.js';
 import { uploadRoutes } from './routes/uploads.js';
 import { ensureDatabaseSchema } from './db/schemaMaintenance.js';
 import { seedKinds } from './db/seed.js';
@@ -55,6 +57,8 @@ async function start() {
   await app.register(folderRoutes, { prefix: '/api/folders' });
   // Properties span both kinds and notes, so they mount at the bare /api root.
   await app.register(propertyRoutes, { prefix: '/api' });
+  await app.register(queryRoutes, { prefix: '/api' });
+  await app.register(graphRoutes, { prefix: '/api' });
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
 
   try {

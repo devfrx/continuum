@@ -20,6 +20,7 @@ import {
   shallowRef,
   ref,
   watch,
+  type ComputedRef,
   type Ref,
   type ShallowRef,
   type WatchStopHandle,
@@ -34,13 +35,14 @@ import {
   type Graph,
   type LiveSimulationHandle,
 } from '@continuum/graph';
-import { api } from '@/api';
 import type { GraphEdge, GraphNode, KindDefinition } from '@continuum/shared';
+import type { GraphQueryResponse } from '@continuum/shared';
 import type { AppIconName as IconName } from '@/assets/icons';
 import type { GraphPalette } from '@/composables/useGraphPalette';
 import type { UseGraphFiltersReturn } from './useGraphFilters';
 import type { UseGraphPreferencesReturn, LayoutMode, ViewMode } from './useGraphPreferences';
 import type { UseGraphSelectionReturn } from './useGraphSelection';
+import type { UseGraphQueryReturn } from '@/composables/query/useGraphQuery';
 import { applyReducers, computeProminence } from '@/components/graph/graphReducers';
 import { makeHoverRenderer, makeLabelRenderer } from '@/components/graph/graphLabelRenderer';
 import { bindInteractions } from '@/components/graph/graphInteractions';
@@ -52,6 +54,32 @@ import {
 } from '@/components/graph/lodConfig';
 
 export type GraphAxisView = 'x' | 'y' | 'z';
+
+/**
+ * Seed Graphology node/edge attributes that the new query endpoint adds on
+ * top of the legacy `{id,label,kind,…}` shape — properties / metrics / tags
+ * / folderId on nodes, sourceKind / propertyId on edges. Reducers and the
+ * label renderer read these as plain attributes (`getNodeAttribute(...)`),
+ * so persisting them once at load time is enough to keep them addressable
+ * for the lifetime of the graph.
+ *
+ * Missing fields default to `null` / `[]` so downstream lookups never have
+ * to discriminate between "field absent" and "field empty".
+ */
+function attachExtendedAttributes(g: Graph, response: GraphQueryResponse): void {
+  for (const n of response.nodes) {
+    if (!g.hasNode(n.id)) continue;
+    g.setNodeAttribute(n.id, 'properties', n.properties ?? null);
+    g.setNodeAttribute(n.id, 'metrics', n.metrics ?? null);
+    g.setNodeAttribute(n.id, 'tags', n.tags ?? []);
+    g.setNodeAttribute(n.id, 'folderId', n.folderId ?? null);
+  }
+  for (const e of response.edges) {
+    if (!g.hasEdge(e.id)) continue;
+    g.setEdgeAttribute(e.id, 'sourceKind', e.sourceKind ?? null);
+    g.setEdgeAttribute(e.id, 'propertyId', e.propertyId ?? null);
+  }
+}
 
 /** Imperative handle exposed by `Graph3DCanvas.vue` via `defineExpose`. */
 export interface Graph3DHandle {
@@ -68,6 +96,30 @@ export interface UseGraphSigmaOptions {
   selection: UseGraphSelectionReturn;
   palette: ShallowRef<GraphPalette>;
   graph3dRef: Ref<Graph3DHandle | null>;
+  /**
+   * Property Query Layer orchestrator. `load()` calls `graphQuery.fetch()`
+   * to obtain the graph payload, so callers MUST construct one (typically
+   * via `useGraphQuery`) and pass it in.
+   */
+  graphQuery: UseGraphQueryReturn;
+  /**
+   * Optional encoding maps derived from the active `GraphEncodings`
+   * selection (color / size / badge driven by a property or graph
+   * metric). When present they are forwarded into the `ReducerContext`
+   * so reducers can override per-node visuals on every render. When
+   * absent reducers fall back to the default kind-colour / degree-size
+   * pipeline.
+   *
+   * Built at the view layer (`GraphView.vue`) because it joins the
+   * graph payload (owned here) with the encodings ref (owned by
+   * `useGraphPropertyEncodings`) and the property registry
+   * (`useProperties`); none of those should leak into this composable.
+   */
+  encodingMaps?: ComputedRef<{
+    colorByNode?: Map<string, string | null>;
+    sizeByNode?: Map<string, number>;
+    badgeByNode?: Map<string, string | null>;
+  } | undefined>;
   /** Kind registry. Provides icon/color lookup and the kinds list. */
   kindStore: {
     load(force?: boolean): Promise<void>;
@@ -190,17 +242,22 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
     try {
       await kindStore.load();
       prefs.pruneHiddenKinds(kindStore.kinds.value.map((k) => k.id));
-      const data = await api.links.graph();
+      const response = await opts.graphQuery.fetch();
       const storedHighlights = prefs.loadHighlights();
       prefs.highlightedIds.value = storedHighlights;
-      payload.value = { nodes: data.nodes, edges: data.edges };
+      payload.value = { nodes: response.nodes, edges: response.edges };
       const g = buildGraph({
-        ...data,
+        nodes: response.nodes,
+        edges: response.edges,
         colorResolver: (k) => kindStore.colorOf(k),
         // Skip the offline force pass — the live simulation will
         // animate the graph from the seeded positions.
         runLayout: false,
       });
+      // Seed the new GraphQueryResponse-only fields (properties, metrics,
+      // tags, folderId, sourceKind, propertyId) onto Graphology so the
+      // reducers and label renderer can read them as plain attributes.
+      attachExtendedAttributes(g, response);
       if (prefs.layoutMode.value === 'circular') runCircularLayout(g);
       else runOrganicSeed(g);
       const prominence = computeProminence(g);
@@ -325,6 +382,7 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
         hoveredEdge: selection.hoveredEdge.value,
         palette: palette.value,
         lodTier: lodTier.value,
+        encodings: opts.encodingMaps?.value,
       }));
       applyAdaptiveLabelThreshold();
       // Hook the Sigma camera so panning / zooming refreshes the tier.

@@ -17,7 +17,9 @@
  *
  *  Filter (future kanban view)
  *  ──────────────────────────
- *  POST   /api/notes/query                        execute a FilterTree → returns matching note ids
+ *  See `routes/graph.ts` (POST /api/graph/query) and `routes/query.ts`
+ *  (GET /api/query/fields) for the live filter execution + field
+ *  catalogue endpoints.
  *
  * The routes are mounted with a generic `/api` prefix in `index.ts`.
  */

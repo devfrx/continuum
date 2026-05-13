@@ -82,31 +82,37 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
   return Math.max(min, Math.min(max, n));
 }
 
+export function coerceGraphFilters(value: unknown): GraphFilters {
+  const parsed = value && typeof value === 'object'
+    ? value as Partial<Record<keyof GraphFilters, unknown>>
+    : {};
+  return {
+    hideOrphans: typeof parsed.hideOrphans === 'boolean' ? parsed.hideOrphans : GRAPH_FILTERS_DEFAULTS.hideOrphans,
+    monochrome: typeof parsed.monochrome === 'boolean' ? parsed.monochrome : GRAPH_FILTERS_DEFAULTS.monochrome,
+    arrows: typeof parsed.arrows === 'boolean' ? parsed.arrows : GRAPH_FILTERS_DEFAULTS.arrows,
+    labelFadeThreshold: clamp(parsed.labelFadeThreshold, 0, 1, GRAPH_FILTERS_DEFAULTS.labelFadeThreshold),
+    showNodeLabels: typeof parsed.showNodeLabels === 'boolean'
+      ? parsed.showNodeLabels
+      : GRAPH_FILTERS_DEFAULTS.showNodeLabels,
+    showNodeIcons: typeof parsed.showNodeIcons === 'boolean'
+      ? parsed.showNodeIcons
+      : GRAPH_FILTERS_DEFAULTS.showNodeIcons,
+    nodeSizeMultiplier: clamp(parsed.nodeSizeMultiplier, 0.3, 3, GRAPH_FILTERS_DEFAULTS.nodeSizeMultiplier),
+    edgeSizeMultiplier: clamp(parsed.edgeSizeMultiplier, 0.3, 4, GRAPH_FILTERS_DEFAULTS.edgeSizeMultiplier),
+    centerForce: clamp(parsed.centerForce, 0, 0.5, GRAPH_FILTERS_DEFAULTS.centerForce),
+    repelForce: clamp(parsed.repelForce, -2000, -10, GRAPH_FILTERS_DEFAULTS.repelForce),
+    linkForce: clamp(parsed.linkForce, 0, 2, GRAPH_FILTERS_DEFAULTS.linkForce),
+    linkDistance: clamp(parsed.linkDistance, 30, 500, GRAPH_FILTERS_DEFAULTS.linkDistance),
+    solidNodes: typeof parsed.solidNodes === 'boolean' ? parsed.solidNodes : GRAPH_FILTERS_DEFAULTS.solidNodes,
+    lodEnabled: typeof parsed.lodEnabled === 'boolean' ? parsed.lodEnabled : GRAPH_FILTERS_DEFAULTS.lodEnabled,
+  };
+}
+
 function readStoredFilters(): GraphFilters {
   try {
     const raw = localStorage.getItem(FILTERS_KEY);
     if (!raw) return { ...GRAPH_FILTERS_DEFAULTS };
-    const parsed = JSON.parse(raw) as Partial<Record<keyof GraphFilters, unknown>>;
-    return {
-      hideOrphans: typeof parsed.hideOrphans === 'boolean' ? parsed.hideOrphans : GRAPH_FILTERS_DEFAULTS.hideOrphans,
-      monochrome: typeof parsed.monochrome === 'boolean' ? parsed.monochrome : GRAPH_FILTERS_DEFAULTS.monochrome,
-      arrows: typeof parsed.arrows === 'boolean' ? parsed.arrows : GRAPH_FILTERS_DEFAULTS.arrows,
-      labelFadeThreshold: clamp(parsed.labelFadeThreshold, 0, 1, GRAPH_FILTERS_DEFAULTS.labelFadeThreshold),
-      showNodeLabels: typeof parsed.showNodeLabels === 'boolean'
-        ? parsed.showNodeLabels
-        : GRAPH_FILTERS_DEFAULTS.showNodeLabels,
-      showNodeIcons: typeof parsed.showNodeIcons === 'boolean'
-        ? parsed.showNodeIcons
-        : GRAPH_FILTERS_DEFAULTS.showNodeIcons,
-      nodeSizeMultiplier: clamp(parsed.nodeSizeMultiplier, 0.3, 3, GRAPH_FILTERS_DEFAULTS.nodeSizeMultiplier),
-      edgeSizeMultiplier: clamp(parsed.edgeSizeMultiplier, 0.3, 4, GRAPH_FILTERS_DEFAULTS.edgeSizeMultiplier),
-      centerForce: clamp(parsed.centerForce, 0, 0.5, GRAPH_FILTERS_DEFAULTS.centerForce),
-      repelForce: clamp(parsed.repelForce, -2000, -10, GRAPH_FILTERS_DEFAULTS.repelForce),
-      linkForce: clamp(parsed.linkForce, 0, 2, GRAPH_FILTERS_DEFAULTS.linkForce),
-      linkDistance: clamp(parsed.linkDistance, 30, 500, GRAPH_FILTERS_DEFAULTS.linkDistance),
-      solidNodes: typeof parsed.solidNodes === 'boolean' ? parsed.solidNodes : GRAPH_FILTERS_DEFAULTS.solidNodes,
-      lodEnabled: typeof parsed.lodEnabled === 'boolean' ? parsed.lodEnabled : GRAPH_FILTERS_DEFAULTS.lodEnabled,
-    };
+    return coerceGraphFilters(JSON.parse(raw));
   } catch {
     return { ...GRAPH_FILTERS_DEFAULTS };
   }

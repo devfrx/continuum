@@ -8,17 +8,19 @@ interface Props {
     modelValue: string;
     options: Option[];
     size?: 'sm' | 'md';
+    fill?: boolean;
 }
 
 withDefaults(defineProps<Props>(), {
     size: 'md',
+    fill: false,
 });
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 </script>
 
 <template>
-    <div class="ui-seg" :class="`ui-seg--${size}`" role="tablist">
+    <div class="ui-seg" :class="[`ui-seg--${size}`, { 'ui-seg--fill': fill }]" role="tablist">
         <button v-for="opt in options" :key="opt.value" type="button" role="tab"
             :aria-selected="modelValue === opt.value"
             :class="['ui-seg__btn', { 'is-active': modelValue === opt.value }]"
@@ -53,6 +55,10 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
     height: var(--ui-seg-h, 28px);
 }
 
+.ui-seg--fill {
+    width: 100%;
+}
+
 .ui-seg__btn {
     appearance: none;
     border: none;
@@ -71,6 +77,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
         color var(--duration-fast) var(--ease-standard),
         box-shadow var(--duration-fast) var(--ease-standard);
     font-weight: var(--font-weight-medium);
+}
+
+.ui-seg--fill .ui-seg__btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: var(--space-2);
 }
 
 .ui-seg--sm .ui-seg__btn {

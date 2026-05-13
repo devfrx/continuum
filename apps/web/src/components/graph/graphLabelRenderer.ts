@@ -30,6 +30,8 @@ export type NodeRenderData = {
   dimmed?: boolean;
   showIcon?: boolean;
   showLabel?: boolean;
+  showBadge?: boolean;
+  badgeIcon?: string | null;
 };
 export type RenderSettings = { labelSize: number; labelFont: string };
 export type NodeRenderFn = (
@@ -85,6 +87,30 @@ function drawIconAndLabel(
     const half = px / 2;
     ctx.drawImage(img, data.x - half, data.y - half, px, px);
   }
+
+  if (data.showBadge && data.badgeIcon && data.size >= 6) {
+    const badgeRadius = Math.max(4.5, Math.min(7, data.size * 0.34));
+    const separatorRadius = badgeRadius + 1.75;
+    const x = Math.round(data.x + data.size * 0.72);
+    const y = Math.round(data.y - data.size * 0.72);
+
+    ctx.save();
+
+    // Separator ring: cuts the marker out from saturated node fills without
+    // adding a fuzzy shadow or a detailed icon that collapses at small sizes.
+    ctx.beginPath();
+    ctx.arc(x, y, separatorRadius, 0, Math.PI * 2);
+    ctx.fillStyle = pal.bg;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(x, y, badgeRadius, 0, Math.PI * 2);
+    ctx.fillStyle = isHover ? pal.edgeFocus : pal.accent;
+    ctx.fill();
+
+    ctx.restore();
+  }
+
   if (!data.showLabel || !data.label) return;
 
   const label = graphDisplayLabel(data.label, isHover ? 40 : 30);
@@ -149,7 +175,7 @@ export function makeLabelRenderer(sigma: Sigma, getCtx: () => LabelRendererConte
     sigma.refresh({ skipIndexation: true });
   };
   return (ctx, data, settings) => {
-    if (data.dimmed || (!data.showLabel && !data.showIcon)) return;
+    if (data.dimmed || (!data.showLabel && !data.showIcon && !data.showBadge)) return;
     const lc = getCtx();
     const kind = String(data.kind ?? 'custom');
     const img = getIconImage(lc.iconOf(kind), refresh);

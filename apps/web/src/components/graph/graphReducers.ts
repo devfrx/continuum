@@ -43,6 +43,20 @@ export interface ReducerContext {
   palette: GraphPalette;
   /** Current LOD tier; reducers gate detail rendering off this. */
   lodTier: LodTier;
+  /**
+   * Optional encoding overrides computed at the GraphView level from the
+   * Property Query Layer's `useGraphPropertyEncodings` selections. Each map
+   * is keyed by node id; missing entries fall through to the default
+   * (kind-driven) visuals.
+   */
+  encodings?: {
+    /** Map of nodeId → custom hex/rgba colour, or null to use default. */
+    colorByNode?: Map<string, string | null>;
+    /** Map of nodeId → size multiplier (1 = default). */
+    sizeByNode?: Map<string, number>;
+    /** Map of nodeId → badge token (icon name) or null. */
+    badgeByNode?: Map<string, string | null>;
+  };
 }
 
 type NodeVisualAttrs = Record<string, unknown> & {
@@ -56,6 +70,8 @@ type NodeVisualAttrs = Record<string, unknown> & {
   dimmed?: boolean;
   showIcon?: boolean;
   showLabel?: boolean;
+  showBadge?: boolean;
+  badgeIcon?: string | null;
 };
 
 /** Hover trumps selection for the focus subgraph. */
@@ -295,6 +311,29 @@ export function applyReducers(
     }
     res.showIcon = showIcon;
 
+    // 5. Property-driven encoding overrides — applied last so they layer on
+    // top of the baseline color/size pipeline. Skipped while monochrome is
+    // on (the user explicitly asked for chromatic neutrality) or while the
+    // node is dimmed (out-of-focus, hidden-kind…).
+    const enc = ctx.encodings;
+    if (enc && !filters.monochrome && !res.dimmed) {
+      const overrideColor = enc.colorByNode?.get(node);
+      if (overrideColor) {
+        res.color = overrideColor;
+        if (!filters.solidNodes) res.borderColor = overrideColor;
+      }
+      const sizeMult = enc.sizeByNode?.get(node);
+      if (typeof sizeMult === 'number' && Number.isFinite(sizeMult) && sizeMult > 0) {
+        res.size = Number(res.size ?? uniformSize) * sizeMult;
+      }
+      const badgeIcon = enc.badgeByNode?.get(node);
+      if (badgeIcon && lodTier !== 'far') {
+        res.badgeIcon = badgeIcon;
+        res.showBadge = true;
+        res.label = res.label ?? (graphDisplayLabel(rawLabel, 32) || ' ');
+      }
+    }
+
     return res;
   });
 
@@ -304,11 +343,17 @@ export function applyReducers(
     const res: Record<string, unknown> = { ...data };
     const sizeMult = filters.edgeSizeMultiplier;
     const defaultEdgeType = filters.arrows ? 'arrow' : 'line';
-    // STRICT UNIFORMITY: every edge ships with the same stroke width
-    // and the same colour saturation. Only the focus subgraph and the
-    // hovered edge get a separate (still uniform) accent treatment.
-    const baseSize = 1.35 * sizeMult;
-    const baseColor = colorWithAlpha(pal.edge, 0.7);
+    const rawSourceKind = (data as { sourceKind?: unknown }).sourceKind
+      ?? graph.getEdgeAttribute(edge, 'sourceKind');
+    const isRelationPropertyEdge = rawSourceKind === 'relationProperty';
+    const accentColor = pal.accent || pal.edgeFocus;
+    // Direct links are the primary semantic connection — heavier and warmer.
+    // Relation-property links are secondary context — thinner and neutral.
+    const baseSize = (isRelationPropertyEdge ? 1.1 : 1.75) * sizeMult;
+    const baseColor = isRelationPropertyEdge
+      ? colorWithAlpha(pal.edge, 0.42)
+      : colorWithAlpha(accentColor, 0.62);
+    const activeEdgeColor = isRelationPropertyEdge ? pal.edgeFocus : accentColor;
 
     // Hide edges connecting hidden-kind / orphan-filtered endpoints.
     const [src, tgt] = graph.extremities(edge);
@@ -329,14 +374,17 @@ export function applyReducers(
     res.type = defaultEdgeType;
     res.color = baseColor;
     res.size = baseSize;
+    if (!isRelationPropertyEdge) res.zIndex = 1;
 
     const hasQuery = matchedNodes.size > 0 || searchQuery.trim().length > 0;
     if (hasQuery) {
       if (matchedNodes.has(src) && matchedNodes.has(tgt)) {
-        res.color = colorWithAlpha(pal.edgeFocus, 0.85);
-        res.zIndex = 1;
+        res.color = colorWithAlpha(activeEdgeColor, isRelationPropertyEdge ? 0.82 : 0.95);
+        res.zIndex = isRelationPropertyEdge ? 1 : 2;
       } else {
-        res.color = colorWithAlpha(pal.edge, 0.12);
+        res.color = isRelationPropertyEdge
+          ? colorWithAlpha(pal.edge, 0.08)
+          : colorWithAlpha(accentColor, 0.16);
       }
     }
 
@@ -347,22 +395,26 @@ export function applyReducers(
       if (edges.has(edge)) {
         // Focus subgraph — full saturation, always with arrows even
         // when the global toggle is off so the user can read direction
-        // when they actively interrogate a node. Width stays uniform.
+        // when they actively interrogate a node.
         res.type = 'arrow';
-        res.color = pal.edgeFocus;
-        res.zIndex = 2;
+        res.color = activeEdgeColor;
+        res.size = isRelationPropertyEdge ? baseSize : baseSize * 1.08;
+        res.zIndex = isRelationPropertyEdge ? 2 : 3;
       } else {
         isOutOfFocus = true;
-        // Out-of-focus edges share one uniform dim shade — same type,
-        // width and opacity for every link, regardless of endpoints.
-        res.color = mixOpaqueColor(pal.edge, pal.bg, 0.30);
+        // Out-of-focus edges keep their source family but collapse into
+        // low-contrast shades so the focus subgraph remains dominant.
+        res.color = isRelationPropertyEdge
+          ? mixOpaqueColor(pal.edge, pal.bg, 0.20)
+          : mixOpaqueColor(accentColor, pal.bg, 0.30);
         res.zIndex = 0;
       }
     }
 
     if (!isOutOfFocus && hoveredEdge && hoveredEdge === edge) {
       res.type = 'arrow';
-      res.color = pal.edgeFocus;
+      res.color = activeEdgeColor;
+      res.size = isRelationPropertyEdge ? baseSize : baseSize * 1.12;
     }
 
     // LOD gate — in `far` tier, hide background edges. While a node

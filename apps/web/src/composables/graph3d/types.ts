@@ -6,7 +6,7 @@
  * the shell.
  */
 import type * as THREE from 'three';
-import type { GraphNode } from '@continuum/shared';
+import type { GraphEdge, GraphNode } from '@continuum/shared';
 
 export type AxisKey = 'x' | 'y' | 'z';
 export type CoordinateSnapshot = Partial<Record<AxisKey, number>>;
@@ -36,6 +36,8 @@ export interface RtLink {
   source: string | RtNode;
   target: string | RtNode;
   type: string;
+  sourceKind?: GraphEdge['sourceKind'];
+  propertyId?: string | null;
 }
 
 export interface GraphObject3D extends THREE.Object3D {
