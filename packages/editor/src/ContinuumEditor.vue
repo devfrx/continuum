@@ -3,6 +3,15 @@ import './styles/editor.css';
 import './styles/prosemirror.css';
 import './styles/nodes.css';
 import './styles/slashCommand.css';
+import './styles/bubbleMenu.css';
+import './styles/dragHandle.css';
+import './styles/mathematics.css';
+import './styles/tableOfContents.css';
+import './styles/wikilink.css';
+// KaTeX visual styles for the Mathematics extension. Imported once at
+// the editor entry-point so every embed inherits the same typography
+// without each host having to remember to wire it manually.
+import 'katex/dist/katex.min.css';
 import {
   onBeforeUnmount,
   watch,
@@ -21,12 +30,16 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import * as Y from 'yjs';
 import type { ContextMenuItem } from '@continuum/shared';
 import { buildExtensions } from './extensions';
+import type { TocAnchor } from './extensions/TableOfContents';
+import type { WikilinkClick } from './extensions/WikilinkDecoration';
 import { buildEditorMenu, type PromptRequest } from './editorMenu';
 import CodeBlockNodeView from './CodeBlockNodeView.vue';
 import DetailsNodeView from './nodes/DetailsNodeView.vue';
 import CalloutNodeView from './nodes/CalloutNodeView.vue';
 import ChartNodeView from './nodes/ChartNodeView.vue';
 import FootnoteNodeView from './nodes/FootnoteNodeView.vue';
+import EditorBubbleMenu from './components/EditorBubbleMenu.vue';
+import EditorDragHandle from './components/EditorDragHandle.vue';
 import {
   ICON_CATALOG_KEY,
   ICON_COMPONENT_KEY,
@@ -115,7 +128,57 @@ const emit = defineEmits<{
    * invokes `resolve(value)` with a string, or `resolve(null)` to cancel.
    */
   (e: 'request-prompt', payload: PromptRequest): void;
+  /**
+   * Fired whenever the document's heading structure changes. Carries
+   * the projected `TocAnchor[]` from the TableOfContents extension so
+   * hosts (e.g. `NoteTocPanel`) can render an always-up-to-date
+   * outline without having to walk the document JSON themselves.
+   */
+  (e: 'update:toc', anchors: TocAnchor[]): void;
+  /**
+   * Fired when the user clicks a `[[wikilink]]` chip inside the
+   * document. Hosts resolve the target title to an internal id and
+   * navigate — the editor itself stays agnostic of the underlying
+   * note store.
+   */
+  (e: 'wikilink-navigate', payload: WikilinkClick): void;
 }>();
+
+// ─── Table of Contents ──────────────────────────────────────────────
+//
+// The TableOfContents extension calls back on every heading change.
+// Wrap the emit so the extension wiring stays inside `buildExtensions`
+// and the editor body just thinks in terms of a single function ref.
+function emitToc(anchors: TocAnchor[]): void {
+  emit('update:toc', anchors);
+}
+
+/**
+ * Public handle exposed via `defineExpose` so a parent can imperatively
+ * scroll a heading into view from a sidebar entry. The host receives a
+ * `TocAnchor` (carrying the heading's stable `id` attribute, courtesy of
+ * the UniqueID extension) and asks the editor to bring the matching
+ * heading on screen.
+ *
+ * Implementation note: we deliberately avoid `setTextSelection(pos)`
+ * here. ProseMirror raises “TextSelection endpoint not pointing into a
+ * node with inline content (doc)” when `pos` happens to land on a
+ * top-level boundary (e.g. just before the first heading), which is
+ * exactly the position the TableOfContents extension reports for the
+ * very first anchor. Scrolling the rendered DOM node is just as
+ * effective and side-effect free — the heading already carries a
+ * stable `id` because UniqueID is enabled in the extension pipeline.
+ */
+function scrollToAnchor(anchor: TocAnchor): void {
+  const e = editor.value;
+  if (!e) return;
+  const dom = e.view.dom.querySelector(`[id="${CSS.escape(anchor.id)}"]`);
+  if (dom instanceof HTMLElement) {
+    dom.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+defineExpose({ scrollToAnchor });
 
 const isMarkdown = computed(() => props.mode === 'markdown');
 
@@ -229,6 +292,11 @@ const editor = useEditor({
       calloutView: markRaw(CalloutNodeView),
       chartView: markRaw(ChartNodeView),
       footnoteView: markRaw(FootnoteNodeView),
+      mathematics: true,
+      tableOfContents: { onUpdate: emitToc },
+      wikilink: {
+        onNavigate: (link) => emit('wikilink-navigate', link),
+      },
       slashCommand: {
         items: props.slashCommandItems,
         render: createSlashRenderer,
@@ -371,6 +439,24 @@ function wrapWikilink(): void {
   }
 }
 
+/**
+ * Bridge between the bubble menu's "add link" affordance and the host
+ * prompt UI. Re-uses the same `request-prompt` channel as image / link
+ * prompts surfaced by the context menu so users always see the same
+ * modal styling, regardless of the entry point.
+ */
+function requestLinkPrompt(): Promise<string | null> {
+  return new Promise((resolve) => {
+    emit('request-prompt', {
+      title: 'Add link',
+      label: 'Paste or type a URL',
+      placeholder: 'https://example.com',
+      confirmLabel: 'Add',
+      resolve,
+    });
+  });
+}
+
 /** Block types whose Backspace-at-start should escape the wrapper. */
 const ESCAPE_ON_BACKSPACE = new Set([
   'callout',
@@ -511,10 +597,17 @@ watch(
 // React to editable toggle: pipe straight through to Tiptap so the
 // editor surface, the bubble menu, and every NodeView observe the same
 // `isEditable` flag without each one needing its own prop.
+//
+// Pass `emitUpdate=false` so flipping editability does NOT fire a
+// transaction event. The default behaviour emits an `update` whose
+// debounced echo (`scheduleEmit`) re-emits `update:json` to the host
+// during the same Vue flush cycle that already toggled `editable` —
+// causing Vue to patch components mid-unmount and crash with
+// `insertBefore on null` / `emitsOptions on null`.
 watch(
   () => props.editable,
   (value) => {
-    editor.value?.setEditable(value);
+    editor.value?.setEditable(value, false);
   },
 );
 
@@ -583,145 +676,30 @@ onBeforeUnmount(() => {
   provider?.destroy();
   ydoc?.destroy();
 });
-
-function toggle(cmd: string): void {
-  if (!props.editable) return;
-  const e = editor.value;
-  if (!e) return;
-  const chain = e.chain().focus();
-  switch (cmd) {
-    case 'bold': chain.toggleBold().run(); break;
-    case 'italic': chain.toggleItalic().run(); break;
-    case 'underline': chain.toggleUnderline().run(); break;
-    case 'strike': chain.toggleStrike().run(); break;
-    case 'code': chain.toggleCode().run(); break;
-    case 'h1': chain.toggleHeading({ level: 1 }).run(); break;
-    case 'h2': chain.toggleHeading({ level: 2 }).run(); break;
-    case 'h3': chain.toggleHeading({ level: 3 }).run(); break;
-    case 'bulletList': chain.toggleBulletList().run(); break;
-    case 'orderedList': chain.toggleOrderedList().run(); break;
-    case 'taskList': chain.toggleTaskList().run(); break;
-    case 'blockquote': chain.toggleBlockquote().run(); break;
-    case 'codeBlock': chain.toggleCodeBlock().run(); break;
-    case 'hr': chain.setHorizontalRule().run(); break;
-    case 'wikilink': wrapWikilink(); break;
-  }
-}
-
-function isActive(name: string, attrs?: Record<string, unknown>): boolean {
-  return editor.value?.isActive(name, attrs) ?? false;
-}
 </script>
 
 <template>
   <div class="continuum-editor" :class="{ 'is-markdown': isMarkdown, 'is-readonly': !editable }">
     <template v-if="!isMarkdown">
-      <div class="toolbar" v-if="editor && editable" role="toolbar" aria-label="Formatting">
-        <div class="tb-group">
-          <button class="tb-btn" :class="{ active: isActive('bold') }" @click="toggle('bold')" title="Bold (Ctrl+B)"
-            aria-label="Bold">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor"
-                d="M4 2.5h4.25a3 3 0 0 1 1.94 5.29A3.25 3.25 0 0 1 8.75 13.5H4zm1.75 4.25h2.4a1.25 1.25 0 0 0 0-2.5H5.75zm0 5h2.9a1.5 1.5 0 0 0 0-3H5.75z" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('italic') }" @click="toggle('italic')"
-            title="Italic (Ctrl+I)" aria-label="Italic">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor" d="M6.5 2.5h5v1.5H9.7l-2 8H10v1.5H4.5V12h2.05l2-8H6.5z" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('underline') }" @click="toggle('underline')"
-            title="Underline (Ctrl+U)" aria-label="Underline">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor"
-                d="M4 2.5h1.5v6.25a2.5 2.5 0 0 0 5 0V2.5H12v6.4a4 4 0 0 1-8 0zM3.5 13h9v1.25h-9z" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('strike') }" @click="toggle('strike')" title="Strikethrough"
-            aria-label="Strikethrough">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor"
-                d="M2 8.25h12v1.25H2zm5.5-4.75c-2 0-3.25 1-3.25 2.5q0 .55.2 1h1.6q-.3-.35-.3-.85c0-.85.65-1.35 1.7-1.35.95 0 1.6.45 1.7 1.2h1.55C10.55 4.45 9.25 3.5 7.5 3.5m1 9c2.05 0 3.25-1 3.25-2.45 0-.4-.1-.7-.25-.95H9.95q.3.4.3.95c0 .85-.7 1.4-1.7 1.4-1.1 0-1.85-.55-1.95-1.4H5.05c.1 1.55 1.4 2.45 3.45 2.45" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('code') }" @click="toggle('code')" title="Inline code"
-            aria-label="Inline code">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"
-                d="m6 5l-3 3l3 3m4-6l3 3l-3 3" />
-            </svg>
-          </button>
-        </div>
-
-        <span class="sep" />
-
-        <div class="tb-group">
-          <button class="tb-btn tb-btn--text" :class="{ active: isActive('heading', { level: 1 }) }"
-            @click="toggle('h1')" title="Heading 1" aria-label="Heading 1">H1</button>
-          <button class="tb-btn tb-btn--text" :class="{ active: isActive('heading', { level: 2 }) }"
-            @click="toggle('h2')" title="Heading 2" aria-label="Heading 2">H2</button>
-          <button class="tb-btn tb-btn--text" :class="{ active: isActive('heading', { level: 3 }) }"
-            @click="toggle('h3')" title="Heading 3" aria-label="Heading 3">H3</button>
-        </div>
-
-        <span class="sep" />
-
-        <div class="tb-group">
-          <button class="tb-btn" :class="{ active: isActive('bulletList') }" @click="toggle('bulletList')"
-            title="Bullet list" aria-label="Bullet list">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor"
-                d="M2 4a1 1 0 1 1 2 0 1 1 0 0 1-2 0m0 4a1 1 0 1 1 2 0 1 1 0 0 1-2 0m0 4a1 1 0 1 1 2 0 1 1 0 0 1-2 0M6 3.5h8v1H6zm0 4h8v1H6zm0 4h8v1H6z" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('orderedList') }" @click="toggle('orderedList')"
-            title="Numbered list" aria-label="Numbered list">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor"
-                d="M6 3.5h8v1H6zm0 4h8v1H6zm0 4h8v1H6zM2 2.5h1.5v3H3v-2h-.5zm0 4h1.5v.6L2.6 8h.9v.5H2v-.6L2.9 7H2zm0 3.5h1.5v.5H2.5v.5h.6q.4 0 .4.4v.6q0 .4-.4.4H2v-.5h1v-.5h-.6q-.4 0-.4-.4z" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('taskList') }" @click="toggle('taskList')"
-            title="To-do list" aria-label="To-do list">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"
-                d="M2.5 4.5h2v2h-2zM2.5 9.5h2v2h-2zM7 5.5h7M7 10.5h7" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('blockquote') }" @click="toggle('blockquote')" title="Quote"
-            aria-label="Quote">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor"
-                d="M3 4.5h4v4q0 2-2 3l-.5-1q1.2-.5 1.4-1.5H3zm6 0h4v4q0 2-2 3l-.5-1q1.2-.5 1.4-1.5H9z" />
-            </svg>
-          </button>
-          <button class="tb-btn" :class="{ active: isActive('codeBlock') }" @click="toggle('codeBlock')"
-            title="Code block" aria-label="Code block">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"
-                d="M2 3.5h12v9H2zM5 6L3 8l2 2m6-4l2 2l-2 2" />
-            </svg>
-          </button>
-          <button class="tb-btn" @click="toggle('hr')" title="Horizontal rule" aria-label="Horizontal rule">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path fill="currentColor" d="M2 7.5h12v1H2z" />
-            </svg>
-          </button>
-        </div>
-
-        <span class="sep" />
-
-        <div class="tb-group">
-          <button class="tb-btn tb-btn--text" @click="toggle('wikilink')" title="Wrap in [[ ]] (Ctrl+K)"
-            aria-label="Wikilink">[[ ]]</button>
-        </div>
-
-        <span v-if="collab" class="live" aria-label="Live collaboration active">
+      <!-- Live-collab badge sits in its own status row above the canvas
+           so the writing surface remains free of permanent chrome. The
+           bubble menu (`EditorBubbleMenu`) now owns every formatting
+           command, surfaced contextually on the user's selection. -->
+      <div v-if="collab && editor && editable" class="status-bar" aria-label="Editor status">
+        <span class="live" aria-label="Live collaboration active">
           <span class="live-dot" />Live
         </span>
       </div>
       <EditorContent :editor="editor" class="content" @contextmenu="openContextMenu" />
+      <!-- Floating affordances: drag handle in the gutter, bubble menu
+           on the active selection. Both stay mounted regardless of the
+           editable flag — they self-suppress through the underlying
+           Tiptap plugins (`shouldShow` for the bubble, `isEditable`
+           for the drag handle). Toggling the wrapper via `v-if` would
+           tear down their body-portaled Tippy popups mid-patch and
+           crash Vue's reconciler. -->
+      <EditorDragHandle v-if="editor" :editor="editor" />
+      <EditorBubbleMenu v-if="editor" :editor="editor" :request-link="requestLinkPrompt" />
     </template>
 
     <template v-else>

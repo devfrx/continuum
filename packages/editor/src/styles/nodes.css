@@ -510,12 +510,6 @@
     border-color: var(--accent);
 }
 
-/* --- Read-only editor surface ------------------------------------- */
-.continuum-editor.is-readonly .toolbar {
-    opacity: 0.55;
-    pointer-events: none;
-}
-
 .continuum-editor.is-readonly .ProseMirror {
     cursor: default;
 }

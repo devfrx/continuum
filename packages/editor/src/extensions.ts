@@ -23,6 +23,7 @@ import Image from '@tiptap/extension-image';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import Typography from '@tiptap/extension-typography';
+import UniqueID from '@tiptap/extension-unique-id';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { VueNodeViewRenderer } from '@tiptap/vue-3';
 import type { Component } from 'vue';
@@ -37,6 +38,9 @@ import {
   type SlashCommandItem,
   type SlashRendererInstance,
 } from './extensions/slashCommand';
+import { buildMathematics } from './extensions/Mathematics';
+import { buildTableOfContents, type TocAnchor } from './extensions/TableOfContents';
+import { WikilinkDecoration, type WikilinkClick } from './extensions/WikilinkDecoration';
 
 export const lowlight = createLowlight(all);
 
@@ -66,6 +70,33 @@ interface BuildOptions {
     items: SlashCommandItem[];
     render: () => SlashRendererInstance;
   };
+  /**
+   * Table of contents wiring. When provided, the extension watches
+   * heading nodes and pushes a flat anchor list to `onUpdate`; the
+   * host typically routes the data into a sidebar (`NoteTocPanel`).
+   * Omit to skip registration entirely — empty TOC = zero overhead.
+   */
+  tableOfContents?: {
+    onUpdate: (anchors: TocAnchor[]) => void;
+  };
+  /**
+   * KaTeX-powered math rendering. Toggles registration of the
+   * decoration-based `Mathematics` extension which auto-renders any
+   * `$\\LaTeX$` snippet typed into the document. The host is also
+   * responsible for importing `katex/dist/katex.min.css` exactly
+   * once — `ContinuumEditor.vue` does this at the top of its style
+   * imports so every embed inherits the correct typography.
+   */
+  mathematics?: boolean;
+  /**
+   * Notion-style decoration for `[[target]]` / `[[target|alias]]`
+   * syntax. The host receives a click event with the resolved target
+   * (and optional alias) and is responsible for navigating to the
+   * correct note. When omitted, wikilinks render as plain text.
+   */
+  wikilink?: {
+    onNavigate: (link: WikilinkClick) => void;
+  };
 }
 
 export function buildExtensions(opts: BuildOptions) {
@@ -80,6 +111,16 @@ export function buildExtensions(opts: BuildOptions) {
     Subscript,
     Superscript,
     Typography,
+    // Stable, document-scoped identifiers on every heading and paragraph.
+    // Headings need ids so the TableOfContents extension can render
+    // direct anchor links (and so external code can deep-link to a
+    // section); paragraphs benefit too, e.g. for collaborative
+    // commenting / footnote anchoring later. Public, MIT-licensed
+    // since Tiptap v2.27, so safe to keep enabled by default.
+    UniqueID.configure({
+      types: ['heading', 'paragraph'],
+      attributeName: 'id',
+    }),
     Link.configure({ openOnClick: false }),
     Placeholder.configure({
       // Two-tier placeholder: the host's prompt sits on the first empty
@@ -148,6 +189,11 @@ export function buildExtensions(opts: BuildOptions) {
       },
     }).configure({ lowlight, defaultLanguage: 'plaintext' }),
     TrailingNode,
+    ...(opts.mathematics ? [buildMathematics()] : []),
+    ...(opts.wikilink ? [WikilinkDecoration.configure({ onNavigate: opts.wikilink.onNavigate })] : []),
+    ...(opts.tableOfContents
+      ? [buildTableOfContents({ onUpdate: opts.tableOfContents.onUpdate })]
+      : []),
     ...(opts.slashCommand && opts.slashCommand.items.length > 0
       ? [
           SlashCommand.configure({
@@ -159,3 +205,6 @@ export function buildExtensions(opts: BuildOptions) {
       : []),
   ];
 }
+
+export type { TocAnchor } from './extensions/TableOfContents';
+export type { WikilinkClick } from './extensions/WikilinkDecoration';

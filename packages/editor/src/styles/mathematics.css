@@ -1,0 +1,49 @@
+/**
+ * Mathematics rendering tweaks.
+ *
+ * The KaTeX stylesheet is imported separately (`katex/dist/katex.min.css`)
+ * inside `ContinuumEditor.vue` so it ships with the editor bundle. The
+ * rules below only adjust integration with the Continuum theme:
+ *
+ *   • The decoration nodes carry `data-type="inlineMath"` (or
+ *     `blockMath` in extended setups). We give them a subtle hover
+ *     affordance so users know clicking will reveal the source.
+ *   • The raw `$…$` source remains visible while the caret sits inside
+ *     the formula — those characters get a muted treatment so they
+ *     don't fight the surrounding prose.
+ */
+.ProseMirror [data-type='inlineMath'],
+.ProseMirror [data-type='blockMath'] {
+  display: inline-block;
+  padding: 0 0.15em;
+  border-radius: var(--radius-xs);
+  cursor: text;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.ProseMirror [data-type='inlineMath']:hover,
+.ProseMirror [data-type='blockMath']:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ProseMirror [data-type='blockMath'] {
+  display: block;
+  text-align: center;
+  margin: var(--space-3) 0;
+  padding: var(--space-2) 0;
+}
+
+/* Source delimiters when the caret is inside the formula — KaTeX hides
+   the rendered output and exposes the raw text. Treat the surrounding
+   `$` markers as accent dim hints so the source stands out as code-ish
+   without being noisy. */
+.ProseMirror .Tiptap-Mathematics-source,
+.ProseMirror .tiptap-mathematics-render {
+  font-variant-ligatures: none;
+}
+
+.ProseMirror .Tiptap-Mathematics-source {
+  color: var(--fg-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.92em;
+}

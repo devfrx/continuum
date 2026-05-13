@@ -135,6 +135,10 @@ const _ICONS = {
   'footnote': { icon: 'solar:bookmark-bold' },
   'lock': { icon: 'solar:lock-keyhole-bold' },
   'lock-open': { icon: 'solar:lock-keyhole-unlocked-bold' },
+  /** Inline LaTeX math (Mathematics extension). */
+  'math': { icon: 'solar:variable-bold' },
+  /** Table of contents sidebar. */
+  'toc': { icon: 'solar:list-bold' },
 
   // ── Graph ────────────────────────────────────────────────────────────────
   'node': { icon: 'solar:atom-bold' },

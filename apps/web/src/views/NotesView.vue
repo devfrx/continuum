@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDebounceFn } from '@vueuse/core';
-import { ContinuumEditor, type IconCatalogEntry } from '@continuum/editor';
+import { ContinuumEditor, type IconCatalogEntry, type TocAnchor } from '@continuum/editor';
 import { api, type BacklinkEntry } from '@/api';
 import type { AiSearchHit, Note, EntityKind, FolderNode, ContextMenuItem } from '@continuum/shared';
 import NotesSidebar from '@/components/notes/NotesSidebar.vue';
@@ -11,6 +11,7 @@ import NoteCreateModal from '@/components/notes/NoteCreateModal.vue';
 import NoteInlineProperties from '@/components/notes/NoteInlineProperties.vue';
 import NoteDetailsFooter from '@/components/notes/NoteDetailsFooter.vue';
 import NoteFootnotesPanel from '@/components/notes/NoteFootnotesPanel.vue';
+import NoteTocPanel from '@/components/notes/NoteTocPanel.vue';
 import EmptyEditor from '@/components/notes/EmptyEditor.vue';
 import { FolderForm } from '@/components/folders';
 import { UiConfirmModal, UiContextMenu, UiSelect, Icon, type ContextMenuItem as UiContextMenuItem } from '@/components/ui';
@@ -39,6 +40,22 @@ const draftTitle = ref('');
 const draftKind = ref<EntityKind>('note');
 const draftContent = ref('');
 const draftJson = ref<unknown>(null);
+/**
+ * Live table-of-contents anchors emitted by the editor. The list is
+ * driven by `@tiptap/extension-table-of-contents` and refreshed on
+ * every document change, so the sidebar panel stays in lockstep with
+ * the heading structure without any extra parsing on our side.
+ */
+const tocAnchors = ref<TocAnchor[]>([]);
+/**
+ * Imperative handle to the editor instance, used to scroll a heading
+ * into view when the user clicks an entry in the TOC sidebar.
+ */
+const editorRef = ref<InstanceType<typeof ContinuumEditor> | null>(null);
+
+function onTocNavigate(anchor: TocAnchor): void {
+  editorRef.value?.scrollToAnchor(anchor);
+}
 const draftTags = ref<string[]>([]);
 /**
  * Mirror of the persisted `Note.locked` flag for the currently selected
@@ -215,18 +232,32 @@ const semanticRecursive = ref(true);
 
 const editorMode = ref<EditorMode>('wysiwyg');
 const NOTE_WIDTH_STORAGE_KEY = 'continuum.notesView.noteFullWidth';
+const NOTE_TOC_COLLAPSED_KEY = 'continuum.notesView.tocCollapsed';
 
 function loadNoteFullWidth(): boolean {
   if (typeof window === 'undefined') return false;
   return window.localStorage.getItem(NOTE_WIDTH_STORAGE_KEY) === '1';
 }
 
+function loadTocCollapsed(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(NOTE_TOC_COLLAPSED_KEY) === '1';
+}
+
 const noteFullWidth = ref<boolean>(loadNoteFullWidth());
+const tocCollapsed = ref<boolean>(loadTocCollapsed());
 
 function setNoteFullWidth(value: boolean): void {
   noteFullWidth.value = value;
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(NOTE_WIDTH_STORAGE_KEY, value ? '1' : '0');
+  }
+}
+
+function setTocCollapsed(value: boolean): void {
+  tocCollapsed.value = value;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(NOTE_TOC_COLLAPSED_KEY, value ? '1' : '0');
   }
 }
 
@@ -315,6 +346,10 @@ function applyDraft(n: Note): void {
   draftKind.value = (n.kind as EntityKind) ?? 'note';
   draftContent.value = n.content ?? '';
   draftJson.value = n.contentJson ?? null;
+  // The TOC is rebuilt by the editor on the next document update; clear
+  // the cached anchors immediately so the panel doesn't flash stale
+  // entries from the previously selected note.
+  tocAnchors.value = [];
   draftTags.value = Array.isArray(n.tags) ? [...n.tags] : [];
   draftLocked.value = !!n.locked;
   lastSavedAt.value = Date.parse(n.updatedAt) || Date.now();
@@ -327,6 +362,20 @@ function selectById(id: string): void {
     applyDraft(n);
     recentNotes.record(id);
   }
+}
+
+/**
+ * Resolve a `[[Title]]` click against the in-memory notes list and
+ * navigate to the matching note when found. Lookup is case-insensitive
+ * and trimmed so authors can use casual wiki syntax. When no match
+ * exists we no-op rather than create-on-click — a future iteration
+ * could surface a quick-create modal here.
+ */
+function onWikilinkNavigate(payload: { target: string; alias: string | null }): void {
+  const target = payload.target.trim().toLowerCase();
+  if (!target) return;
+  const hit = notes.value.find((n) => n.title.trim().toLowerCase() === target);
+  if (hit) selectById(hit.id);
 }
 
 function openCreateNote(): void {
@@ -692,28 +741,46 @@ onBeforeUnmount(() => {
       @delete-folder="requestDeleteFolder" @move-note="moveNoteToFolder" />
 
     <section v-if="selected" class="pane center">
-      <div class="note-document" :class="{ 'is-full-width': noteFullWidth }">
-        <NoteEditorHeader :title="draftTitle" :kind="draftKind" :tags="draftTags" :folder-id="selected.folderId ?? null"
-          :editor-mode="editorMode" :full-width="noteFullWidth" :locked="draftLocked" :saved-at="lastSavedAt"
-          :saving="saving" :now-tick="nowTick"
-          @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
-          @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
-          @update:full-width="setNoteFullWidth" @update:locked="onLockToggle"
-          @navigate-folder="(id: string | null) => (selectedFolderId = id)" @delete="remove(selected!.id)" />
+      <div class="note-layout" :class="{ 'has-toc': tocAnchors.length, 'is-full-width': noteFullWidth }">
+        <div class="note-document" :class="{ 'is-full-width': noteFullWidth, 'has-toc': tocAnchors.length }">
+          <NoteEditorHeader :title="draftTitle" :kind="draftKind" :tags="draftTags"
+            :folder-id="selected.folderId ?? null"
+            :editor-mode="editorMode" :full-width="noteFullWidth" :locked="draftLocked" :saved-at="lastSavedAt"
+            :saving="saving" :now-tick="nowTick"
+            @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
+            @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
+            @update:full-width="setNoteFullWidth" @update:locked="onLockToggle"
+            @navigate-folder="(id: string | null) => (selectedFolderId = id)" @delete="remove(selected!.id)" />
 
-        <NoteInlineProperties :note-id="selected.id" :kind-id="selected.kind" :readonly="draftLocked"
-          @select="selectById" />
+          <NoteInlineProperties :note-id="selected.id" :kind-id="selected.kind" :readonly="draftLocked"
+            @select="selectById" />
 
-        <ContinuumEditor class="note-editor" v-model="draftContent" v-model:json="draftJson"
-          :mode="draftLocked ? 'wysiwyg' : editorMode"
-          :editable="!draftLocked"
-          placeholder="Write lore, character notes, anything…" :icon-catalog="editorIconCatalog" :icon-component="Icon"
-          :select-component="UiSelect" @request-context-menu="onEditorContextMenu" @request-prompt="onEditorPrompt" />
+          <div class="note-body-grid" :class="{
+            'has-toc': tocAnchors.length,
+            'is-toc-collapsed': tocCollapsed,
+            'is-full-width': noteFullWidth,
+          }">
+            <div class="note-body-main">
+              <ContinuumEditor ref="editorRef" class="note-editor" v-model="draftContent" v-model:json="draftJson"
+                :mode="draftLocked ? 'wysiwyg' : editorMode"
+                :editable="!draftLocked"
+                placeholder="Write lore, character notes, anything…" :icon-catalog="editorIconCatalog"
+                :icon-component="Icon"
+                :select-component="UiSelect" @request-context-menu="onEditorContextMenu"
+                @request-prompt="onEditorPrompt"
+                @wikilink-navigate="onWikilinkNavigate"
+                @update:toc="(a: TocAnchor[]) => (tocAnchors = a)" />
 
-        <NoteFootnotesPanel :content-json="draftJson" />
+              <NoteFootnotesPanel :content-json="draftJson" />
 
-        <NoteDetailsFooter :note="selected" :notes="notes" :backlinks="backlinks"
-          :backlinks-loading="backlinksLoading" @select="selectById" />
+              <NoteDetailsFooter :note="selected" :notes="notes" :backlinks="backlinks"
+                :backlinks-loading="backlinksLoading" @select="selectById" />
+            </div>
+
+            <NoteTocPanel v-if="tocAnchors.length" :anchors="tocAnchors" :collapsed="tocCollapsed"
+              @navigate="onTocNavigate" @update:collapsed="setTocCollapsed" />
+          </div>
+        </div>
       </div>
     </section>
 
@@ -771,13 +838,36 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  width: min(100%, var(--layout-content-max, 880px));
-  margin: 0 auto;
+  width: 100%;
   min-height: 100%;
+  min-width: 0;
+}
+
+/**
+ * Two-column layout: the document column is centred with the same
+ * `--layout-content-max` width as before, and the side TOC sits to its
+ * right (sticky, collapsible). When the host enables full-width mode
+ * or the note has no headings, the layout collapses to a single column
+ * so the writing surface gets all the available width back.
+ */
+.note-layout {
+  width: min(100%, var(--layout-content-max, 880px));
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+.note-layout.has-toc:not(.is-full-width) {
+  width: min(100%, calc(var(--layout-content-max, 880px) + 232px + var(--space-6)));
+}
+
+.note-layout.is-full-width {
+  width: 100%;
 }
 
 .note-document.is-full-width {
-  width: 100%;
+  /* Width is controlled by the parent `.note-layout.is-full-width`
+     grid track; this class just stays as an extension hook in case
+     descendant components want to react to the full-width mode. */
 }
 
 .note-editor {
@@ -786,16 +876,53 @@ onBeforeUnmount(() => {
   min-height: 360px;
 }
 
-.note-document :deep(.continuum-editor) {
-  flex: 0 0 auto;
+.note-body-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
   width: 100%;
 }
 
-.note-document :deep(.continuum-editor .toolbar) {
-  align-self: stretch;
+.note-body-grid.has-toc {
+  grid-template-columns: minmax(0, var(--layout-content-max, 880px)) minmax(196px, 232px);
+}
+
+.note-body-grid.has-toc.is-toc-collapsed {
+  grid-template-columns: minmax(0, var(--layout-content-max, 880px)) 36px;
+}
+
+.note-body-grid.is-full-width.has-toc {
+  grid-template-columns: minmax(0, 1fr) minmax(196px, 232px);
+}
+
+.note-body-grid.is-full-width.has-toc.is-toc-collapsed {
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+.note-body-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .note-layout.has-toc:not(.is-full-width) {
+    width: min(100%, var(--layout-content-max, 880px));
+  }
+
+  .note-body-grid.has-toc,
+  .note-body-grid.has-toc.is-toc-collapsed,
+  .note-body-grid.is-full-width.has-toc,
+  .note-body-grid.is-full-width.has-toc.is-toc-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.note-document :deep(.continuum-editor) {
+  flex: 0 0 auto;
   width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
 }
 
 .note-document :deep(.continuum-editor .content:not(.md-area):not(.md-preview)) {
@@ -804,7 +931,6 @@ onBeforeUnmount(() => {
   overflow: visible;
 }
 
-.note-document :deep(.continuum-editor .toolbar),
 .note-document :deep(.continuum-editor .md-hint) {
   position: sticky;
   top: 0;
