@@ -240,10 +240,22 @@ export async function ensureDatabaseSchema(): Promise<void> {
     END $$;
   `);
 
+  // ── Block-scoped views ─────────────────────────────────────────────
+  //
+  // The legacy `database_views` table tied views to their parent
+  // database. In the new architecture views belong to editor blocks
+  // (`block_id`) and reference a datasource explicitly. We drop the old
+  // table on upgrade — datasources and rows survive untouched, and each
+  // block lazily creates its first Table view on next render when it
+  // has no views yet (see `useBlockViews` on the frontend).
+  await db.execute(sql`DROP TABLE IF EXISTS "database_views" CASCADE`);
+
   await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS "database_views" (
+    CREATE TABLE IF NOT EXISTS "database_block_views" (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      "database_id" uuid NOT NULL REFERENCES "databases"("id") ON DELETE CASCADE,
+      "block_id" text NOT NULL,
+      "data_source_database_id" uuid NOT NULL
+        REFERENCES "databases"("id") ON DELETE CASCADE,
       "name" text NOT NULL,
       "type" text NOT NULL,
       "position" text NOT NULL DEFAULT 'a0',
@@ -253,51 +265,16 @@ export async function ensureDatabaseSchema(): Promise<void> {
     )
   `);
   await db.execute(sql`
-    ALTER TABLE "database_views"
-      ADD COLUMN IF NOT EXISTS "id" uuid,
-      ADD COLUMN IF NOT EXISTS "database_id" uuid NOT NULL REFERENCES "databases"("id") ON DELETE CASCADE,
-      ADD COLUMN IF NOT EXISTS "name" text NOT NULL DEFAULT 'Table',
-      ADD COLUMN IF NOT EXISTS "type" text NOT NULL DEFAULT 'table',
-      ADD COLUMN IF NOT EXISTS "position" text NOT NULL DEFAULT 'a0',
-      ADD COLUMN IF NOT EXISTS "config" jsonb NOT NULL DEFAULT '{}'::jsonb,
-      ADD COLUMN IF NOT EXISTS "created_at" timestamptz NOT NULL DEFAULT now(),
-      ADD COLUMN IF NOT EXISTS "updated_at" timestamptz NOT NULL DEFAULT now()
+    CREATE INDEX IF NOT EXISTS database_block_views_block_idx
+      ON database_block_views (block_id)
   `);
   await db.execute(sql`
-    UPDATE "database_views" SET "id" = gen_random_uuid() WHERE "id" IS NULL
+    CREATE INDEX IF NOT EXISTS database_block_views_position_idx
+      ON database_block_views (block_id, position)
   `);
   await db.execute(sql`
-    ALTER TABLE "database_views"
-      ALTER COLUMN "id" SET DEFAULT gen_random_uuid(),
-      ALTER COLUMN "id" SET NOT NULL
-  `);
-  await db.execute(sql`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'database_views'::regclass AND contype = 'p'
-      ) THEN
-        ALTER TABLE "database_views" ADD CONSTRAINT "database_views_pkey" PRIMARY KEY ("id");
-      END IF;
-    END $$;
-  `);
-  await db.execute(sql`
-    CREATE INDEX IF NOT EXISTS database_views_database_idx
-      ON database_views (database_id)
-  `);
-  await db.execute(sql`
-    CREATE INDEX IF NOT EXISTS database_views_position_idx
-      ON database_views (database_id, position)
-  `);
-
-  // Optional per-view datasource override. When set, the view resolves
-  // rows/schema against this database instead of the parent block's
-  // `databaseId`. Idempotent additive column for existing installs.
-  await db.execute(sql`
-    ALTER TABLE "database_views"
-      ADD COLUMN IF NOT EXISTS "data_source_database_id" uuid
-        REFERENCES "databases"("id") ON DELETE SET NULL
+    CREATE INDEX IF NOT EXISTS database_block_views_source_idx
+      ON database_block_views (data_source_database_id)
   `);
 
   await db.execute(sql`

@@ -28,7 +28,6 @@
  * up on the next query refresh.
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
 import { api } from '@/api';
 import { Icon, UiConfirmModal } from '@/components/ui';
 import AddPropertyModal from '@/components/properties/AddPropertyModal.vue';
@@ -44,16 +43,16 @@ import type {
 } from '@continuum/shared';
 import DatabaseCell from './DatabaseCell.vue';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './views/types';
-import { readCommonDisplay } from './viewSettings/layouts/types';
+import { useDatabaseRowDisplay } from './useDatabaseRowDisplay';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 
-const router = useRouter();
+const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
 
 // ── Layout knobs persisted from the view-settings popover ─────────────────
 // Reads `view.config.layout.showVerticalLines` (table-only) plus the
-// shared common-display toggles (`wrapContent`). Defaults match the
+// shared common-display toggles (`showPageIcon`, `wrapContent`, `openIn`). Defaults match the
 // historical look (lines visible, no wrapping) so existing views keep
 // their appearance until the user opts in.
 const showVerticalLines = computed<boolean>(() => {
@@ -61,10 +60,9 @@ const showVerticalLines = computed<boolean>(() => {
         ?.showVerticalLines;
     return v ?? true;
 });
-const common = computed(() => readCommonDisplay(props.activeView.config.layout));
 
 function openRow(row: DatabaseRowSnapshot): void {
-    void router.push({ path: '/', query: { note: row.noteId } });
+    openRowById(row.noteId);
 }
 
 // ── Property add modal ────────────────────────────────────────────────────
@@ -107,7 +105,7 @@ const visibleSchema = computed<PropertyDefinition[]>(() => {
 
 const gridTemplate = computed(() => {
     const columns = visibleSchema.value.map(() => 'minmax(160px, 1fr)').join(' ');
-    return `minmax(220px, 1.8fr) ${columns} minmax(118px, 128px)`;
+    return `minmax(220px, 1.8fr) ${columns} minmax(104px, 112px)`;
 });
 
 function entryFor(row: DatabaseRowSnapshot, definitionId: string): NoteProperty | null {
@@ -383,6 +381,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 
         <div v-for="row in rows" :key="row.rowId" class="db-table__row" role="row" :style="{ gridTemplateColumns: gridTemplate }" @contextmenu.stop="openRowMenu(row, $event)">
             <div class="db-table__cell db-table__cell--title" role="cell">
+                <Icon
+                    v-if="common.showPageIcon"
+                    :name="iconOf(row.note.kind)"
+                    :size="13"
+                    class="db-table__page-icon"
+                    :style="{ color: colorOf(row.note.kind) }" />
                 <input
                     class="db-table__title-input"
                     :value="row.note.title"
@@ -454,11 +458,19 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             {{ draftRowError }}
         </div>
 
-        <div v-if="editable" class="db-table__footer">
-            <button type="button" class="db-table__footer-btn" @click="startDraftRow">
-                <Icon name="plus" :size="12" />
-                <span>New row</span>
-            </button>
+        <div v-if="editable" class="db-table__footer" role="row" :style="{ gridTemplateColumns: gridTemplate }">
+            <div class="db-table__cell db-table__cell--title db-table__footer-cell" role="cell">
+                <button type="button" class="db-table__footer-btn" @click="startDraftRow">
+                    <Icon name="plus" :size="12" />
+                    <span>New row</span>
+                </button>
+            </div>
+            <div
+                v-for="property in visibleSchema"
+                :key="`footer-${property.id}`"
+                class="db-table__cell db-table__footer-cell db-table__footer-spacer"
+                role="cell" />
+            <div class="db-table__cell db-table__cell--actions db-table__footer-cell" role="cell" />
         </div>
 
         <AddPropertyModal
@@ -504,53 +516,56 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 </template>
 
 <style scoped>
+/**
+ * Table renderer — Notion-style spreadsheet surface with sticky
+ * header, hover-revealed actions, and consistent token-driven sizing.
+ */
 .db-table {
     display: flex;
     flex-direction: column;
-    font-size: 0.825rem;
+    font-size: var(--text-sm);
     overflow-x: auto;
-    background: var(--bg-elev, #232323);
-    color: var(--fg, #ededed);
+    scrollbar-gutter: stable;
+    background: var(--surface-0);
+    color: var(--text-primary);
 }
 
 .db-table__head,
-.db-table__row {
+.db-table__row,
+.db-table__footer {
     display: grid;
     align-items: stretch;
-    border-bottom: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
+    border-bottom: var(--border-width-1) solid var(--border);
 }
 
-/* Stronger contrast so the column header is unambiguous vs data rows. */
 .db-table__head {
-    background: var(--bg-soft, #1c1c1c);
-    font-weight: 600;
-    color: var(--fg-muted, #a09b90);
-    border-bottom: var(--border-width-2, 2px) solid var(--border, rgba(255, 255, 255, 0.12));
+    background: var(--surface-1);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-muted);
+    border-bottom: var(--border-width-1) solid var(--border-strong);
     position: sticky;
     top: 0;
     z-index: 2;
 }
 
 .db-table__cell {
-    padding: 0.45rem 0.6rem;
-    border-right: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
+    padding: var(--space-2) var(--space-3);
+    border-right: var(--border-width-1) solid var(--border);
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: var(--space-2);
     min-width: 0;
     position: relative;
 }
 
 .db-table__cell:last-child {
-    border-right: none;
+    border-right: var(--border-width-1) solid var(--border);
 }
 
-/* Layout knob — hide vertical lines between columns. */
 .db-table--no-vlines .db-table__cell {
     border-right: none;
 }
 
-/* Layout knob — let cell content wrap across multiple lines. */
 .db-table--wrap .db-table__cell {
     align-items: flex-start;
     white-space: normal;
@@ -558,52 +573,64 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 }
 
 .db-table__cell--header {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
 }
 
 .db-table__cell--title {
-    font-weight: 500;
-    color: var(--fg, #ededed);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-primary);
 }
 
 .db-table__row .db-table__cell--title {
-    background: var(--bg-elev, #232323);
+    background: transparent;
+}
+
+.db-table__row {
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-table__row:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.025));
+    background: var(--surface-hover);
 }
 
 .db-table__row--draft {
-    background: var(--bg-soft, #1c1c1c);
+    background: var(--surface-1);
 }
 
 .db-table__title-input {
     width: 100%;
-    border: none;
+    border: 0;
     background: transparent;
     font: inherit;
     color: inherit;
-    padding: 0.15rem 0.25rem;
-    border-radius: 4px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
 }
 
 .db-table__title-input:focus {
-    outline: var(--border-width-2, 2px) solid var(--focus-ring-color, rgba(232, 220, 200, 0.5));
+    outline: 2px solid var(--accent-medium);
+    outline-offset: -1px;
 }
 
-/* "Open page" button at the right of the title cell — appears on row hover. */
+.db-table__page-icon {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+}
+
 .db-table__open-btn {
-    border: none;
+    border: 0;
     background: transparent;
-    color: var(--fg-muted, #a09b90);
-    padding: 0.15rem 0.3rem;
-    border-radius: 4px;
+    color: var(--text-muted);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     opacity: 0;
-    transition: opacity 0.1s ease;
+    transition:
+        opacity var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
     display: inline-flex;
     align-items: center;
 }
@@ -613,13 +640,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 }
 
 .db-table__open-btn:hover {
-    color: var(--fg, #ededed);
-    background: var(--surface-hover, rgba(255, 255, 255, 0.05));
+    color: var(--text-primary);
+    background: var(--surface-active);
 }
 
-/* Column header trigger — clickable label that opens the rename/delete menu */
 .db-table__col-trigger {
-    border: none;
+    border: 0;
     background: transparent;
     color: inherit;
     cursor: pointer;
@@ -633,80 +659,79 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    transition: color var(--duration-fast) var(--ease-standard);
 }
 
 .db-table__col-trigger:hover {
-    color: var(--fg, #ededed);
+    color: var(--text-primary);
 }
 
 .db-table__col-rename {
     flex: 1;
     min-width: 0;
-    border: var(--border-width-1, 1px) solid var(--accent, #e8dcc8);
-    background: var(--bg-elev, #232323);
-    color: var(--fg, #ededed);
+    border: var(--border-width-1) solid var(--accent);
+    background: var(--surface-2);
+    color: var(--text-primary);
     font: inherit;
     text-transform: none;
     letter-spacing: normal;
-    padding: 0.2rem 0.35rem;
-    border-radius: 4px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    outline: none;
+}
+
+.db-table__col-menu,
+.db-table__row-menu {
+    min-width: 180px;
+    background: var(--surface-2);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-dropdown);
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-1);
 }
 
 .db-table__col-menu {
     position: absolute;
     top: 100%;
     left: 0;
-    margin-top: 4px;
-    min-width: 180px;
-    background: var(--bg-elev, #232323);
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.1));
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    margin-top: var(--space-1);
     z-index: 10;
-    display: flex;
-    flex-direction: column;
-    padding: 4px;
+}
+
+.db-table__row-menu {
+    position: fixed;
+    z-index: var(--z-overlay);
 }
 
 .db-table__col-menu-item {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.55rem;
-    border: none;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 0;
     background: transparent;
-    color: var(--fg, #ededed);
-    font-size: 0.8rem;
+    color: var(--text-primary);
+    font-size: var(--text-sm);
     text-transform: none;
     letter-spacing: normal;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     text-align: left;
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-table__col-menu-item:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.05));
+    background: var(--surface-hover);
 }
 
 .db-table__col-menu-item--danger {
-    color: var(--danger, #b85c5c);
+    color: var(--danger);
 }
 
 .db-table__col-menu-item--danger:hover {
-    background: var(--danger-faint, rgba(184, 92, 92, 0.08));
-}
-
-.db-table__row-menu {
-    position: fixed;
-    z-index: 1000;
-    min-width: 180px;
-    background: var(--bg-elev, #232323);
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.1));
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    display: flex;
-    flex-direction: column;
-    padding: 4px;
+    background: var(--danger-faint);
 }
 
 .db-table__cell--actions,
@@ -715,45 +740,51 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 }
 
 .db-table__cell--add {
-    padding-inline: 0.35rem;
+    padding-inline: var(--space-2);
 }
 
 .db-table__cell--draft {
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
 }
 
 .db-table__add-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    border: var(--border-width-1, 1px) dashed var(--border, rgba(255, 255, 255, 0.15));
+    gap: var(--space-2);
+    border: 0;
     background: transparent;
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
     cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
     font: inherit;
     text-transform: none;
     letter-spacing: normal;
     max-width: 100%;
     white-space: nowrap;
+    transition:
+        color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-table__add-btn:hover {
-    color: var(--fg, #ededed);
-    border-color: var(--accent, #e8dcc8);
-    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    color: var(--text-primary);
+    background: var(--surface-active);
 }
 
 .db-table__row-action {
-    border: none;
+    border: 0;
     background: transparent;
     cursor: pointer;
-    color: var(--fg-muted, #a09b90);
-    padding: 0.2rem;
-    border-radius: 4px;
+    color: var(--text-muted);
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
     opacity: 0;
-    transition: opacity 80ms ease;
+    transition:
+        opacity var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
 }
 
 .db-table__row:hover .db-table__row-action {
@@ -761,47 +792,58 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 }
 
 .db-table__row-action:hover {
-    background: var(--danger-faint, rgba(184, 92, 92, 0.08));
-    color: var(--danger, #b85c5c);
+    background: var(--danger-faint);
+    color: var(--danger);
 }
 
 .db-table__empty {
-    padding: 1.5rem;
+    padding: var(--space-6);
     text-align: center;
-    color: var(--fg-muted, #a09b90);
-    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
 }
 
 .db-table__draft-error {
-    padding: 0.4rem 0.6rem;
-    color: var(--danger, #b85c5c);
-    background: var(--danger-faint, rgba(184, 92, 92, 0.08));
-    border-bottom: var(--border-width-1, 1px) solid var(--danger-border, rgba(184, 92, 92, 0.3));
+    padding: var(--space-2) var(--space-3);
+    color: var(--danger);
+    background: var(--danger-faint);
+    border-bottom: var(--border-width-1) solid var(--danger-border);
+    font-size: var(--text-xs);
 }
 
-/* Persistent "+ New row" affordance at the bottom of the table so it's
- * obvious how to create a row vs how to add a column header. */
 .db-table__footer {
-    padding: 0.35rem 0.6rem;
-    border-top: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.04));
-    background: var(--bg-elev, #232323);
+    background: var(--surface-0);
+    border-top: var(--border-width-1) solid var(--border-strong);
+}
+
+.db-table__footer-cell {
+    min-height: 40px;
+    color: var(--text-muted);
+}
+
+.db-table__footer-spacer {
+    pointer-events: none;
 }
 
 .db-table__footer-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    border: none;
+    gap: var(--space-2);
+    border: 0;
     background: transparent;
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
     cursor: pointer;
-    padding: 0.25rem 0.4rem;
-    border-radius: 4px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
     font: inherit;
+    font-size: var(--text-sm);
+    transition:
+        color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-table__footer-btn:hover {
-    color: var(--fg, #ededed);
-    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    color: var(--text-primary);
+    background: var(--surface-active);
 }
 </style>

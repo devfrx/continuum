@@ -25,7 +25,9 @@ const coverable = computed(() =>
 const coverPropertyId = computed<string>(() => {
     const v = (props.view.config.layout as { coverPropertyId?: unknown } | null | undefined)
         ?.coverPropertyId;
-    return typeof v === 'string' ? v : NONE;
+    if (typeof v === 'string' && coverable.value.some((p) => p.id === v)) return v;
+    if (v === null) return NONE;
+    return coverable.value[0]?.id ?? NONE;
 });
 
 const options = computed(() => [
@@ -53,7 +55,7 @@ function onCoverChange(value: string): void {
                 :model-value="coverPropertyId"
                 :options="options"
                 aria-label="Card cover property"
-                @update:model-value="(v: string) => onCoverChange(v)" />
+                @update:model-value="(v) => onCoverChange(String(v))" />
         </div>
         <CommonDisplayToggles :view="view" @patch-layout="patch" />
     </div>
@@ -87,7 +89,7 @@ function onCoverChange(value: string): void {
 
 .gallery-layout__hint {
     padding: 0.5rem 0.6rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: var(--bg-soft, rgba(255, 255, 255, 0.04));
     color: var(--fg-muted, #a09b90);
     font-size: 0.72rem;

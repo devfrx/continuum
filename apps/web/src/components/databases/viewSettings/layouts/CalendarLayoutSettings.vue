@@ -20,7 +20,8 @@ const dateable = computed(() =>
 const datePropertyId = computed<string>(() => {
     const v = (props.view.config.layout as { datePropertyId?: unknown } | null | undefined)
         ?.datePropertyId;
-    return typeof v === 'string' ? v : (dateable.value[0]?.id ?? '');
+    if (typeof v === 'string' && dateable.value.some((p) => p.id === v)) return v;
+    return dateable.value[0]?.id ?? '';
 });
 
 const options = computed(() =>
@@ -43,7 +44,7 @@ function patch(p: Record<string, unknown>): void {
                 :model-value="datePropertyId"
                 :options="options"
                 aria-label="Date property"
-                @update:model-value="(v: string) => patch({ datePropertyId: v })" />
+                @update:model-value="(v) => patch({ datePropertyId: String(v) })" />
         </div>
         <CommonDisplayToggles :view="view" @patch-layout="patch" />
     </div>
@@ -77,7 +78,7 @@ function patch(p: Record<string, unknown>): void {
 
 .calendar-layout__hint {
     padding: 0.5rem 0.6rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: var(--bg-soft, rgba(255, 255, 255, 0.04));
     color: var(--fg-muted, #a09b90);
     font-size: 0.72rem;

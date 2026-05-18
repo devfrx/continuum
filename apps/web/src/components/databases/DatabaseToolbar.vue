@@ -2,62 +2,48 @@
 /**
  * Toolbar shown above the active view body.
  *
- *   – Editable database title (commits on blur / Enter).
- *   – Horizontal tab strip of saved views with:
+ *   – Horizontal tab strip of saved block-views with:
  *       • single click → switch to that view,
  *       • double click → inline rename,
  *       • right click  → context menu with rename / settings / delete,
- *       • gear button  → per-view settings (including datasource),
- *     plus a trailing "+" to add a new view.
+ *       • gear button  → per-view settings (datasource, type, layout).
+ *   – Trailing "+" → `AddViewModal`, which collects a `type` and a
+ *     `dataSourceDatabaseId` before bubbling `add-view` to the parent.
  *   – Right-side actions: "New row" (primary) and "Delete block".
+ *
+ * The toolbar no longer exposes a database title: a block doesn't have
+ * a parent datasource any more — each view is independently sourced.
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { Icon, UiConfirmModal } from '@/components/ui';
 import type {
-    Database,
     DatabaseView,
     DatabaseViewType,
-    PropertyDefinition,
 } from '@continuum/shared';
 import AddViewModal from './AddViewModal.vue';
 import DatabaseViewSettings from './DatabaseViewSettings.vue';
 
 const props = defineProps<{
-    database: Database;
     views: DatabaseView[];
-    /**
-     * Schema of the *parent* database. Passed into the view-settings
-     * popover so layout pickers (group-by, cover, date) can populate
-     * their options. Views with a `dataSourceDatabaseId` override use
-     * the same schema as a baseline — see `DatabaseViewSettings` for
-     * the known v1 limitation.
-     */
-    schema: PropertyDefinition[];
     activeViewId: string | null;
-    /**
-     * Effective database id for the *active* view — equals the parent
-     * `database.id` unless the active view has a `dataSourceDatabaseId`
-     * override, in which case it equals that override. Passed through
-     * to `DatabaseViewSettings` so the picker can highlight the right
-     * row.
-     */
-    effectiveDatabaseId: string;
     editable: boolean;
 }>();
 
 const emit = defineEmits<{
     'select-view': [viewId: string];
-    'add-view': [type: DatabaseViewType];
+    /** New view payload — `AddViewModal` collects both type and source. */
+    'add-view': [payload: { type: DatabaseViewType; dataSourceDatabaseId: string; name?: string }];
     'add-row': [];
     'rename-view': [viewId: string, name: string];
     'delete-view': [viewId: string];
-    /** Per-view datasource override change (or clear when `null`). */
-    'change-view-source': [viewId: string, databaseId: string | null];
+    /** Swap a view's datasource (always a real UUID, never null). */
+    'change-view-source': [viewId: string, dataSourceDatabaseId: string];
     /** Swap a view's renderer type. */
     'change-view-type': [viewId: string, type: DatabaseViewType];
     /** Partial patch merged into a view's `config.layout`. */
     'patch-view-layout': [viewId: string, patch: Record<string, unknown>];
-    rename: [title: string];
+    /** Partial patch merged into a view's `config` root (filter, sort, …). */
+    'patch-view-config': [viewId: string, patch: Record<string, unknown>];
     delete: [];
 }>();
 
@@ -68,35 +54,8 @@ function openAddView(): void {
     showAddView.value = true;
 }
 
-function onPickViewType(type: DatabaseViewType): void {
-    emit('add-view', type);
-}
-
-// ── Database title editing ────────────────────────────────────────────────
-const titleDraft = ref(props.database.title);
-
-watch(
-    () => props.database.title,
-    (value) => {
-        titleDraft.value = value;
-    },
-);
-
-function commitTitle(): void {
-    if (!props.editable) return;
-    const next = titleDraft.value.trim();
-    if (next === props.database.title) return;
-    emit('rename', next);
-}
-
-function onTitleKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter') {
-        event.preventDefault();
-        (event.target as HTMLElement).blur();
-    } else if (event.key === 'Escape') {
-        titleDraft.value = props.database.title;
-        (event.target as HTMLElement).blur();
-    }
+function onPickNewView(payload: { type: DatabaseViewType; dataSourceDatabaseId: string }): void {
+    emit('add-view', payload);
 }
 
 // ── View tab rename ───────────────────────────────────────────────────────
@@ -130,9 +89,6 @@ interface AnchorRect {
     right: number;
 }
 const menuForViewId = ref<string | null>(null);
-// Captured at open time so the menu can be teleported into <body> and
-// positioned with `position: fixed`, escaping the database block's
-// `overflow: hidden`.
 const menuAnchorRect = ref<AnchorRect | null>(null);
 
 function openMenu(viewId: string, event: MouseEvent): void {
@@ -167,10 +123,6 @@ const menuView = computed<DatabaseView | null>(
 
 function requestDelete(view: DatabaseView): void {
     closeMenu();
-    if (props.views.length <= 1) {
-        lastViewError.value = true;
-        return;
-    }
     deleteTargetView.value = view;
 }
 
@@ -181,29 +133,27 @@ function confirmDeleteView(): void {
     emit('delete-view', target.id);
 }
 
-// In-app dialog state replaces native confirm/alert so it matches the
-// rest of the design system and stays inside the editor surface.
 const deleteTargetView = ref<DatabaseView | null>(null);
-const lastViewError = ref(false);
 const deleteMessage = computed(() => {
     const target = deleteTargetView.value;
-    return target ? `Delete view "${target.name}"? This cannot be undone.` : '';
+    if (!target) return '';
+    const tail = props.views.length <= 1
+        ? ' This is the only view of the block — the block will return to its empty state.'
+        : '';
+    return `Delete view "${target.name}"?${tail} This cannot be undone.`;
 });
 
 function onDocClick(event: MouseEvent): void {
     if (!menuForViewId.value) return;
     const target = event.target as HTMLElement;
-    if (!target.closest('.db-toolbar__tab-menu') && !target.closest('.db-toolbar__tab') && !target.closest('.db-toolbar__tab-settings')) {
+    if (!target.closest('.db-toolbar__tab-menu')
+        && !target.closest('.db-toolbar__tab')
+        && !target.closest('.db-toolbar__tab-settings')) {
         closeMenu();
     }
 }
 
 // ── Per-view settings popover ────────────────────────────────────────────
-// Opened by the gear button (or from the tab context menu "View
-// settings" item). The popover lives in a <Teleport to="body"> and
-// uses `position: fixed`, so we hand it the trigger rect captured at
-// open time. This keeps it visible even when the database block clips
-// its overflow.
 const settingsForViewId = ref<string | null>(null);
 const settingsAnchorRect = ref<AnchorRect | null>(null);
 
@@ -218,8 +168,6 @@ function openSettings(viewId: string, event: MouseEvent): void {
 }
 
 function openSettingsFromMenu(viewId: string): void {
-    // Reuse the menu's anchor so the popover lines up with the
-    // original right-click position.
     if (menuAnchorRect.value) settingsAnchorRect.value = menuAnchorRect.value;
     closeMenu();
     settingsForViewId.value = viewId;
@@ -232,15 +180,13 @@ function onSettingsModelValue(viewId: string, value: boolean): void {
     }
 }
 
-function onViewSourceChange(viewId: string, databaseId: string | null): void {
+function onViewSourceChange(viewId: string, databaseId: string): void {
     settingsForViewId.value = null;
     settingsAnchorRect.value = null;
     emit('change-view-source', viewId, databaseId);
 }
 
 function onViewTypeChange(viewId: string, type: DatabaseViewType): void {
-    // Keep the popover open so the user immediately sees the new
-    // layout reflected in the type grid + see/edit its specific knobs.
     emit('change-view-type', viewId, type);
 }
 
@@ -248,8 +194,10 @@ function onViewLayoutPatch(viewId: string, patch: Record<string, unknown>): void
     emit('patch-view-layout', viewId, patch);
 }
 
-// Computed inline style for the (teleported, fixed-position) tab
-// context menu. Clamps so it never spills outside the viewport.
+function onViewConfigPatch(viewId: string, patch: Record<string, unknown>): void {
+    emit('patch-view-config', viewId, patch);
+}
+
 const TAB_MENU_WIDTH = 200;
 const TAB_MENU_HEIGHT = 160;
 const tabMenuStyle = computed<Record<string, string>>(() => {
@@ -274,17 +222,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 
 <template>
     <header class="db-toolbar" @contextmenu="stopToolbarContext">
-        <div class="db-toolbar__title">
-            <Icon :name="database.icon ?? 'database'" />
-            <input
-                v-model="titleDraft"
-                class="db-toolbar__title-input"
-                placeholder="Untitled database"
-                :readonly="!editable"
-                @blur="commitTitle"
-                @keydown="onTitleKeydown" />
-        </div>
-
         <nav class="db-toolbar__tabs">
             <div
                 v-for="view in views"
@@ -343,14 +280,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                     v-if="settingsForViewId === view.id"
                     :model-value="true"
                     :view="view"
-                    :schema="schema"
-                    :effective-database-id="view.id === activeViewId ? effectiveDatabaseId : (view.dataSourceDatabaseId ?? database.id)"
-                    :parent-database-id="database.id"
                     :anchor-rect="settingsAnchorRect"
-                    @update:model-value="(value: boolean) => onSettingsModelValue(view.id, value)"
-                    @change-source="(databaseId: string | null) => onViewSourceChange(view.id, databaseId)"
-                    @change-type="(type: DatabaseViewType) => onViewTypeChange(view.id, type)"
-                    @patch-layout="(patch: Record<string, unknown>) => onViewLayoutPatch(view.id, patch)" />
+                    @update:model-value="(value) => onSettingsModelValue(view.id, value)"
+                    @change-source="(databaseId) => onViewSourceChange(view.id, databaseId)"
+                    @change-type="(type) => onViewTypeChange(view.id, type)"
+                    @patch-layout="(patch) => onViewLayoutPatch(view.id, patch)"
+                    @patch-config="(patch) => onViewConfigPatch(view.id, patch)" />
             </div>
             <button
                 v-if="editable"
@@ -371,14 +306,15 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             </button>
             <button
                 v-if="editable"
-                class="db-toolbar__action"
+                class="db-toolbar__action db-toolbar__action--icon db-toolbar__action--danger"
                 title="Remove block"
+                aria-label="Remove block"
                 @click="emit('delete')">
                 <Icon name="trash" />
             </button>
         </div>
     </header>
-    <AddViewModal v-model="showAddView" @select="onPickViewType" />
+    <AddViewModal v-model="showAddView" @select="onPickNewView" />
     <UiConfirmModal
         :model-value="!!deleteTargetView"
         title="Delete view"
@@ -387,90 +323,106 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
         confirm-variant="danger"
         @update:model-value="(v) => { if (!v) deleteTargetView = null; }"
         @confirm="confirmDeleteView" />
-    <UiConfirmModal
-        :model-value="lastViewError"
-        title="Cannot delete view"
-        message="This is the last view of the database. Add another view first, then delete this one."
-        confirm-label="OK"
-        cancel-label="Close"
-        @update:model-value="(v) => { if (!v) lastViewError = false; }"
-        @confirm="lastViewError = false" />
 </template>
 
 <style scoped>
+/**
+ * Toolbar shell — sits between the block frame and the active
+ * renderer. Borrows the rhythm of Notion's view bar but stays inside
+ * Continuum's design system: pure design tokens, no glass effects,
+ * subtle horizontal divider and underline-style active tab.
+ */
 .db-toolbar {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-elev, #232323);
-    color: var(--fg, #ededed);
-}
-
-.db-toolbar__title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-    flex-shrink: 0;
-}
-
-.db-toolbar__title-input {
-    border: none;
-    background: transparent;
-    font-size: 1rem;
-    font-weight: 600;
-    color: inherit;
-    width: 14rem;
-    max-width: 14rem;
-    padding: 0.15rem 0.25rem;
-    border-radius: 4px;
-}
-
-.db-toolbar__title-input:focus {
-    outline: var(--border-width-2, 2px) solid var(--focus-ring-color, rgba(232, 220, 200, 0.5));
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width-1) solid var(--border);
+    color: var(--text-primary);
 }
 
 .db-toolbar__tabs {
     display: flex;
-    align-items: center;
-    gap: 0.15rem;
+    align-items: stretch;
+    gap: var(--space-px);
     flex: 1;
     min-width: 0;
     overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.db-toolbar__tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .db-toolbar__tab-wrap {
     position: relative;
-    display: flex;
-    align-items: center;
+    display: inline-flex;
+    align-items: stretch;
+    border-radius: var(--radius-sm);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.db-toolbar__tab-wrap:hover {
+    background: var(--surface-hover);
 }
 
 .db-toolbar__tab {
-    border: none;
+    appearance: none;
+    border: 0;
     background: transparent;
-    padding: 0.3rem 0.6rem;
-    font-size: 0.825rem;
-    color: var(--fg-muted, #a09b90);
-    border-bottom: 2px solid transparent;
+    padding: var(--space-2) var(--space-3);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-secondary);
     cursor: pointer;
     white-space: nowrap;
+    position: relative;
+    transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.db-toolbar__tab::after {
+    content: '';
+    position: absolute;
+    left: var(--space-2);
+    right: var(--space-2);
+    bottom: -1px;
+    height: 2px;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.db-toolbar__tab:hover {
+    color: var(--text-primary);
+}
+
+.db-toolbar__tab.is-active {
+    color: var(--text-primary);
+}
+
+.db-toolbar__tab.is-active::after {
+    background: var(--accent);
 }
 
 .db-toolbar__tab-settings {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.45rem;
-    height: 1.45rem;
-    margin-left: -0.35rem;
-    border: none;
+    width: 22px;
+    height: 22px;
+    margin: auto var(--space-1) auto calc(-1 * var(--space-1));
+    border: 0;
     background: transparent;
-    color: var(--fg-muted, #a09b90);
-    border-radius: 4px;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     opacity: 0;
-    transition: opacity 80ms ease, background 80ms ease, color 80ms ease;
+    transition:
+        opacity var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
 }
 
 .db-toolbar__tab-wrap:hover .db-toolbar__tab-settings,
@@ -481,107 +433,125 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 
 .db-toolbar__tab-settings:hover,
 .db-toolbar__tab-settings:focus-visible {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.05));
-    color: var(--fg, #ededed);
-}
-
-.db-toolbar__tab:hover {
-    color: var(--fg, #ededed);
-}
-
-.db-toolbar__tab.is-active {
-    color: var(--fg, #ededed);
-    border-bottom-color: var(--accent, #e8dcc8);
+    background: var(--surface-active);
+    color: var(--text-primary);
+    outline: none;
 }
 
 .db-toolbar__tab--add {
-    color: var(--fg-muted, #a09b90);
-    padding: 0.3rem;
+    color: var(--text-muted);
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.db-toolbar__tab--add:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
 }
 
 .db-toolbar__tab-rename {
-    border: var(--border-width-1, 1px) solid var(--accent, #e8dcc8);
-    background: var(--bg-elev, #232323);
-    color: var(--fg, #ededed);
-    font-size: 0.825rem;
-    padding: 0.2rem 0.35rem;
-    border-radius: 4px;
-    width: 8rem;
+    border: var(--border-width-1) solid var(--accent);
+    background: var(--surface-2);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    width: 9rem;
+    outline: none;
 }
 
+/* Teleported view-tab menu (rename / settings / delete). */
 .db-toolbar__tab-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 4px;
-    min-width: 160px;
-    background: var(--bg-elev, #232323);
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.1));
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    z-index: 10;
+    min-width: 180px;
+    background: var(--surface-2);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-dropdown);
     display: flex;
     flex-direction: column;
-    padding: 4px;
+    padding: var(--space-1);
 }
 
 .db-toolbar__tab-menu-item {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.55rem;
-    border: none;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 0;
     background: transparent;
-    color: var(--fg, #ededed);
-    font-size: 0.8rem;
-    border-radius: 4px;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--text-sm);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     text-align: left;
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-toolbar__tab-menu-item:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.05));
+    background: var(--surface-hover);
 }
 
-.db-toolbar__tab-menu-item--danger {
-    color: var(--danger, #b85c5c);
-}
-
-.db-toolbar__tab-menu-item--danger:hover {
-    background: var(--danger-faint, rgba(184, 92, 92, 0.08));
-}
+.db-toolbar__tab-menu-item--danger { color: var(--danger); }
+.db-toolbar__tab-menu-item--danger:hover { background: var(--danger-faint); }
 
 .db-toolbar__actions {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: var(--space-px);
     flex-shrink: 0;
+    padding: var(--space-1);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
 }
 
 .db-toolbar__action {
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
-    background: var(--bg-elev, #232323);
-    color: var(--fg, #ededed);
-    padding: 0.3rem 0.55rem;
-    border-radius: 6px;
-    font-size: 0.8rem;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 30px;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: var(--text-sm);
     cursor: pointer;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-toolbar__action:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    background: var(--surface-active);
+    color: var(--text-primary);
 }
 
 .db-toolbar__action--primary {
-    background: var(--accent, #e8dcc8);
-    border-color: transparent;
-    color: var(--fg-on-accent, #161616);
+    background: var(--surface-2);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
 }
 
 .db-toolbar__action--primary:hover {
-    background: var(--accent-hover, #f5ede0);
+    background: var(--accent-faint);
+    color: var(--accent);
+}
+
+.db-toolbar__action--icon {
+    width: 30px;
+    padding: 0;
+}
+
+.db-toolbar__action--danger:hover {
+    background: var(--danger-faint);
+    color: var(--danger);
 }
 </style>

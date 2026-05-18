@@ -102,10 +102,10 @@ function onPointerUp(e: PointerEvent): void {
     position: relative; flex: 1; height: 8px; min-width: 80px;
     background: var(--bg-soft);
     border: var(--border-width-1) solid var(--border);
-    border-radius: 999px; cursor: pointer; touch-action: none;
+    border-radius: var(--radius-sm); cursor: pointer; touch-action: none;
 }
 .prop-prog__fill {
-    height: 100%; border-radius: 999px;
+    height: 100%; border-radius: var(--radius-sm);
     background: var(--accent);
     transition: width var(--duration-fast) var(--ease-standard);
 }

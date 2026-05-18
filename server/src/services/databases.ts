@@ -1,12 +1,16 @@
 /**
  * Notion-like Database service.
  *
- * Orchestrates the four resources that make up a Database:
+ * Orchestrates the three resources that make up a Database (a.k.a.
+ * "datasource"):
  *   1. The database itself (`databases`),
- *   2. Saved views (`database_views`),
- *   3. Schema — property definitions with `scope='database'`,
- *   4. Rows — membership rows in `database_rows`, each pointing at a
+ *   2. Schema — property definitions with `scope='database'`,
+ *   3. Rows — membership rows in `database_rows`, each pointing at a
  *      `notes` entry that carries the row's content and property values.
+ *
+ * Saved views live block-scoped in `database_block_views` and are
+ * managed by the `blockViews` service. A datasource is a pure row
+ * source — it knows nothing about which blocks render it.
  *
  * Reuse is intentional: rows are real notes, so titles / locks / tags /
  * links / graph / templates all keep working without database-aware
@@ -19,13 +23,11 @@ import { db } from '../db/client.js';
 import {
   databases,
   databaseRows,
-  databaseViews,
   notes,
   propertyDefinitions,
   propertyValues,
   type DatabaseRowEntity,
   type DatabaseMembershipRow,
-  type DatabaseViewRow,
   type PropertyDefinitionRow,
 } from '../db/schema.js';
 import {
@@ -36,9 +38,7 @@ import {
   type DatabaseQueryResponse,
   type DatabaseRow,
   type DatabaseRowSnapshot,
-  type DatabaseView,
   type DatabaseViewConfig,
-  type DatabaseViewType,
   type NoteProperty,
   type PropertyConfig,
   type PropertyType,
@@ -66,20 +66,6 @@ export function databaseRowToDto(row: DatabaseRowEntity): Database {
   };
 }
 
-export function viewRowToDto(row: DatabaseViewRow): DatabaseView {
-  return {
-    id: row.id,
-    databaseId: row.databaseId,
-    name: row.name,
-    type: row.type as DatabaseViewType,
-    position: row.position,
-    dataSourceDatabaseId: row.dataSourceDatabaseId ?? null,
-    config: normalizeViewConfig(row.config),
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
 export function membershipRowToDto(row: DatabaseMembershipRow): DatabaseRow {
   return {
     id: row.id,
@@ -94,9 +80,10 @@ export function membershipRowToDto(row: DatabaseMembershipRow): DatabaseRow {
 /**
  * Coerce a stored `config` jsonb into a fully-shaped `DatabaseViewConfig`.
  * Missing keys fall back to the canonical empty config so old rows keep
- * rendering when the shape grows.
+ * rendering when the shape grows. Exported so the block-views service
+ * can apply the same canonical shape on insert/update.
  */
-function normalizeViewConfig(raw: unknown): DatabaseViewConfig {
+export function normalizeViewConfig(raw: unknown): DatabaseViewConfig {
   const base = EMPTY_DATABASE_VIEW_CONFIG;
   if (!raw || typeof raw !== 'object') return { ...base };
   const obj = raw as Partial<DatabaseViewConfig>;
@@ -127,15 +114,6 @@ async function nextRowPosition(databaseId: UUID): Promise<string> {
   return appendPosition(rows.length ? rows[rows.length - 1].position : null);
 }
 
-async function nextViewPosition(databaseId: UUID): Promise<string> {
-  const rows = await db
-    .select({ position: databaseViews.position })
-    .from(databaseViews)
-    .where(eq(databaseViews.databaseId, databaseId))
-    .orderBy(asc(databaseViews.position));
-  return appendPosition(rows.length ? rows[rows.length - 1].position : null);
-}
-
 async function nextSchemaPosition(databaseId: UUID): Promise<string> {
   const rows = await db
     .select({ position: propertyDefinitions.position })
@@ -157,28 +135,21 @@ export async function getDatabaseById(id: UUID): Promise<DatabaseRowEntity | nul
 export type { DatabaseBundle };
 
 /**
- * Single round-trip helper: load the database + its views + its schema.
- * Used by the embed component to populate the toolbar without firing
- * three separate fetches.
+ * Single round-trip helper: load the datasource metadata + its property
+ * schema. Used by both the global manager and any block view loading
+ * the datasource it points at. Block-scoped views are NOT part of this
+ * bundle — see `services/blockViews.ts` for that namespace.
  */
 export async function loadDatabaseBundle(id: UUID): Promise<DatabaseBundle | null> {
   const dbRow = await getDatabaseById(id);
   if (!dbRow) return null;
-  const [viewRows, defRows] = await Promise.all([
-    db
-      .select()
-      .from(databaseViews)
-      .where(eq(databaseViews.databaseId, id))
-      .orderBy(asc(databaseViews.position)),
-    db
-      .select()
-      .from(propertyDefinitions)
-      .where(eq(propertyDefinitions.databaseId, id))
-      .orderBy(asc(propertyDefinitions.position)),
-  ]);
+  const defRows = await db
+    .select()
+    .from(propertyDefinitions)
+    .where(eq(propertyDefinitions.databaseId, id))
+    .orderBy(asc(propertyDefinitions.position));
   return {
     database: databaseRowToDto(dbRow),
-    views: viewRows.map(viewRowToDto),
     schema: defRows.map(definitionRowToDto),
   };
 }
@@ -189,7 +160,7 @@ export async function createDatabase(input: {
   title?: string;
   description?: string | null;
   icon?: string | null;
-}): Promise<{ database: Database; views: DatabaseView[] }> {
+}): Promise<{ database: Database }> {
   const [created] = await db
     .insert(databases)
     .values({
@@ -198,25 +169,7 @@ export async function createDatabase(input: {
       icon: input.icon ?? null,
     })
     .returning();
-
-  // Seed a default table view so the block renders something meaningful
-  // immediately after creation — empty databases shouldn't surface a
-  // "no view configured" empty state.
-  const [view] = await db
-    .insert(databaseViews)
-    .values({
-      databaseId: created.id,
-      name: 'Table',
-      type: 'table',
-      position: 'a0',
-      config: EMPTY_DATABASE_VIEW_CONFIG,
-    })
-    .returning();
-
-  return {
-    database: databaseRowToDto(created),
-    views: [viewRowToDto(view)],
-  };
+  return { database: databaseRowToDto(created) };
 }
 
 export async function updateDatabase(
@@ -244,82 +197,18 @@ export async function updateDatabase(
 }
 
 export async function deleteDatabase(id: UUID): Promise<void> {
-  // FK cascades wipe views, rows, and database-scoped property definitions.
-  // The underlying notes are intentionally preserved — deleting a database
-  // unbinds its rows but does not delete user content. Callers that want
-  // to also delete the row notes must do so explicitly before removal.
+  // FK cascades wipe rows and database-scoped property definitions; the
+  // `database_block_views` table also cascades via
+  // `data_source_database_id`, removing any block view that pointed at
+  // this datasource. The underlying notes are intentionally preserved —
+  // deleting a database unbinds its rows but does not delete user
+  // content. Callers that want to also delete the row notes must do so
+  // explicitly before removal.
   await db.delete(databases).where(eq(databases.id, id));
 }
 
-// ─────────────────────────── Views ─────────────────────────────────────
-
-export async function listViews(databaseId: UUID): Promise<DatabaseView[]> {
-  const rows = await db
-    .select()
-    .from(databaseViews)
-    .where(eq(databaseViews.databaseId, databaseId))
-    .orderBy(asc(databaseViews.position));
-  return rows.map(viewRowToDto);
-}
-
-export async function createView(
-  databaseId: UUID,
-  input: {
-    name: string;
-    type: DatabaseViewType;
-    position?: string;
-    config?: Partial<DatabaseViewConfig>;
-  },
-): Promise<DatabaseView> {
-  const position = input.position ?? (await nextViewPosition(databaseId));
-  const config = normalizeViewConfig({ ...EMPTY_DATABASE_VIEW_CONFIG, ...input.config });
-  const [row] = await db
-    .insert(databaseViews)
-    .values({ databaseId, name: input.name, type: input.type, position, config })
-    .returning();
-  return viewRowToDto(row);
-}
-
-export async function updateView(
-  viewId: UUID,
-  patch: {
-    name?: string;
-    type?: DatabaseViewType;
-    position?: string;
-    dataSourceDatabaseId?: UUID | null;
-    config?: Partial<DatabaseViewConfig>;
-  },
-): Promise<DatabaseView | null> {
-  const fields: Record<string, unknown> = { updatedAt: new Date() };
-  if (patch.name !== undefined) fields.name = patch.name;
-  if (patch.type !== undefined) fields.type = patch.type;
-  if (patch.position !== undefined) fields.position = patch.position;
-  if (patch.dataSourceDatabaseId !== undefined) {
-    fields.dataSourceDatabaseId = patch.dataSourceDatabaseId;
-  }
-  if (patch.config !== undefined) {
-    // Merge on top of the existing stored config so callers can patch
-    // a single key (e.g. `sort`) without round-tripping the whole config.
-    const [existing] = await db
-      .select()
-      .from(databaseViews)
-      .where(eq(databaseViews.id, viewId))
-      .limit(1);
-    if (!existing) return null;
-    const current = normalizeViewConfig(existing.config);
-    fields.config = normalizeViewConfig({ ...current, ...patch.config });
-  }
-  const [updated] = await db
-    .update(databaseViews)
-    .set(fields)
-    .where(eq(databaseViews.id, viewId))
-    .returning();
-  return updated ? viewRowToDto(updated) : null;
-}
-
-export async function deleteView(viewId: UUID): Promise<void> {
-  await db.delete(databaseViews).where(eq(databaseViews.id, viewId));
-}
+// `appendPosition` is shared with the block-views service.
+export { appendPosition };
 
 // ─────────────────────────── Schema ────────────────────────────────────
 
@@ -613,22 +502,11 @@ export async function queryDatabaseRows(
     });
   }
 
-  // Server-side sort. When the caller supplies an ad-hoc `config` override
-  // we use it as-is; otherwise we fall back to the saved view's persisted
-  // sort rules so switching the active view actually re-orders the rows.
-  let viewSortRules: SortRule[] = [];
-  if (request.viewId) {
-    const [savedView] = await db
-      .select()
-      .from(databaseViews)
-      .where(eq(databaseViews.id, request.viewId))
-      .limit(1);
-    if (savedView) {
-      const cfg = savedView.config as { sort?: SortRule[] } | null;
-      viewSortRules = cfg?.sort ?? [];
-    }
-  }
-  const sortRules = request.config?.sort ?? viewSortRules;
+  // Server-side sort. Driven entirely by the inline `config.sort`. The
+  // datasource has no notion of "saved view" any more — callers (block
+  // views, the manager UI, ad-hoc tooling) compose the desired config
+  // client-side and POST it on each query.
+  const sortRules = request.config?.sort ?? [];
   if (sortRules.length > 0) {
     snapshots = snapshots.slice().sort((a, b) => {
       for (const rule of sortRules) {

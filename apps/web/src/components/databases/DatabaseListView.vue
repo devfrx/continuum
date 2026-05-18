@@ -10,13 +10,13 @@
  * `<component :is>` interchangeability with the other renderers.
  */
 import { Icon } from '@/components/ui';
-import { useRouter } from 'vue-router';
 import type { DatabaseRowSnapshot, PropertyOption } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './views/types';
+import { useDatabaseRowDisplay } from './useDatabaseRowDisplay';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
-const router = useRouter();
+const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
 
 function summarize(row: DatabaseRowSnapshot): string {
     const parts: string[] = [];
@@ -42,14 +42,20 @@ function summarize(row: DatabaseRowSnapshot): string {
 }
 
 function openRow(row: DatabaseRowSnapshot): void {
-    void router.push({ path: '/', query: { note: row.noteId } });
+    openRowById(row.noteId);
 }
 </script>
 
 <template>
-    <ul class="db-list">
+    <ul class="db-list" :class="{ 'db-list--wrap': common.wrapContent }">
         <li v-if="!props.rows.length" class="db-list__empty">No rows yet.</li>
         <li v-for="row in props.rows" :key="row.rowId" class="db-list__row">
+            <Icon
+                v-if="common.showPageIcon"
+                :name="iconOf(row.note.kind)"
+                :size="14"
+                class="db-list__icon"
+                :style="{ color: colorOf(row.note.kind) }" />
             <div class="db-list__main" @click="openRow(row)">
                 <strong class="db-list__title">{{ row.note.title || 'Untitled' }}</strong>
                 <span class="db-list__meta">{{ summarize(row) }}</span>
@@ -76,9 +82,19 @@ function openRow(row: DatabaseRowSnapshot): void {
 .db-list__row {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    border-bottom: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width-1) solid var(--border);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.db-list__row:hover {
+    background: var(--surface-hover);
+}
+
+.db-list__icon {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
 }
 
 .db-list__main {
@@ -87,40 +103,60 @@ function openRow(row: DatabaseRowSnapshot): void {
     display: flex;
     flex-direction: column;
     cursor: pointer;
+    gap: 1px;
 }
 
 .db-list__title {
-    font-size: 0.9rem;
-    color: var(--fg, #ededed);
+    font-size: var(--text-md);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--leading-tight);
 }
 
 .db-list__meta {
-    font-size: 0.75rem;
-    color: var(--fg-muted, #a09b90);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: var(--leading-tight);
+}
+
+.db-list--wrap .db-list__title,
+.db-list--wrap .db-list__meta {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: break-word;
 }
 
 .db-list__action {
-    border: none;
+    border: 0;
     background: transparent;
     cursor: pointer;
-    color: var(--fg-muted, #a09b90);
-    padding: 0.25rem;
-    border-radius: 4px;
+    color: var(--text-muted);
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
     opacity: 0;
-    transition: opacity 80ms ease;
+    transition:
+        opacity var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
 }
 
 .db-list__row:hover .db-list__action {
     opacity: 1;
 }
 
+.db-list__action:hover {
+    color: var(--danger);
+    background: var(--danger-faint);
+}
+
 .db-list__empty {
-    padding: 1.25rem;
+    padding: var(--space-6);
     text-align: center;
-    color: var(--fg-muted, #a09b90);
-    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
 }
 </style>

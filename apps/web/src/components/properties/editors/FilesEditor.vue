@@ -141,7 +141,7 @@ function isImage(ref: FileRef): boolean {
 }
 .prop-files__remove {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 16px; height: 16px; border-radius: 4px;
+    width: 16px; height: 16px; border-radius: var(--radius-sm);
     border: none; background: transparent; color: var(--fg-subtle);
     cursor: pointer;
 }

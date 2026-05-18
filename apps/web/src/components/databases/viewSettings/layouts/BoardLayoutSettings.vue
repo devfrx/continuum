@@ -3,28 +3,30 @@
  * BoardLayoutSettings.vue — knobs specific to the Board renderer.
  *
  * Mirrors what `BoardView.vue` consumes from `config.layout`:
- *   – `groupByPropertyId`   `select`/`status` property used for columns
+ *   – `groupByPropertyId`   `select` / `multiSelect` / `status` property
+ *     used for columns. Multi-select properties make rows appear in
+ *     every selected column simultaneously, matching Notion semantics.
  *
  * Falls back to a "no group-by available" hint when the schema exposes
- * no `select`/`status` properties — same UX the renderer surfaces
- * inside the canvas.
+ * no option-based properties — same UX the renderer surfaces inside
+ * the canvas.
  */
 import { computed } from 'vue';
 import { UiSelect } from '@/components/ui';
 import CommonDisplayToggles from './CommonDisplayToggles.vue';
 import type { LayoutSettingsProps, LayoutSettingsEmits } from './types';
+import { isBoardGroupable } from '../../views/boardGrouping';
 
 const props = defineProps<LayoutSettingsProps>();
 const emit = defineEmits<LayoutSettingsEmits>();
 
-const groupable = computed(() =>
-    props.schema.filter((p) => p.type === 'select' || p.type === 'status'),
-);
+const groupable = computed(() => props.schema.filter(isBoardGroupable));
 
 const groupByPropertyId = computed<string>(() => {
     const v = (props.view.config.layout as { groupByPropertyId?: unknown } | null | undefined)
         ?.groupByPropertyId;
-    return typeof v === 'string' ? v : (groupable.value[0]?.id ?? '');
+    if (typeof v === 'string' && groupable.value.some((p) => p.id === v)) return v;
+    return groupable.value[0]?.id ?? '';
 });
 
 const options = computed(() =>
@@ -43,7 +45,8 @@ function onGroupByChange(value: string): void {
 <template>
     <div class="board-layout">
         <div v-if="groupable.length === 0" class="board-layout__hint">
-            Add a <strong>select</strong> or <strong>status</strong> property to group rows into columns.
+            Add a <strong>select</strong>, <strong>multi-select</strong> or <strong>status</strong>
+            property to group rows into columns.
         </div>
         <div v-else class="board-layout__row board-layout__row--stack">
             <span class="board-layout__label">Group by</span>
@@ -51,7 +54,7 @@ function onGroupByChange(value: string): void {
                 :model-value="groupByPropertyId"
                 :options="options"
                 aria-label="Group rows by property"
-                @update:model-value="(v: string) => onGroupByChange(v)" />
+                @update:model-value="(v) => onGroupByChange(String(v))" />
         </div>
         <CommonDisplayToggles :view="view" @patch-layout="patch" />
     </div>
@@ -85,7 +88,7 @@ function onGroupByChange(value: string): void {
 
 .board-layout__hint {
     padding: 0.5rem 0.6rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: var(--bg-soft, rgba(255, 255, 255, 0.04));
     color: var(--fg-muted, #a09b90);
     font-size: 0.72rem;

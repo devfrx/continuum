@@ -38,11 +38,11 @@ export function publishDatabaseSchemaChanged(databaseId: string): void {
   publish({ kind: 'database.schema.changed', databaseId });
 }
 
-export function publishDatabaseViewChanged(
-  databaseId: string,
+export function publishBlockViewChanged(
+  blockId: string,
   viewId: string | null,
 ): void {
-  publish({ kind: 'database.view.changed', databaseId, viewId });
+  publish({ kind: 'block.view.changed', blockId, viewId });
 }
 
 export function publishDatabaseRowsChanged(

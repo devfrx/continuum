@@ -36,6 +36,10 @@ const emit = defineEmits<{
 }>();
 
 const settingsComponent = computed(() => layoutSettingsFor(props.view.type));
+
+function forwardPatch(patch: Record<string, unknown>): void {
+    emit('patch-layout', patch);
+}
 </script>
 
 <template>
@@ -66,7 +70,7 @@ const settingsComponent = computed(() => layoutSettingsFor(props.view.type));
             :is="settingsComponent"
             :view="view"
             :schema="schema"
-            @patch-layout="(p: Record<string, unknown>) => emit('patch-layout', p)" />
+            @patch-layout="forwardPatch" />
     </div>
 </template>
 
@@ -74,7 +78,7 @@ const settingsComponent = computed(() => layoutSettingsFor(props.view.type));
 .layout-panel {
     display: flex;
     flex-direction: column;
-    gap: 0.55rem;
+    gap: var(--space-4);
 }
 
 .layout-panel__grid {
@@ -83,7 +87,7 @@ const settingsComponent = computed(() => layoutSettingsFor(props.view.type));
     padding: 0;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 0.4rem;
+    gap: var(--space-2);
 }
 
 .layout-panel__card {
@@ -92,55 +96,59 @@ const settingsComponent = computed(() => layoutSettingsFor(props.view.type));
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.35rem;
+    gap: var(--space-2);
     width: 100%;
-    padding: 0.6rem 0.4rem;
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.08));
-    background: var(--bg-soft, rgba(255, 255, 255, 0.02));
-    color: var(--fg, #ededed);
-    border-radius: 6px;
+    padding: var(--space-3) var(--space-2);
+    border: var(--border-width-1) solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     font: inherit;
     text-align: center;
-    transition: background 120ms ease, border-color 120ms ease;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
 }
 
 .layout-panel__card:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.05));
-    border-color: var(--border-strong, rgba(255, 255, 255, 0.18));
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
 }
 
 .layout-panel__card.is-active {
-    background: var(--accent-faint, rgba(232, 220, 200, 0.12));
-    border-color: var(--accent, #e8dcc8);
-    color: var(--accent, #e8dcc8);
+    background: var(--accent-faint);
+    border-color: var(--accent);
+    color: var(--accent);
 }
 
 .layout-panel__card.is-planned {
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
 }
 
 .layout-panel__card-label {
-    font-size: 0.72rem;
-    line-height: 1.1;
+    font-size: var(--text-xs);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--leading-tight);
 }
 
 .layout-panel__card-tag {
     position: absolute;
-    top: 0.25rem;
-    right: 0.3rem;
-    font-size: 0.55rem;
-    padding: 0.05rem 0.3rem;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--fg-muted, #a09b90);
+    top: var(--space-1);
+    right: var(--space-1);
+    font-size: var(--text-2xs);
+    padding: 1px var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--surface-3);
+    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
+    font-weight: var(--font-weight-semibold);
 }
 
 .layout-panel__divider {
     height: 1px;
-    background: var(--border, rgba(255, 255, 255, 0.06));
-    margin: 0.1rem 0;
+    background: var(--border);
 }
 </style>

@@ -13,12 +13,19 @@
  *
  * Grouping
  * ────────
- * Columns are derived from a `select` or `status` property. The
- * property id is persisted on `activeView.config.layout.groupByPropertyId`.
- * If unset, the renderer auto-selects the first matching schema entry
- * and emits `view-config-changed` so the choice is saved.
+ * Columns are derived from a `select`, `multiSelect` or `status`
+ * property. The property id is persisted on
+ * `activeView.config.layout.groupByPropertyId`. If unset, the renderer
+ * auto-selects the first matching schema entry and emits
+ * `view-config-changed` so the choice is saved.
  *
- * When no select/status property exists, the renderer surfaces a
+ * Multi-select rows appear in *every* column whose option id is
+ * present in their value, mirroring Notion semantics. Dropping a card
+ * onto another column adds that option without disturbing the others;
+ * dropping it onto the special "No value" column clears the value
+ * entirely. See `boardGrouping.ts` for the value-encoding rules.
+ *
+ * When no option-based property exists, the renderer surfaces a
  * tasteful empty-state pointing the user at the property modal.
  *
  * Cards
@@ -28,8 +35,7 @@
  * column updates the row's property value through `api.properties.setValue`
  * and emits `cell-saved` so the parent reloads the snapshot.
  */
-import { computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, watch } from 'vue';
 import { Icon } from '@/components/ui';
 import { api } from '@/api';
 import {
@@ -40,14 +46,18 @@ import type {
     DatabaseRowSnapshot,
     PropertyDefinition,
     PropertyOption,
-    PropertyValue,
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
+import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
+import {
+    isBoardGroupable,
+    readSelectedOptionIds,
+    nextValueOnDrop,
+} from './boardGrouping';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
-
-const router = useRouter();
+const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
 
 // ── Group-by resolution ──────────────────────────────────────────────────
 
@@ -64,35 +74,39 @@ interface BoardColumn {
     rows: DatabaseRowSnapshot[];
 }
 
-const groupByProperty = computed<PropertyDefinition | null>(() => {
+const explicitGroupByPropertyId = computed<string | null>(() => {
     const layout = (props.activeView.config.layout ?? {}) as Record<string, unknown>;
-    const explicitId = typeof layout.groupByPropertyId === 'string'
-        ? layout.groupByPropertyId
-        : null;
+    return typeof layout.groupByPropertyId === 'string' ? layout.groupByPropertyId : null;
+});
+
+const groupByProperty = computed<PropertyDefinition | null>(() => {
+    const explicitId = explicitGroupByPropertyId.value;
     if (explicitId) {
         const def = props.schema.find((p) => p.id === explicitId);
-        if (def && (def.type === 'select' || def.type === 'status')) return def;
+        if (def && isBoardGroupable(def)) return def;
     }
-    return props.schema.find((p) => p.type === 'select' || p.type === 'status') ?? null;
+    return props.schema.find(isBoardGroupable) ?? null;
 });
 
 /**
  * The first time the renderer mounts without an explicit selection but
  * auto-resolved one, persist the choice so the saved view stays stable.
  */
-const layoutMissingExplicit = computed(() => {
-    const layout = (props.activeView.config.layout ?? {}) as Record<string, unknown>;
-    return typeof layout.groupByPropertyId !== 'string';
+const layoutNeedsPersist = computed(() => {
+    const property = groupByProperty.value;
+    return !!property && explicitGroupByPropertyId.value !== property.id;
 });
 
-if (groupByProperty.value && layoutMissingExplicit.value) {
-    emit('view-config-changed', {
-        layout: {
-            ...(props.activeView.config.layout ?? {}),
-            groupByPropertyId: groupByProperty.value.id,
-        },
-    });
-}
+watch(
+    [groupByProperty, layoutNeedsPersist],
+    ([property, needsPersist]) => {
+        if (!property || !needsPersist) return;
+        emit('view-config-changed', {
+            layout: { groupByPropertyId: property.id },
+        });
+    },
+    { immediate: true },
+);
 
 const groupOptions = computed<GroupOption[]>(() => {
     const def = groupByProperty.value;
@@ -114,15 +128,18 @@ const columns = computed<BoardColumn[]>(() => {
     for (const opt of groupOptions.value) buckets.set(opt.id, []);
     for (const row of props.rows) {
         const entry = row.properties.find((p) => p.definition.id === def.id);
-        const value = entry?.value;
-        // `SelectValue` / `StatusValue` store the option *id* (not its label),
-        // so bucketing is a direct id lookup.
-        let key = noneKey;
-        if (value && (value.type === 'select' || value.type === 'status')) {
-            if (buckets.has(value.value)) key = value.value;
+        const selected = readSelectedOptionIds(entry?.value);
+        if (selected.length === 0) {
+            buckets.get(noneKey)?.push(row);
+            continue;
         }
-        const bucket = buckets.get(key);
-        if (bucket) bucket.push(row);
+        // Multi-select rows appear in every selected column. Single-value
+        // selects/status only ever push to one bucket because `selected`
+        // is guaranteed to be length 1.
+        for (const id of selected) {
+            const bucket = buckets.get(id);
+            if (bucket) bucket.push(row);
+        }
     }
     const out: BoardColumn[] = [];
     out.push({ key: noneKey, label: 'No value', color: null, rows: buckets.get(noneKey) ?? [] });
@@ -140,7 +157,7 @@ const columns = computed<BoardColumn[]>(() => {
 // ── Card actions ─────────────────────────────────────────────────────────
 
 function openRow(row: DatabaseRowSnapshot): void {
-    void router.push({ path: '/', query: { note: row.noteId } });
+    openRowById(row.noteId);
 }
 
 function rowSummary(row: DatabaseRowSnapshot): string[] {
@@ -179,9 +196,8 @@ async function moveTo(row: DatabaseRowSnapshot, columnKey: string): Promise<void
     if (columnKey === '__none__') {
         await api.properties.clearValue(row.noteId, def.id);
     } else {
-        const value = (def.type === 'status'
-            ? { type: 'status', value: columnKey }
-            : { type: 'select', value: columnKey }) as PropertyValue;
+        const entry = row.properties.find((p) => p.definition.id === def.id);
+        const value = nextValueOnDrop(def, entry?.value, columnKey);
         await api.properties.setValue(row.noteId, def.id, value);
     }
     publishPropertyValueChanged(row.noteId, def.id);
@@ -215,13 +231,14 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
 </script>
 
 <template>
-    <div class="db-board">
+    <div class="db-board" :class="{ 'db-board--wrap': common.wrapContent }">
         <div v-if="!groupByProperty" class="db-board__empty">
             <Icon name="view-board" :size="28" />
-            <h4>Board needs a select or status property</h4>
+            <h4>Board needs an option-based property</h4>
             <p>
-                Add a property of type <strong>Select</strong> or <strong>Status</strong> in any
-                table view — this Board view will group rows by its options automatically.
+                Add a property of type <strong>Select</strong>, <strong>Multi-select</strong> or
+                <strong>Status</strong> in any table view — this Board view will group rows by
+                its options automatically.
             </p>
         </div>
         <div v-else class="db-board__columns">
@@ -246,7 +263,15 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
                         :draggable="editable"
                         @dragstart="(e) => onCardDragStart(e, row)"
                         @click="openRow(row)">
-                        <strong class="db-board__card-title">{{ row.note.title || 'Untitled' }}</strong>
+                        <div class="db-board__card-title-row">
+                            <Icon
+                                v-if="common.showPageIcon"
+                                :name="iconOf(row.note.kind)"
+                                :size="13"
+                                class="db-board__card-icon"
+                                :style="{ color: colorOf(row.note.kind) }" />
+                            <strong class="db-board__card-title">{{ row.note.title || 'Untitled' }}</strong>
+                        </div>
                         <p
                             v-for="(line, i) in rowSummary(row)"
                             :key="i"
@@ -271,7 +296,7 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
 
 .db-board__columns {
     display: flex;
-    gap: 0.6rem;
+    gap: var(--space-3);
     align-items: flex-start;
 }
 
@@ -279,9 +304,9 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
     min-width: 240px;
     max-width: 280px;
     flex: 0 0 auto;
-    background: var(--bg-soft, #1c1c1c);
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
-    border-radius: 8px;
+    background: var(--surface-1);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
     display: flex;
     flex-direction: column;
 }
@@ -289,105 +314,137 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
 .db-board__col-head {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.5rem 0.7rem;
-    border-bottom: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width-1) solid var(--border);
 }
 
 .db-board__col-dot {
     width: 8px;
     height: 8px;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     display: inline-block;
 }
 
 .db-board__col-label {
     flex: 1;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--fg, #ededed);
+    font-size: var(--text-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
 }
 
 .db-board__col-count {
-    font-size: 0.72rem;
-    color: var(--fg-muted, #a09b90);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
 }
 
 .db-board__cards {
     list-style: none;
     margin: 0;
-    padding: 0.5rem;
+    padding: var(--space-2);
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: var(--space-2);
     min-height: 80px;
 }
 
 .db-board__card {
-    background: var(--bg-elev, #232323);
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
-    border-radius: 6px;
-    padding: 0.55rem 0.65rem;
+    background: var(--surface-2);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
-    transition: border-color 80ms ease, transform 80ms ease;
+    gap: var(--space-1);
+    transition:
+        border-color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        transform var(--duration-fast) var(--ease-standard);
 }
 
 .db-board__card:hover {
-    border-color: var(--accent, #e8dcc8);
+    border-color: var(--border-strong);
+    background: var(--surface-hover);
 }
 
 .db-board__card[draggable='true']:active {
     transform: scale(0.99);
 }
 
+.db-board__card-title-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.db-board__card-icon {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+}
+
 .db-board__card--empty {
     background: transparent;
     border-style: dashed;
     cursor: default;
-    color: var(--fg-muted, #a09b90);
-    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
     text-align: center;
 }
 
 .db-board__card-title {
-    color: var(--fg, #ededed);
-    font-size: 0.85rem;
-    line-height: 1.2;
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--leading-tight);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .db-board__card-line {
     margin: 0;
-    font-size: 0.72rem;
-    color: var(--fg-muted, #a09b90);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.db-board--wrap .db-board__card-title,
+.db-board--wrap .db-board__card-line {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: break-word;
 }
 
 .db-board__empty {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.45rem;
-    padding: 2.5rem 1.5rem;
+    gap: var(--space-2);
+    padding: var(--space-10, 40px) var(--space-5);
     text-align: center;
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
 }
 
 .db-board__empty h4 {
     margin: 0;
-    color: var(--fg, #ededed);
-    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-size: var(--text-md);
+    font-weight: var(--font-weight-semibold);
 }
 
 .db-board__empty p {
     margin: 0;
     max-width: 44ch;
-    font-size: 0.8rem;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
 }
 </style>

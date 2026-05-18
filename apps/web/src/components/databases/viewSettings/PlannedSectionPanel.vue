@@ -14,8 +14,11 @@ defineProps<{ label: string }>();
 
 <template>
     <div class="planned">
-        <Icon name="settings" :size="20" />
-        <p>{{ label }} — on the roadmap. For now you can configure it from the renderer directly.</p>
+        <span class="planned__icon">
+            <Icon name="settings" :size="22" />
+        </span>
+        <h4 class="planned__title">{{ label }}</h4>
+        <p class="planned__lead">On the roadmap. For now you can configure this from the renderer directly.</p>
     </div>
 </template>
 
@@ -25,14 +28,34 @@ defineProps<{ label: string }>();
     flex-direction: column;
     align-items: center;
     text-align: center;
-    color: var(--fg-muted, #a09b90);
-    padding: 1.5rem 0.7rem;
-    gap: 0.4rem;
+    color: var(--text-muted);
+    padding: var(--space-6) var(--space-3);
+    gap: var(--space-2);
 }
 
-.planned p {
+.planned__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-3);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-1);
+}
+
+.planned__title {
     margin: 0;
-    font-size: 0.78rem;
-    line-height: 1.4;
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-semibold);
+}
+
+.planned__lead {
+    margin: 0;
+    font-size: var(--text-xs);
+    line-height: var(--leading-snug, 1.4);
+    max-width: 30ch;
 }
 </style>

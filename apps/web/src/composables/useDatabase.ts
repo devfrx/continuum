@@ -1,22 +1,31 @@
 /**
- * Per-database state composables.
+ * Per-database / per-block composables.
  *
- * Each composable is scoped to a single database (or a single block /
- * view). They mirror the API namespace and shape returned data into
- * Vue refs so components can simply render reactive lists without
- * managing their own loading state.
+ * The data hierarchy is:
  *
- * Three coupled concerns:
+ *   Database (datasource) ─┐
+ *                          ├─→ rows, schema, raw queries
+ *                          │
+ *   Block (Tiptap node)    │
+ *     └─→ BlockView × N ───┴─→ each view points at one datasource
  *
- *   - `useDatabaseBundle(databaseIdRef)` — loads the database + saved
- *     views + schema in a single round-trip and exposes mutators
- *     (renameView, addView, …). Drives the toolbar.
+ * The composables below mirror that split:
  *
- *   - `useDatabaseQuery(databaseIdRef, viewIdRef, configOverridesRef)`
- *     — runs the query endpoint whenever inputs change and exposes the
- *     paged snapshot. Drives the table / list / board body.
+ *   - `useDatabaseBundle(databaseIdRef)` — loads a datasource's
+ *     database row + schema in a single round-trip and exposes
+ *     mutators for title / icon / lock / archive and property CRUD.
  *
- *   - `useDatabaseRow(databaseIdRef, noteIdRef)` — value setter wrapping
+ *   - `useBlockViews(blockIdRef)` — loads every saved view bound to a
+ *     Tiptap block and exposes CRUD (`addView`, `patchView`,
+ *     `removeView`). Each view names the datasource it renders.
+ *
+ *   - `useDatabaseQuery(databaseIdRef, configOverridesRef)` — runs the
+ *     query endpoint whenever inputs change and exposes the paged
+ *     snapshot. Drives the table / list / board body. The active
+ *     view's config is composed client-side and passed in via
+ *     `configOverridesRef`.
+ *
+ *   - `useDatabaseCellSetter()` — value setter wrapping
  *     `api.properties.setValue` keyed by note id. Drives the cell
  *     editors. Cell edits invalidate the parent query.
  */
@@ -27,6 +36,7 @@ import type {
   DatabaseQueryRequest,
   DatabaseQueryResponse,
   DatabaseRowCreateInput,
+  DatabaseView,
   DatabaseViewConfig,
   DatabaseViewType,
   PropertyConfig,
@@ -35,10 +45,10 @@ import type {
   PropertyValue,
 } from '@continuum/shared';
 import {
+  publishBlockViewChanged,
   publishDatabaseRowsChanged,
   publishDatabaseSchemaChanged,
   publishDatabaseUpdated,
-  publishDatabaseViewChanged,
   publishNoteCreated,
   publishNoteDeleted,
   publishPropertyValueChanged,
@@ -64,25 +74,6 @@ export interface UseDatabaseBundleReturn {
       archived: boolean;
     }>,
   ) => Promise<void>;
-  addView: (input: {
-    name: string;
-    type: DatabaseViewType;
-    config?: Partial<DatabaseViewConfig>;
-  }) => Promise<string | null>;
-  patchView: (
-    viewId: string,
-    patch: {
-      name?: string;
-      type?: DatabaseViewType;
-      config?: Partial<DatabaseViewConfig>;
-      /**
-       * Per-view datasource override. Pass `null` to clear.
-       * Server resets the view's resolution surface accordingly.
-       */
-      dataSourceDatabaseId?: string | null;
-    },
-  ) => Promise<void>;
-  removeView: (viewId: string) => Promise<void>;
   /** Create a new database-scoped property definition. */
   addProperty: (data: {
     label: string;
@@ -118,8 +109,9 @@ export function useDatabaseBundle(
       loaded.value = true;
     } catch (err) {
       // The shared http helper throws `${status} ${statusText}` on non-2xx
-      // — distinguish a 404 (missing database) so the embed can fall back
-      // to the "unbound" placeholder instead of showing a generic error.
+      // — distinguish a 404 (missing datasource) so the embed can fall
+      // back to the "unbound" placeholder instead of showing a generic
+      // error.
       if (err instanceof Error && err.message.startsWith('404')) {
         bundle.value = null;
         notFound.value = true;
@@ -142,14 +134,12 @@ export function useDatabaseBundle(
     { immediate: true },
   );
 
-  // Cross-block live sync — when another DB block (or another window /
-  // the notes view) mutates this database, refresh the bundle so the
-  // toolbar and schema stay in lockstep. Self-published events arrive
-  // through the same listener; reloading is idempotent so the duplicate
-  // round-trip is harmless, but we still gate by source tag inside the
-  // realtime bus so we don't loop.
+  // Cross-window live sync — when another window / tab mutates this
+  // datasource, refresh the bundle so the title and schema stay in
+  // lockstep. Self-published events arrive through the same listener;
+  // reloading is idempotent so the duplicate round-trip is harmless.
   useRealtime(
-    ['database.updated', 'database.schema.changed', 'database.view.changed', 'database.deleted'],
+    ['database.updated', 'database.schema.changed', 'database.deleted'],
     (event) => {
       if (event.databaseId !== databaseIdRef.value) return;
       if (event.kind === 'database.deleted') {
@@ -161,7 +151,9 @@ export function useDatabaseBundle(
     },
   );
 
-  async function patchDatabase(patch: Parameters<UseDatabaseBundleReturn['patchDatabase']>[0]) {
+  async function patchDatabase(
+    patch: Parameters<UseDatabaseBundleReturn['patchDatabase']>[0],
+  ) {
     const id = databaseIdRef.value;
     if (!id) return;
     const updated = await api.databases.update(id, patch);
@@ -169,56 +161,9 @@ export function useDatabaseBundle(
     publishDatabaseUpdated(id);
   }
 
-  async function addView(input: {
-    name: string;
-    type: DatabaseViewType;
-    config?: Partial<DatabaseViewConfig>;
-  }): Promise<string | null> {
-    const id = databaseIdRef.value;
-    if (!id) return null;
-    const view = await api.databases.views.create(id, input);
-    if (bundle.value) {
-      bundle.value = { ...bundle.value, views: [...bundle.value.views, view] };
-    }
-    publishDatabaseViewChanged(id, view.id);
-    return view.id;
-  }
-
-  async function patchView(
-    viewId: string,
-    patch: {
-      name?: string;
-      type?: DatabaseViewType;
-      config?: Partial<DatabaseViewConfig>;
-      dataSourceDatabaseId?: string | null;
-    },
-  ): Promise<void> {
-    const id = databaseIdRef.value;
-    if (!id) return;
-    const updated = await api.databases.views.update(id, viewId, patch);
-    if (bundle.value) {
-      bundle.value = {
-        ...bundle.value,
-        views: bundle.value.views.map((v) => (v.id === viewId ? updated : v)),
-      };
-    }
-    publishDatabaseViewChanged(id, viewId);
-  }
-
-  async function removeView(viewId: string): Promise<void> {
-    const id = databaseIdRef.value;
-    if (!id) return;
-    await api.databases.views.remove(id, viewId);
-    if (bundle.value) {
-      bundle.value = {
-        ...bundle.value,
-        views: bundle.value.views.filter((v) => v.id !== viewId),
-      };
-    }
-    publishDatabaseViewChanged(id, null);
-  }
-
-  async function addProperty(data: Parameters<UseDatabaseBundleReturn['addProperty']>[0]) {
+  async function addProperty(
+    data: Parameters<UseDatabaseBundleReturn['addProperty']>[0],
+  ) {
     const id = databaseIdRef.value;
     if (!id) return null;
     const created = await api.databases.properties.create(id, data);
@@ -244,12 +189,116 @@ export function useDatabaseBundle(
     notFound,
     reload,
     patchDatabase,
-    addView,
-    patchView,
-    removeView,
     addProperty,
     reorderProperties,
   };
+}
+
+// ─────────────────────────── Block Views ───────────────────────────────
+
+export interface UseBlockViewsReturn {
+  views: Ref<DatabaseView[]>;
+  loaded: Ref<boolean>;
+  loading: Ref<boolean>;
+  reload: () => Promise<void>;
+  /** Append a new view to the block. Returns the new view id (or null). */
+  addView: (input: {
+    dataSourceDatabaseId: string;
+    name: string;
+    type: DatabaseViewType;
+    config?: Partial<DatabaseViewConfig>;
+  }) => Promise<string | null>;
+  patchView: (
+    viewId: string,
+    patch: {
+      name?: string;
+      type?: DatabaseViewType;
+      config?: Partial<DatabaseViewConfig>;
+      dataSourceDatabaseId?: string;
+    },
+  ) => Promise<void>;
+  removeView: (viewId: string) => Promise<void>;
+}
+
+/**
+ * Load and mutate the block-scoped views bound to a Tiptap database
+ * block. Empty array means the block is unbound (picker state).
+ */
+export function useBlockViews(blockIdRef: Ref<string | null>): UseBlockViewsReturn {
+  const views = ref<DatabaseView[]>([]);
+  const loaded = ref(false);
+  const loading = ref(false);
+
+  async function reload(): Promise<void> {
+    const id = blockIdRef.value;
+    if (!id) {
+      views.value = [];
+      loaded.value = false;
+      return;
+    }
+    loading.value = true;
+    try {
+      views.value = await api.blockViews.list(id);
+      loaded.value = true;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  watch(
+    blockIdRef,
+    () => {
+      loaded.value = false;
+      views.value = [];
+      void reload();
+    },
+    { immediate: true },
+  );
+
+  useRealtime(['block.view.changed'], (event) => {
+    if (event.blockId !== blockIdRef.value) return;
+    void reload();
+  });
+
+  async function addView(input: {
+    dataSourceDatabaseId: string;
+    name: string;
+    type: DatabaseViewType;
+    config?: Partial<DatabaseViewConfig>;
+  }): Promise<string | null> {
+    const blockId = blockIdRef.value;
+    if (!blockId) return null;
+    const created = await api.blockViews.create({ blockId, ...input });
+    views.value = [...views.value, created];
+    publishBlockViewChanged(blockId, created.id);
+    return created.id;
+  }
+
+  async function patchView(
+    viewId: string,
+    patch: {
+      name?: string;
+      type?: DatabaseViewType;
+      config?: Partial<DatabaseViewConfig>;
+      dataSourceDatabaseId?: string;
+    },
+  ): Promise<void> {
+    const blockId = blockIdRef.value;
+    if (!blockId) return;
+    const updated = await api.blockViews.update(viewId, patch);
+    views.value = views.value.map((v) => (v.id === viewId ? updated : v));
+    publishBlockViewChanged(blockId, viewId);
+  }
+
+  async function removeView(viewId: string): Promise<void> {
+    const blockId = blockIdRef.value;
+    if (!blockId) return;
+    await api.blockViews.remove(viewId);
+    views.value = views.value.filter((v) => v.id !== viewId);
+    publishBlockViewChanged(blockId, null);
+  }
+
+  return { views, loaded, loading, reload, addView, patchView, removeView };
 }
 
 // ─────────────────────────── Query ─────────────────────────────────────
@@ -270,14 +319,13 @@ export interface UseDatabaseQueryReturn {
 /**
  * Reactive runner around `POST /api/databases/:id/query`.
  *
- * The query is recomputed whenever any of the inputs change (database
- * id, active view id, or the per-block config override that the
- * toolbar maintains for ad-hoc filter / sort tweaks before the user
- * saves them into the view).
+ * The query is recomputed whenever the datasource id or the inline
+ * config override changes. Callers (typically the active BlockView)
+ * compose the desired filter / sort / pagination client-side and pass
+ * it in via `configOverrideRef`.
  */
 export function useDatabaseQuery(
   databaseIdRef: Ref<string | null>,
-  viewIdRef: Ref<string | null>,
   configOverrideRef: Ref<Partial<DatabaseViewConfig> | null>,
 ): UseDatabaseQueryReturn {
   const response = ref<DatabaseQueryResponse | null>(null);
@@ -285,7 +333,6 @@ export function useDatabaseQuery(
   const error = ref<string | null>(null);
 
   const request = computed<DatabaseQueryRequest>(() => ({
-    viewId: viewIdRef.value ?? undefined,
     config: configOverrideRef.value ?? undefined,
   }));
 
@@ -308,12 +355,10 @@ export function useDatabaseQuery(
   }
 
   watch(
-    [databaseIdRef, viewIdRef, configOverrideRef],
-    ([databaseId, viewId], previous) => {
-      const [previousDatabaseId, previousViewId] = previous ?? [];
-      if (databaseId !== previousDatabaseId || viewId !== previousViewId) {
-        response.value = null;
-      }
+    [databaseIdRef, configOverrideRef],
+    ([databaseId], previous) => {
+      const [previousDatabaseId] = previous ?? [];
+      if (databaseId !== previousDatabaseId) response.value = null;
       void reload();
     },
     { immediate: true, deep: true },
@@ -321,12 +366,15 @@ export function useDatabaseQuery(
 
   // Live sync — refresh the snapshot whenever any row in this database
   // is created / removed / re-ordered, or one of its property values
-  // changes (including in a different block, window or tab). Schema /
-  // view config changes are owned by `useDatabaseBundle` but they also
-  // invalidate row resolution (new columns appear blank otherwise) so we
-  // listen here too.
+  // changes (including in a different block, window or tab). Schema
+  // changes also invalidate row resolution (new columns appear blank
+  // otherwise) so we listen here too.
   useRealtime(
-    ['database.rows.changed', 'database.schema.changed', 'database.view.changed', 'property.value.changed'],
+    [
+      'database.rows.changed',
+      'database.schema.changed',
+      'property.value.changed',
+    ],
     (event) => {
       if (event.kind === 'property.value.changed') {
         const snapshot = response.value;

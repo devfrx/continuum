@@ -2,132 +2,115 @@
 /**
  * Bound-state body for a database block.
  *
- * Owns the bundle (database + views + schema) and the active view.
- * Composes:
+ * Renders the toolbar (view tabs / settings / add / delete) and the
+ * active view's body. Owns:
  *
- *   – `DatabaseToolbar` — title, view tabs, "add row", "add view".
- *   – The renderer published by `viewRegistry[activeView.type]` — table,
- *     board, gallery, list, calendar today; placeholder for the
- *     remaining planned types.
+ *   – Active-view resolution (prop fallback → first view).
+ *   – Datasource bundle (database + schema) for the active view's
+ *     `dataSourceDatabaseId`. Each block view targets exactly one
+ *     datasource, so we don't reconcile a parent/override pair any
+ *     more — just load the source the active view points at.
+ *   – The query against that datasource.
  *
- * The active view is the prop `viewId` when present, falling back to
- * the first saved view. Switching tabs emits `update:view-id` so the
- * editor persists the user's choice in the node attributes.
- *
- * Live sync — bundle and query reloads driven by mutations on this
- * database (from any block / window / tab) are handled inside the
+ * Live sync — bundle, block-views and query reloads driven by
+ * mutations from other blocks / windows / tabs are handled inside the
  * composables themselves through the realtime bus, so this component
  * only forwards UI intents and config patches.
  */
-import { computed, ref, toRef } from 'vue';
+import { computed, ref } from 'vue';
 import { useDatabaseBundle, useDatabaseQuery } from '@/composables/useDatabase';
 import type {
+    DatabaseRowSnapshot,
     DatabaseView,
     DatabaseViewConfig,
     DatabaseViewType,
 } from '@continuum/shared';
 import DatabaseToolbar from './DatabaseToolbar.vue';
 import { viewRegistry } from './views/registry';
+import { useDatabaseViewQuery } from './useDatabaseViewQuery';
 
 const props = defineProps<{
-    databaseId: string;
-    viewId: string | null;
+    blockId: string;
+    views: DatabaseView[];
+    activeViewId: string | null;
     editable: boolean;
 }>();
 
 const emit = defineEmits<{
-    'update:view-id': [viewId: string | null];
+    'select-view': [viewId: string];
+    'add-view': [payload: { type: DatabaseViewType; dataSourceDatabaseId: string; name?: string }];
+    'rename-view': [viewId: string, name: string];
+    'delete-view': [viewId: string];
+    'change-view-source': [viewId: string, dataSourceDatabaseId: string];
+    'change-view-type': [viewId: string, type: DatabaseViewType];
+    'patch-view-config': [viewId: string, patch: Partial<DatabaseViewConfig>];
     delete: [];
 }>();
 
-const databaseIdRef = toRef(props, 'databaseId');
-const bundleState = useDatabaseBundle(databaseIdRef);
-
-/** Selected view (defaults to the first saved view when none is bound). */
+/** Selected view (defaults to the first one when the saved id is stale). */
 const activeView = computed<DatabaseView | null>(() => {
-    const list = bundleState.bundle.value?.views ?? [];
-    if (!list.length) return null;
-    if (props.viewId) {
-        const match = list.find((v) => v.id === props.viewId);
+    if (!props.views.length) return null;
+    if (props.activeViewId) {
+        const match = props.views.find((v) => v.id === props.activeViewId);
         if (match) return match;
     }
-    return list[0] ?? null;
+    return props.views[0] ?? null;
 });
 
-const activeViewId = computed(() => activeView.value?.id ?? null);
+/** Datasource id backing the active view. */
+const activeSourceIdRef = computed(() => activeView.value?.dataSourceDatabaseId ?? null);
+const sourceBundleState = useDatabaseBundle(activeSourceIdRef);
 
-/**
- * Effective database id for the active view. When the saved view has a
- * `dataSourceDatabaseId` override pointing at a different database we
- * resolve rows + schema against that one; otherwise we fall back to
- * the parent block's database (the toolbar / source picker still
- * operates on the parent).
- */
-const effectiveDatabaseId = computed<string>(() => {
-    const override = activeView.value?.dataSourceDatabaseId;
-    if (override && override !== props.databaseId) return override;
-    return props.databaseId;
-});
+const activeSchema = computed(() => sourceBundleState.bundle.value?.schema ?? []);
+const activeDatabase = computed(() => sourceBundleState.bundle.value?.database ?? null);
 
-const overrideBundleIdRef = computed<string | null>(() => {
-    return effectiveDatabaseId.value === props.databaseId
-        ? null
-        : effectiveDatabaseId.value;
-});
-
-const overrideBundleState = useDatabaseBundle(overrideBundleIdRef);
-
-/**
- * Schema fed into the active renderer. Uses the override bundle when
- * the active view points at a different datasource; otherwise the
- * parent bundle's schema. We never mix them \u2014 a Gallery in this
- * view rendering rows from DB B must use DB B's property definitions.
- */
-const effectiveSchema = computed(() => {
-    if (overrideBundleIdRef.value) {
-        return overrideBundleState.bundle.value?.schema ?? [];
-    }
-    return bundleState.bundle.value?.schema ?? [];
-});
-
-const effectiveDatabaseObj = computed(() => {
-    if (overrideBundleIdRef.value) {
-        return overrideBundleState.bundle.value?.database ?? null;
-    }
-    return bundleState.bundle.value?.database ?? null;
-});
-
-const activeViewLoading = computed(() => {
-    return bundleState.loading.value || (!!overrideBundleIdRef.value && overrideBundleState.loading.value);
-});
-
-const activeViewNotFound = computed(() => {
-    return bundleState.notFound.value || (!!overrideBundleIdRef.value && overrideBundleState.notFound.value);
-});
-
-// Resolve the renderer component for the active view, falling back to
-// the table renderer when the registry has no entry — defensive: the
-// registry currently covers every `DatabaseViewType`, but a stale node
-// attr could carry a removed type until the server normalises it.
+// Renderer for the active view, with a defensive fallback so a stale
+// type from an old node attr can never crash render.
 const activeViewComponent = computed(() => {
     const type = activeView.value?.type ?? 'table';
     return (viewRegistry[type] ?? viewRegistry.table).component;
 });
 
-// Ad-hoc per-block config override (filter / sort toggled in the
-// toolbar). MVP: empty until the toolbar exposes controls; passing
-// `null` keeps the saved view config authoritative.
-const configOverride = ref<Partial<DatabaseViewConfig> | null>(null);
+const queryConfig = computed<Partial<DatabaseViewConfig> | null>(() => activeView.value?.config ?? null);
 
-// IMPORTANT: when the active view has a per-view datasource override,
-// the query targets the *override* database. The active view id stays
-// the same (the view definition itself is owned by the parent
-// database) \u2014 but the query is bound to the override's database id
-// so the rows + property values come from the right table.
-const queryState = useDatabaseQuery(effectiveDatabaseId, activeViewId, configOverride);
-const activeViewRenderLoading = computed(
-    () => activeViewLoading.value || (queryState.loading.value && !queryState.response.value),
+const queryState = useDatabaseQuery(activeSourceIdRef, queryConfig);
+
+/**
+ * Raw rows straight from the server query. Filter & sort happen in
+ * `useDatabaseViewQuery` below so every renderer sees the same
+ * derived list without per-component plumbing.
+ */
+const rawRows = computed<DatabaseRowSnapshot[]>(
+    () => queryState.response.value?.rows ?? [],
 );
+
+/**
+ * Synthetic view fallback used while the real view is still loading.
+ * Keeps the composable type-stable so `finalRows` never has to short
+ * circuit on `null`.
+ */
+const safeActiveView = computed<DatabaseView>(() => {
+    return activeView.value ?? {
+        id: '__pending__',
+        blockId: props.blockId,
+        dataSourceDatabaseId: '',
+        type: 'table',
+        name: '',
+        position: 0,
+        config: {},
+    } as unknown as DatabaseView;
+});
+
+const { finalRows } = useDatabaseViewQuery({
+    rows: rawRows,
+    activeView: safeActiveView,
+    schema: activeSchema,
+});
+
+const isLoadingActive = computed(() => sourceBundleState.loading.value
+    || (queryState.loading.value && !queryState.response.value));
+const activeNotFound = computed(() => sourceBundleState.notFound.value);
+
 const actionError = ref<string | null>(null);
 const draftRequest = ref(0);
 
@@ -151,63 +134,10 @@ async function onRemoveRow(rowId: string): Promise<void> {
     await queryState.removeRow(rowId);
 }
 
-async function onAddView(type: DatabaseViewType = 'table'): Promise<void> {
-    if (!props.editable) return;
-    actionError.value = null;
-    try {
-        const entry = viewRegistry[type];
-        const id = await bundleState.addView({
-            name: `${entry.label} ${(bundleState.bundle.value?.views.length ?? 0) + 1}`,
-            type,
-            config: entry.defaultLayout
-                ? { layout: entry.defaultLayout }
-                : undefined,
-        });
-        if (id) emit('update:view-id', id);
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
-}
-
-async function onRename(title: string): Promise<void> {
-    actionError.value = null;
-    try {
-        await bundleState.patchDatabase({ title });
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
-}
-
-async function onRenameView(viewId: string, name: string): Promise<void> {
-    if (!props.editable) return;
-    actionError.value = null;
-    try {
-        await bundleState.patchView(viewId, { name });
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
-}
-
-async function onDeleteView(viewId: string): Promise<void> {
-    if (!props.editable) return;
-    actionError.value = null;
-    try {
-        await bundleState.removeView(viewId);
-        // If the deleted view was active, fall back to the first remaining one.
-        if (viewId === props.viewId) {
-            const next = bundleState.bundle.value?.views[0]?.id ?? null;
-            emit('update:view-id', next);
-        }
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
-}
-
 async function onSchemaChanged(): Promise<void> {
     actionError.value = null;
     try {
-        await bundleState.reload();
-        if (overrideBundleIdRef.value) await overrideBundleState.reload();
+        await sourceBundleState.reload();
         await queryState.reload();
     } catch (err) {
         actionError.value = messageFromUnknownError(err);
@@ -215,128 +145,66 @@ async function onSchemaChanged(): Promise<void> {
 }
 
 /**
- * Apply a per-view datasource override change. When the user picks a
- * different source database we also wipe the view's saved layout knobs
- * (cover / date property, group-by, sort, visibility) \u2014 they reference
- * property keys that almost certainly don't exist on the new database
- * and would produce empty / broken renders. The renderer will re-seed
- * defaults on the next mount.
+ * Per-renderer config patch (e.g. Board picking a new group-by
+ * property). Deep-merges the `layout` sub-object so a renderer can
+ * patch a single knob without clobbering the rest of the saved
+ * configuration.
  */
-async function onChangeViewSource(
-    viewId: string,
-    databaseId: string | null,
-): Promise<void> {
-    if (!props.editable) return;
-    actionError.value = null;
-    try {
-        await bundleState.patchView(viewId, {
-            dataSourceDatabaseId: databaseId,
-            config: { layout: {}, sort: [], visibleProperties: [], hiddenProperties: [] },
-        });
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
-}
-
-/**
- * Persist a partial layout-config change emitted by a renderer (e.g.
- * the Board view picking a new group-by property). We deep-merge the
- * `layout` sub-object so a renderer can patch a single knob without
- * clobbering the rest of the saved configuration.
- */
-async function onViewConfigChanged(patch: Partial<DatabaseViewConfig>): Promise<void> {
+function onViewConfigChanged(patch: Partial<DatabaseViewConfig>): void {
     if (!props.editable) return;
     const view = activeView.value;
     if (!view) return;
-    actionError.value = null;
     const merged: Partial<DatabaseViewConfig> = { ...patch };
     if (patch.layout) {
         merged.layout = { ...(view.config.layout ?? {}), ...patch.layout };
     }
-    try {
-        await bundleState.patchView(view.id, { config: merged });
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
+    emit('patch-view-config', view.id, merged);
 }
 
 /**
- * Swap a view's renderer type from the view-settings popover. Type
- * changes leave `config` intact — the new renderer probes the
- * existing `layout` knobs (group-by, cover, date) and silently
- * ignores keys it doesn't understand, so cross-layout switches
- * degrade gracefully without losing user intent.
+ * Toolbar-bridged `patch-view-config` (filter / sort / future root
+ * keys). Re-emits as a typed `Partial<DatabaseViewConfig>` so the
+ * template stays free of inline type casts.
  */
-async function onChangeViewType(viewId: string, type: DatabaseViewType): Promise<void> {
-    if (!props.editable) return;
-    actionError.value = null;
-    try {
-        await bundleState.patchView(viewId, { type });
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
-}
-
-/**
- * Persist a partial layout patch coming from the view-settings popover.
- * Targets an arbitrary view (not necessarily the active one) so the
- * popover can be opened from any tab. Deep-merges into the view's
- * existing `config.layout` to preserve unrelated knobs.
- */
-async function onPatchViewLayout(
-    viewId: string,
-    patch: Record<string, unknown>,
-): Promise<void> {
-    if (!props.editable) return;
-    const targetView = bundleState.bundle.value?.views.find((v) => v.id === viewId);
-    if (!targetView) return;
-    actionError.value = null;
-    const merged = { ...(targetView.config.layout ?? {}), ...patch };
-    try {
-        await bundleState.patchView(viewId, { config: { layout: merged } });
-    } catch (err) {
-        actionError.value = messageFromUnknownError(err);
-    }
+function onPatchConfigFromToolbar(viewId: string, patch: Record<string, unknown>): void {
+    emit('patch-view-config', viewId, patch as Partial<DatabaseViewConfig>);
 }
 </script>
 
 <template>
     <div class="db-body">
         <DatabaseToolbar
-            v-if="bundleState.bundle.value"
-            :database="bundleState.bundle.value.database"
-            :views="bundleState.bundle.value.views"
-            :schema="bundleState.bundle.value.schema"
-            :active-view-id="activeViewId"
-            :effective-database-id="effectiveDatabaseId"
+            v-if="views.length"
+            :views="views"
+            :active-view-id="activeView?.id ?? null"
             :editable="editable"
-            @select-view="(id) => emit('update:view-id', id)"
-            @rename-view="(id, name) => onRenameView(id, name)"
-            @delete-view="(id) => onDeleteView(id)"
-            @add-view="(type) => onAddView(type)"
+            @select-view="(id) => emit('select-view', id)"
+            @rename-view="(id, name) => emit('rename-view', id, name)"
+            @delete-view="(id) => emit('delete-view', id)"
+            @add-view="(payload) => emit('add-view', payload)"
             @add-row="onAddRow"
-            @rename="onRename"
-            @change-view-source="(viewId, dbId) => onChangeViewSource(viewId, dbId)"
-            @change-view-type="(viewId, type) => onChangeViewType(viewId, type)"
-            @patch-view-layout="(viewId, patch) => onPatchViewLayout(viewId, patch)"
+            @change-view-source="(viewId, dbId) => emit('change-view-source', viewId, dbId)"
+            @change-view-type="(viewId, type) => emit('change-view-type', viewId, type)"
+            @patch-view-layout="(viewId, patch) => emit('patch-view-config', viewId, { layout: patch })"
+            @patch-view-config="(viewId, patch) => onPatchConfigFromToolbar(viewId, patch)"
             @delete="emit('delete')" />
 
         <div class="db-body__view">
             <div v-if="actionError || queryState.error.value" class="db-body__error">
                 {{ actionError || queryState.error.value }}
             </div>
-            <div v-if="activeViewRenderLoading" class="db-body__state">
+            <div v-if="isLoadingActive" class="db-body__state">
                 Loading…
             </div>
-            <div v-else-if="activeViewNotFound" class="db-body__state">
-                Database no longer exists.
+            <div v-else-if="activeNotFound" class="db-body__state">
+                Datasource no longer exists. Pick another in view settings.
             </div>
             <component
                 :is="activeViewComponent"
-                v-else-if="effectiveDatabaseObj && activeView"
-                :database="effectiveDatabaseObj"
-                :schema="effectiveSchema"
-                :rows="queryState.response.value?.rows ?? []"
+                v-else-if="activeDatabase && activeView"
+                :database="activeDatabase"
+                :schema="activeSchema"
+                :rows="finalRows"
                 :active-view="activeView"
                 :draft-request="draftRequest"
                 :editable="editable"
@@ -353,26 +221,23 @@ async function onPatchViewLayout(
 .db-body {
     display: flex;
     flex-direction: column;
-}
-
-.db-body__view {
-    border-top: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
+    background: var(--surface-0);
 }
 
 .db-body__state {
-    padding: 1.25rem;
-    color: var(--fg-muted, #a09b90);
-    font-size: 0.875rem;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
     text-align: center;
 }
 
 .db-body__error {
-    margin: 0.75rem;
-    padding: 0.5rem 0.6rem;
-    border-radius: var(--radius-xs, 4px);
-    background: var(--danger-faint, rgba(184, 92, 92, 0.08));
-    border: var(--border-width-1, 1px) solid var(--danger-border, rgba(184, 92, 92, 0.3));
-    color: var(--danger, #b85c5c);
-    font-size: var(--text-sm, 0.75rem);
+    margin: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--danger-faint);
+    border: var(--border-width-1) solid var(--danger-border);
+    color: var(--danger);
+    font-size: var(--text-xs);
 }
 </style>

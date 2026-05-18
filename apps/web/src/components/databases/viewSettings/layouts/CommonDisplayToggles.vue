@@ -2,19 +2,14 @@
 /**
  * CommonDisplayToggles.vue — reusable display knobs shared across layouts.
  *
- * Renders the rows visible in the screenshot's Layout panel under the
- * view-type grid: show data source titles, show page icon, wrap
- * content and the "Open pages in" segmented control.
+ * Renders the rows visible in the Layout panel under the view-type grid:
+ * show page icon, wrap content and the "Open pages in" segmented control.
  *
  * Stateless — reads the current layout, emits partial patches. Each
  * layout component composes this plus its own type-specific knobs.
  *
  * Props:
  *   – `view`            the active view (source of truth)
- *   – `showDataSource`  hide the data-source toggle when the view has
- *                       no override (still persistable — but rendering
- *                       it without a source would mislead).
- *
  * Emits:
  *   – `patch-layout`    partial patch merged into `config.layout`
  */
@@ -24,10 +19,7 @@ import type { AppIconName } from '@/assets/icons';
 import type { DatabaseView } from '@continuum/shared';
 import { readCommonDisplay, type OpenInMode } from './types';
 
-const props = defineProps<{
-    view: DatabaseView;
-    showDataSource?: boolean;
-}>();
+const props = defineProps<{ view: DatabaseView }>();
 
 const emit = defineEmits<{
     'patch-layout': [patch: Record<string, unknown>];
@@ -48,14 +40,6 @@ function patch(key: keyof ReturnType<typeof readCommonDisplay>, value: unknown):
 
 <template>
     <div class="common-display">
-        <label v-if="showDataSource !== false" class="common-display__row">
-            <span class="common-display__label">Show data source titles</span>
-            <UiSwitch
-                :model-value="current.showDataSourceTitles"
-                aria-label="Show data source titles"
-                @update:model-value="(v) => patch('showDataSourceTitles', v)" />
-        </label>
-
         <label class="common-display__row">
             <span class="common-display__label">Show page icon</span>
             <UiSwitch
@@ -128,7 +112,7 @@ function patch(key: keyof ReturnType<typeof readCommonDisplay>, value: unknown):
     gap: 0.25rem;
     padding: 0.2rem;
     background: var(--bg-soft, rgba(255, 255, 255, 0.04));
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
 }
 
 .common-display__seg-btn {
@@ -140,7 +124,7 @@ function patch(key: keyof ReturnType<typeof readCommonDisplay>, value: unknown):
     border: none;
     background: transparent;
     color: var(--fg-muted, #a09b90);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 0.72rem;
 }

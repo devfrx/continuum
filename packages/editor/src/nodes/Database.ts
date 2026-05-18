@@ -1,17 +1,28 @@
 /**
- * Database node — embeds a Notion-like Database into the document.
+ * Database node — embeds a Notion-like Database block into the document.
  *
  * Storage strategy mirrors `Chart.ts`: the node is an atom whose entire
  * payload is serialized as a JSON string in `data-database`. This keeps
  * the schema flat (one node, one attribute) and survives Tiptap's HTML
  * round-trip without bespoke serialization.
  *
- * The payload itself is intentionally narrow: a stable `blockId` (used
- * to scope ephemeral UI state like sticky view tabs), the `databaseId`
- * the block points at (`null` while the user hasn't picked one yet),
- * the active `viewId`, and a `schemaVersion` so future migrations can
- * gate on it. Row data, schema and views all live server-side keyed by
- * `databaseId`; the editor never serializes that content into the doc.
+ * Payload (schema v2):
+ *   - `blockId`        — stable id (used to scope ephemeral UI state and
+ *                        the server-side `database_block_views.block_id`).
+ *   - `activeViewId`   — id of the currently visible `BlockView`, or
+ *                        `null` while the block has no views yet
+ *                        (unbound picker state).
+ *   - `schemaVersion`  — version stamp so future migrations can gate.
+ *
+ * v1 → v2 migration: legacy blocks stored `databaseId` and `viewId`
+ * directly. Those fields are silently dropped on load; the v2 block
+ * starts unbound and the user re-links the datasource via the picker.
+ * (The corresponding `database_views` table is dropped server-side, so
+ * the legacy `viewId` is meaningless anyway.)
+ *
+ * Row data, schema and views all live server-side keyed by `blockId` /
+ * `dataSourceDatabaseId`; the editor never serializes that content into
+ * the doc.
  */
 import { Node, mergeAttributes } from '@tiptap/core';
 import {
@@ -30,9 +41,12 @@ function safeParse(raw: string | null): DatabaseBlockAttrs {
   try {
     const parsed = JSON.parse(raw) as Partial<DatabaseBlockAttrs>;
     return {
-      blockId: typeof parsed.blockId === 'string' ? parsed.blockId : fallback.blockId,
-      databaseId: typeof parsed.databaseId === 'string' ? parsed.databaseId : null,
-      viewId: typeof parsed.viewId === 'string' ? parsed.viewId : null,
+      blockId:
+        typeof parsed.blockId === 'string' && parsed.blockId.length > 0
+          ? parsed.blockId
+          : fallback.blockId,
+      activeViewId:
+        typeof parsed.activeViewId === 'string' ? parsed.activeViewId : null,
       schemaVersion:
         typeof parsed.schemaVersion === 'number'
           ? parsed.schemaVersion
@@ -56,17 +70,15 @@ export const Database = Node.create({
         default: '',
         parseHTML: (el) => safeParse(el.getAttribute('data-database')).blockId,
       },
-      databaseId: {
+      activeViewId: {
         default: null as string | null,
-        parseHTML: (el) => safeParse(el.getAttribute('data-database')).databaseId,
-      },
-      viewId: {
-        default: null as string | null,
-        parseHTML: (el) => safeParse(el.getAttribute('data-database')).viewId,
+        parseHTML: (el) =>
+          safeParse(el.getAttribute('data-database')).activeViewId,
       },
       schemaVersion: {
         default: DATABASE_BLOCK_SCHEMA_VERSION,
-        parseHTML: (el) => safeParse(el.getAttribute('data-database')).schemaVersion,
+        parseHTML: (el) =>
+          safeParse(el.getAttribute('data-database')).schemaVersion,
       },
     };
   },
@@ -78,9 +90,9 @@ export const Database = Node.create({
   renderHTML({ HTMLAttributes, node }) {
     const payload: DatabaseBlockAttrs = {
       blockId: node.attrs.blockId,
-      databaseId: node.attrs.databaseId,
-      viewId: node.attrs.viewId,
-      schemaVersion: node.attrs.schemaVersion ?? DATABASE_BLOCK_SCHEMA_VERSION,
+      activeViewId: node.attrs.activeViewId,
+      schemaVersion:
+        node.attrs.schemaVersion ?? DATABASE_BLOCK_SCHEMA_VERSION,
     };
     return [
       'div',

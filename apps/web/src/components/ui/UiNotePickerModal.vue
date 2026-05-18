@@ -133,7 +133,7 @@ function submit(): void {
     max-height: 360px;
     overflow-y: auto;
     padding: var(--space-2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: var(--bg-soft);
     border: var(--border-width-1) solid var(--border);
 }
@@ -143,7 +143,7 @@ function submit(): void {
     align-items: center;
     gap: var(--space-5);
     padding: var(--space-3) var(--space-5);
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     background: transparent;
     border: none;
     text-align: left;
@@ -172,7 +172,7 @@ function submit(): void {
     justify-content: center;
     width: 18px;
     height: 18px;
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     border: 1.5px solid var(--border-strong);
     color: var(--fg-on-accent);
     flex-shrink: 0;

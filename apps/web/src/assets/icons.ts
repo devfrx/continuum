@@ -149,6 +149,8 @@ const _ICONS = {
   'footnote': { icon: 'solar:bookmark-bold' },
   'lock': { icon: 'solar:lock-keyhole-bold' },
   'lock-open': { icon: 'solar:lock-keyhole-unlocked-bold' },
+  'unlock': { icon: 'solar:lock-keyhole-unlocked-bold' },
+  'archive': { icon: 'solar:archive-bold' },
   /** Inline LaTeX math (Mathematics extension). */
   'math': { icon: 'solar:variable-bold' },
   /** Table of contents sidebar. */

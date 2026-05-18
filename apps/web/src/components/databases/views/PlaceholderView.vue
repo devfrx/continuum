@@ -42,47 +42,52 @@ const entry = computed(() => viewRegistry[props.activeView.type]);
     flex-direction: column;
     align-items: center;
     text-align: center;
-    gap: 0.5rem;
-    padding: 2.5rem 1.5rem;
-    color: var(--fg-muted, #a09b90);
+    gap: var(--space-2);
+    padding: var(--space-10, 40px) var(--space-5);
+    color: var(--text-muted);
 }
 
 .view-placeholder__icon {
     width: 56px;
     height: 56px;
-    border-radius: 50%;
-    background: var(--surface-soft, rgba(255, 255, 255, 0.04));
-    border: var(--border-width-1, 1px) dashed var(--border, rgba(255, 255, 255, 0.12));
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    border: var(--border-width-1) dashed var(--border-strong);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--accent, #e8dcc8);
+    color: var(--accent);
+    margin-bottom: var(--space-2);
 }
 
 .view-placeholder__title {
-    margin: 0.25rem 0 0;
-    color: var(--fg, #ededed);
-    font-size: 1rem;
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--text-lg);
+    font-weight: var(--font-weight-semibold);
 }
 
 .view-placeholder__lead {
     margin: 0;
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
     max-width: 36ch;
 }
 
 .view-placeholder__hint {
-    margin: 0.25rem 0 0;
-    font-size: 0.78rem;
+    margin: 0;
+    font-size: var(--text-xs);
     max-width: 48ch;
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
+    line-height: var(--leading-snug, 1.45);
 }
 
 .view-placeholder__counter {
-    margin: 0.5rem 0 0;
-    font-size: 0.72rem;
+    margin-top: var(--space-2);
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-semibold);
 }
 </style>

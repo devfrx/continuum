@@ -14,8 +14,15 @@ import SaveAsTemplateModal from '@/components/templates/SaveAsTemplateModal.vue'
 import NoteDetailsFooter from '@/components/notes/NoteDetailsFooter.vue';
 import NoteFootnotesPanel from '@/components/notes/NoteFootnotesPanel.vue';
 import NoteTocPanel from '@/components/notes/NoteTocPanel.vue';
+import NotePeekOverlay from '@/components/notes/NotePeekOverlay.vue';
 import EmptyEditor from '@/components/notes/EmptyEditor.vue';
 import DatabaseBlockEmbed from '@/components/databases/DatabaseBlockEmbed.vue';
+import {
+  DATABASE_ROW_OPEN_EVENT,
+  isPeekOpenMode,
+  type DatabaseRowOpenDetail,
+  type OpenInMode,
+} from '@/components/databases/layout';
 import { FolderForm } from '@/components/folders';
 import { UiConfirmModal, UiContextMenu, UiSelect, Icon, type ContextMenuItem as UiContextMenuItem } from '@/components/ui';
 import { ICONS, type AppIconName } from '@/assets/icons';
@@ -44,6 +51,9 @@ type EditorMode = 'wysiwyg' | 'markdown';
 // --- State ---
 const notes = ref<Note[]>([]);
 const selectedId = ref<string | null>(null);
+const peekOpen = ref(false);
+const peekMode = ref<Extract<OpenInMode, 'sidePeek' | 'centerPeek'>>('sidePeek');
+const peekNote = ref<Note | null>(null);
 
 const draftTitle = ref('');
 const draftKind = ref<EntityKind>('note');
@@ -416,6 +426,37 @@ async function selectById(id: string): Promise<void> {
     applyDraft(n);
     recentNotes.record(id);
   }
+}
+
+async function openNoteFullPage(id: string): Promise<void> {
+  peekOpen.value = false;
+  peekNote.value = null;
+  await router.push({ path: '/', query: { ...route.query, note: id } });
+  await selectById(id);
+}
+
+async function openNotePeek(id: string, mode: Extract<OpenInMode, 'sidePeek' | 'centerPeek'>): Promise<void> {
+  let note = notes.value.find((n) => n.id === id) ?? null;
+  if (!note) {
+    try {
+      note = await api.notes.get(id);
+      notes.value = [note, ...notes.value.filter((n) => n.id !== id)];
+    } catch {
+      return;
+    }
+  }
+  peekMode.value = mode;
+  peekNote.value = note;
+  peekOpen.value = true;
+  recentNotes.record(id);
+}
+
+function onDatabaseRowOpen(event: Event): void {
+  const custom = event as CustomEvent<DatabaseRowOpenDetail>;
+  const detail = custom.detail;
+  if (!detail?.noteId || !isPeekOpenMode(detail.mode)) return;
+  custom.preventDefault();
+  void openNotePeek(detail.noteId, detail.mode);
 }
 
 /**
@@ -806,6 +847,7 @@ watch(selectedId, () => {
 
 // --- Lifecycle ---
 onMounted(() => {
+  window.addEventListener(DATABASE_ROW_OPEN_EVENT, onDatabaseRowOpen as EventListener);
   void (async () => {
     await Promise.all([load(), folders.load()]);
     const folderParam = route.query.folder;
@@ -824,6 +866,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  window.removeEventListener(DATABASE_ROW_OPEN_EVENT, onDatabaseRowOpen as EventListener);
   if (tickHandle) clearInterval(tickHandle);
   semanticAbort?.abort();
   semanticAbort = null;
@@ -904,6 +947,13 @@ onBeforeUnmount(() => {
 
     <NoteCreateModal v-model="createNoteOpen" :default-folder-id="selectedFolderId" :busy="createNoteBusy"
       :error="createNoteError" context="notes" @submit="createNew" />
+
+    <NotePeekOverlay
+      v-model="peekOpen"
+      :note="peekNote"
+      :mode="peekMode"
+      :icon-catalog="editorIconCatalog"
+      @open-full-page="openNoteFullPage" />
 
     <ApplyTemplateModal
       v-if="selected"

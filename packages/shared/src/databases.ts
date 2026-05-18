@@ -1,21 +1,32 @@
 // ===== Notion-like Database blocks =====
 //
-// A Database is a server-owned data source that lives independently from
-// any single note. Every "row" of a Database is a real {@link Note} (so
-// each row keeps its own editable page, lock, tags, links, properties,
-// graph membership), tied to the Database by a membership row in
-// `database_rows`. The Database itself stores schema (property
-// definitions with `scope='database'`), saved Views (table / list / …)
-// and metadata (title, icon, description).
+// Conceptual hierarchy:
 //
-// In the Tiptap editor a Database is rendered through a `database` node
-// whose attributes carry only stable references — `databaseId`, an
-// optional `viewId`, and a `schemaVersion` for forward-compat. The node
-// view never embeds rows or schema; it asks the server for them on mount.
+//   Database (a.k.a. "datasource") — server-owned, globally-listed,
+//   independent of any note. Owns its schema (property definitions with
+//   `scope='database'`) and row memberships (`database_rows`). Lifecycle
+//   is managed both from the global `/databases` manager surface and
+//   inline from any database block (via "create new datasource").
 //
-// Multiple `database` blocks can point at the same `databaseId` — that
-// is the linked-database pattern: each block shows the shared data
-// through a different saved view.
+//   ↓
+//
+//   Database block — a `database` Tiptap node embedded in a note. Owns
+//   ONLY a stable `blockId`, an `activeViewId` and a `schemaVersion`.
+//   The block is not bound to a datasource directly: each of its views
+//   carries its own `dataSourceDatabaseId`. A brand-new block has zero
+//   views and shows an unbound picker prompting the user to create or
+//   link a datasource (which seeds the first view).
+//
+//   ↓
+//
+//   BlockView — a saved layout (table / board / gallery / …) that
+//   belongs to a specific block (`blockId`) and points at a specific
+//   datasource (`dataSourceDatabaseId`, required). A block can have
+//   multiple views, each pointing at the same or different datasources.
+//
+// Each row of a Database is a real {@link Note} (so it keeps its own
+// editable page, lock, tags, links, properties, graph membership), tied
+// to the Database by a membership row in `database_rows`.
 
 import type { UUID } from './index.js';
 import type { FilterNode } from './query/filters.js';
@@ -144,21 +155,26 @@ export const EMPTY_DATABASE_VIEW_CONFIG: DatabaseViewConfig = {
   layout: null,
 };
 
-/** A saved view on a Database. */
+/**
+ * A saved view that belongs to one database block and points at one
+ * datasource. Every block view is block-scoped (lives or dies with its
+ * block) and references its datasource explicitly — there is no notion
+ * of a "block's default database" any more.
+ */
 export interface DatabaseView {
   id: UUID;
-  databaseId: UUID;
+  /** Block this view belongs to (Tiptap node attribute `blockId`). */
+  blockId: string;
+  /**
+   * Datasource queried by this view. Required: a view without a
+   * datasource cannot render anything. ON DELETE CASCADE on the
+   * underlying FK means deleting the datasource also removes this view.
+   */
+  dataSourceDatabaseId: UUID;
   name: string;
   type: DatabaseViewType;
-  /** LexoRank string for stable ordering within the database. */
+  /** LexoRank string for stable ordering within the block. */
   position: string;
-  /**
-   * Optional per-view datasource override. When set (and different
-   * from the parent block's bound database), this view resolves its
-   * rows and schema against this database instead. `null` falls back
-   * to the parent block's `databaseId`.
-   */
-  dataSourceDatabaseId?: UUID | null;
   config: DatabaseViewConfig;
   createdAt: string;
   updatedAt: string;
@@ -181,34 +197,32 @@ export interface DatabaseRow {
  * Current persisted schema version of `DatabaseBlockAttrs`. Bumped only
  * when the on-disk attribute shape changes; the editor's
  * `safeParse` fall back tolerates older payloads without crashing.
+ *
+ * v2: dropped the inline `databaseId` / `viewId` references. The block
+ * no longer owns a datasource — its views do. The active view selection
+ * is preserved as a stable id; the source/type/config live server-side.
  */
-export const DATABASE_BLOCK_SCHEMA_VERSION = 1;
+export const DATABASE_BLOCK_SCHEMA_VERSION = 2;
 
 /**
  * Attributes serialized on the Tiptap `database` node. Stable, minimal,
- * and reference-only — every authoritative piece of data (schema, rows,
- * views) lives server-side.
+ * and reference-only — every authoritative piece of data (views,
+ * schema, rows, view config) lives server-side.
  */
 export interface DatabaseBlockAttrs {
-  /** Stable block id (UI keying + future analytics). */
+  /** Stable block id (UI keying, foreign key for `database_block_views`). */
   blockId: string;
-  /** Target database. `null` means "unbound" (user must create or link). */
-  databaseId: UUID | null;
-  /**
-   * Optional saved view to render. `null` falls back to the database's
-   * first view (by position).
-   */
-  viewId: UUID | null;
+  /** Currently focused view; `null` until at least one view exists. */
+  activeViewId: UUID | null;
   /** Persisted attribute schema version. */
   schemaVersion: number;
 }
 
-/** Factory for a fresh, unbound block. */
+/** Factory for a fresh, empty block (zero views, no active selection). */
 export function createDatabaseBlockAttrs(blockId: string): DatabaseBlockAttrs {
   return {
     blockId,
-    databaseId: null,
-    viewId: null,
+    activeViewId: null,
     schemaVersion: DATABASE_BLOCK_SCHEMA_VERSION,
   };
 }
@@ -224,16 +238,15 @@ export interface DatabasePagination {
 }
 
 /**
- * Request payload for `POST /api/databases/:databaseId/rows/query`.
- * Combines the row source (the database) with the view configuration
- * the client wants applied. Sending a `viewId` is a shorthand to load
- * the saved config; sending explicit `config` overrides it (used for
- * unsaved tweaks in the toolbar).
+ * Request payload for `POST /api/databases/:databaseId/query`.
+ *
+ * Pure datasource query: the server applies the inline `config` (filter,
+ * sort, …) against the datasource's row set and returns a page of
+ * snapshots. View identity is *not* used here — the client (which knows
+ * the active block view) is the one that supplies the effective config.
  */
 export interface DatabaseQueryRequest {
-  /** Saved view to load the config from. Optional. */
-  viewId?: UUID | null;
-  /** Inline config override; merged on top of the saved view if any. */
+  /** Inline config used by the server to sort/filter the result set. */
   config?: Partial<DatabaseViewConfig>;
   /** Pagination window. */
   pagination?: DatabasePagination;
@@ -296,27 +309,30 @@ export interface DatabaseUpdateInput {
   archived?: boolean;
 }
 
-/** Input shape for `POST /api/databases/:id/views`. */
+/** Input shape for `POST /api/block-views`. */
 export interface DatabaseViewCreateInput {
+  /** Owning block (Tiptap node `blockId`). */
+  blockId: string;
+  /** Datasource the new view queries against. Required. */
+  dataSourceDatabaseId: UUID;
   name: string;
   type: DatabaseViewType;
   position?: string;
   config?: Partial<DatabaseViewConfig>;
 }
 
-/** Input shape for `PATCH /api/databases/:databaseId/views/:viewId`. */
+/** Input shape for `PATCH /api/block-views/:viewId`. */
 export interface DatabaseViewUpdateInput {
   name?: string;
   type?: DatabaseViewType;
   position?: string;
   config?: Partial<DatabaseViewConfig>;
   /**
-   * Optional per-view datasource override. When set (and different from
-   * the parent block's database id), the view queries rows and schema
-   * against the override database. Pass `null` to clear the override
-   * and fall back to the block's database.
+   * Swap the view's datasource. Required to remain set (no `null`
+   * value): a view always points at exactly one datasource. Use
+   * DELETE to remove the view entirely.
    */
-  dataSourceDatabaseId?: UUID | null;
+  dataSourceDatabaseId?: UUID;
 }
 
 /** Input shape for `POST /api/databases/:id/rows`. */
@@ -337,8 +353,15 @@ export interface DatabaseRowCreateInput {
  * editor: one round-trip gives the toolbar everything it needs to
  * render the database without follow-up fetches for views and schema.
  */
+/**
+ * Bundle returned by `GET /api/databases/:id`. The hot path for the
+ * datasource manager and for any block view loading its datasource:
+ * one round-trip gives both the database metadata and its property
+ * schema. Block-scoped views are NOT part of this bundle — they belong
+ * to blocks, not to datasources, and are fetched via the
+ * `/api/block-views` namespace keyed by `blockId`.
+ */
 export interface DatabaseBundle {
   database: Database;
-  views: DatabaseView[];
   schema: PropertyDefinition[];
 }

@@ -190,7 +190,7 @@ function remove(id: string): void {
     width: 14px;
     height: 14px;
     color: var(--fg-subtle);
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
 }
 

@@ -44,7 +44,6 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import {
   databaseRows,
-  databaseViews,
   databases,
   propertyDefinitions,
 } from '../db/schema.js';
@@ -58,46 +57,24 @@ import {
   createDatabase,
   createDatabaseProperty,
   createRow,
-  createView,
   databaseRowToDto,
   deleteDatabase,
   deleteRow,
-  deleteView,
   loadDatabaseBundle,
   membershipRowToDto,
   queryDatabaseRows,
   reorderRows,
   updateDatabase,
-  updateView,
-  viewRowToDto,
 } from '../services/databases.js';
 import type { DatabaseQueryRequest } from '@continuum/shared';
 
 // ───────────────────────────── Schemas ─────────────────────────────────
 
 const idParamSchema = z.object({ id: z.string().uuid() });
-const viewParamSchema = z.object({
-  id: z.string().uuid(),
-  viewId: z.string().uuid(),
-});
 const rowParamSchema = z.object({
   id: z.string().uuid(),
   rowId: z.string().uuid(),
 });
-
-const databaseTypeSchema = z.enum([
-  'table',
-  'board',
-  'gallery',
-  'list',
-  'calendar',
-  'timeline',
-  'chart',
-  'dashboard',
-  'feed',
-  'map',
-  'form',
-]);
 
 const createDatabaseSchema = z.object({
   title: z.string().max(200).optional(),
@@ -111,21 +88,6 @@ const updateDatabaseSchema = z.object({
   icon: z.string().max(60).nullable().optional(),
   locked: z.boolean().optional(),
   archived: z.boolean().optional(),
-});
-
-const createViewSchema = z.object({
-  name: z.string().min(1).max(120),
-  type: databaseTypeSchema,
-  position: z.string().max(120).optional(),
-  config: z.record(z.string(), z.unknown()).optional(),
-});
-
-const updateViewSchema = z.object({
-  name: z.string().min(1).max(120).optional(),
-  type: databaseTypeSchema.optional(),
-  position: z.string().max(120).optional(),
-  dataSourceDatabaseId: z.string().uuid().nullable().optional(),
-  config: z.record(z.string(), z.unknown()).optional(),
 });
 
 const createPropertySchema = z.object({
@@ -153,7 +115,6 @@ const reorderRowsSchema = z.object({
 });
 
 const querySchema = z.object({
-  viewId: z.string().uuid().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   pagination: z
     .object({
@@ -209,54 +170,6 @@ export const databaseRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', async (req) => {
     const { id } = idParamSchema.parse(req.params);
     await deleteDatabase(id);
-    return { ok: true } as const;
-  });
-
-  // ───────────── Views ─────────────
-
-  app.get('/:id/views', async (req, reply) => {
-    const { id } = idParamSchema.parse(req.params);
-    const [database] = await db.select().from(databases).where(eq(databases.id, id)).limit(1);
-    if (!database) return reply.notFound('Database not found');
-    const rows = await db
-      .select()
-      .from(databaseViews)
-      .where(eq(databaseViews.databaseId, id))
-      .orderBy(asc(databaseViews.position));
-    return rows.map(viewRowToDto);
-  });
-
-  app.post('/:id/views', async (req, reply) => {
-    const { id } = idParamSchema.parse(req.params);
-    const body = createViewSchema.parse(req.body);
-    const [database] = await db.select().from(databases).where(eq(databases.id, id)).limit(1);
-    if (!database) return reply.notFound('Database not found');
-    return createView(id, body);
-  });
-
-  app.patch('/:id/views/:viewId', async (req, reply) => {
-    const { id, viewId } = viewParamSchema.parse(req.params);
-    const body = updateViewSchema.parse(req.body);
-    const [existing] = await db
-      .select()
-      .from(databaseViews)
-      .where(and(eq(databaseViews.id, viewId), eq(databaseViews.databaseId, id)))
-      .limit(1);
-    if (!existing) return reply.notFound('View not found');
-    const updated = await updateView(viewId, body);
-    if (!updated) return reply.notFound('View not found');
-    return updated;
-  });
-
-  app.delete('/:id/views/:viewId', async (req, reply) => {
-    const { id, viewId } = viewParamSchema.parse(req.params);
-    const [existing] = await db
-      .select()
-      .from(databaseViews)
-      .where(and(eq(databaseViews.id, viewId), eq(databaseViews.databaseId, id)))
-      .limit(1);
-    if (!existing) return reply.notFound('View not found');
-    await deleteView(viewId);
     return { ok: true } as const;
   });
 

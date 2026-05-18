@@ -95,7 +95,7 @@ function toggle(): void {
 .prop-verif {
     display: inline-flex; align-items: center; gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    border-radius: 999px; border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm); border: var(--border-width-1) solid var(--border);
     background: transparent; color: var(--fg-muted);
     font-size: var(--text-xs); font-weight: var(--font-weight-semibold);
     cursor: pointer;

@@ -404,18 +404,21 @@ export const api = {
       }),
   },
   /**
-   * Notion-like Databases. Rows are real notes — value mutations on a
-   * row still go through `api.properties.setValue(noteId, propId, …)`.
+   * Notion-like Databases (a.k.a. datasources). Rows are real notes —
+   * value mutations on a row still go through
+   * `api.properties.setValue(noteId, propId, …)`. Saved views are not a
+   * property of the datasource itself; they live per Tiptap block and
+   * are managed through `api.blockViews`.
    */
   databases: {
     list: () => http<Database[]>(`/databases`),
-    /** Create a fresh database (server also seeds a default Table view). */
+    /** Create a fresh, view-less datasource. */
     create: (data: DatabaseCreateInput) =>
-      http<{ database: Database; views: DatabaseView[] }>(`/databases`, {
+      http<{ database: Database }>(`/databases`, {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    /** Hot path for the editor: database + views + schema in one round-trip. */
+    /** Hot path for editor + manager: database + schema in one round-trip. */
     bundle: (id: string) => http<DatabaseBundle>(`/databases/${id}`),
     update: (id: string, data: DatabaseUpdateInput) =>
       http<Database>(`/databases/${id}`, {
@@ -424,22 +427,6 @@ export const api = {
       }),
     remove: (id: string) =>
       http<{ ok: true }>(`/databases/${id}`, { method: 'DELETE' }),
-    views: {
-      list: (databaseId: string) =>
-        http<DatabaseView[]>(`/databases/${databaseId}/views`),
-      create: (databaseId: string, data: DatabaseViewCreateInput) =>
-        http<DatabaseView>(`/databases/${databaseId}/views`, {
-          method: 'POST',
-          body: JSON.stringify(data),
-        }),
-      update: (databaseId: string, viewId: string, data: DatabaseViewUpdateInput) =>
-        http<DatabaseView>(`/databases/${databaseId}/views/${viewId}`, {
-          method: 'PATCH',
-          body: JSON.stringify(data),
-        }),
-      remove: (databaseId: string, viewId: string) =>
-        http<{ ok: true }>(`/databases/${databaseId}/views/${viewId}`, { method: 'DELETE' }),
-    },
     properties: {
       list: (databaseId: string) =>
         http<PropertyDefinition[]>(`/databases/${databaseId}/properties`),
@@ -488,6 +475,28 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(request),
       }),
+  },
+  /**
+   * Block-scoped saved views. Each view belongs to a single Tiptap
+   * `database` block (keyed by `blockId`) and points at exactly one
+   * datasource (`dataSourceDatabaseId`).
+   */
+  blockViews: {
+    list: (blockId: string) =>
+      http<DatabaseView[]>(`/block-views?blockId=${encodeURIComponent(blockId)}`),
+    get: (viewId: string) => http<DatabaseView>(`/block-views/${viewId}`),
+    create: (data: DatabaseViewCreateInput) =>
+      http<DatabaseView>(`/block-views`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (viewId: string, data: DatabaseViewUpdateInput) =>
+      http<DatabaseView>(`/block-views/${viewId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    remove: (viewId: string) =>
+      http<{ ok: true }>(`/block-views/${viewId}`, { method: 'DELETE' }),
   },
 };
 

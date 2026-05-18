@@ -22,18 +22,18 @@
  * European convention shipped elsewhere in the app (see
  * `UiDatePicker`).
  */
-import { computed, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, ref, watch } from 'vue';
 import { Icon } from '@/components/ui';
 import type {
     DatabaseRowSnapshot,
     PropertyDefinition,
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
+import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
-const router = useRouter();
+const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
 
 // ── Configuration: date property ─────────────────────────────────────────
 
@@ -41,10 +41,12 @@ const layout = computed<Record<string, unknown>>(
     () => (props.activeView.config.layout ?? {}) as Record<string, unknown>,
 );
 
+const explicitDatePropertyId = computed<string | null>(() =>
+    typeof layout.value.datePropertyId === 'string' ? layout.value.datePropertyId : null,
+);
+
 const dateProperty = computed<PropertyDefinition | null>(() => {
-    const explicit = typeof layout.value.datePropertyId === 'string'
-        ? layout.value.datePropertyId
-        : null;
+    const explicit = explicitDatePropertyId.value;
     if (explicit) {
         const def = props.schema.find((p) => p.id === explicit);
         if (def && (def.type === 'date' || def.type === 'dateRange')) return def;
@@ -52,11 +54,16 @@ const dateProperty = computed<PropertyDefinition | null>(() => {
     return props.schema.find((p) => p.type === 'date' || p.type === 'dateRange') ?? null;
 });
 
-if (dateProperty.value && typeof layout.value.datePropertyId !== 'string') {
-    emit('view-config-changed', {
-        layout: { ...layout.value, datePropertyId: dateProperty.value.id },
-    });
-}
+watch(
+    dateProperty,
+    (property) => {
+        if (!property || explicitDatePropertyId.value === property.id) return;
+        emit('view-config-changed', {
+            layout: { datePropertyId: property.id },
+        });
+    },
+    { immediate: true },
+);
 
 // ── Month navigation ─────────────────────────────────────────────────────
 
@@ -167,12 +174,12 @@ const grid = computed<DayCell[]>(() => {
 });
 
 function openRow(row: DatabaseRowSnapshot): void {
-    void router.push({ path: '/', query: { note: row.noteId } });
+    openRowById(row.noteId);
 }
 </script>
 
 <template>
-    <div class="db-cal">
+    <div class="db-cal" :class="{ 'db-cal--wrap': common.wrapContent }">
         <header class="db-cal__head">
             <button type="button" class="db-cal__nav" @click="shiftMonth(-1)" aria-label="Previous month">
                 <Icon name="chevron-left" :size="14" />
@@ -205,7 +212,13 @@ function openRow(row: DatabaseRowSnapshot): void {
                         :key="`${cell.iso}-${row.rowId}`"
                         class="db-cal__event"
                         @click="openRow(row)">
-                        {{ row.note.title || 'Untitled' }}
+                        <Icon
+                            v-if="common.showPageIcon"
+                            :name="iconOf(row.note.kind)"
+                            :size="11"
+                            class="db-cal__event-icon"
+                            :style="{ color: colorOf(row.note.kind) }" />
+                        <span class="db-cal__event-title">{{ row.note.title || 'Untitled' }}</span>
                     </li>
                 </ul>
             </div>
@@ -237,7 +250,7 @@ function openRow(row: DatabaseRowSnapshot): void {
     color: var(--fg-muted, #a09b90);
     cursor: pointer;
     padding: 0.25rem 0.5rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font: inherit;
 }
 
@@ -313,16 +326,39 @@ function openRow(row: DatabaseRowSnapshot): void {
 }
 
 .db-cal__event {
+    display: flex;
+    align-items: center;
+    gap: 3px;
     padding: 2px 4px;
     background: var(--surface-soft, rgba(255, 255, 255, 0.04));
     border-left: 3px solid var(--accent, #e8dcc8);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     font-size: 0.7rem;
     color: var(--fg, #ededed);
     cursor: pointer;
     overflow: hidden;
+}
+
+.db-cal__event-icon {
+    flex: 0 0 auto;
+}
+
+.db-cal__event-title {
+    min-width: 0;
+    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.db-cal--wrap .db-cal__event {
+    align-items: flex-start;
+}
+
+.db-cal--wrap .db-cal__event-title {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: break-word;
 }
 
 .db-cal__event:hover {

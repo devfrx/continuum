@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
     z-index: calc(var(--z-modal) + 1);
     background: var(--bg-elev);
     border: var(--border-width-1) solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.35));
     padding: var(--space-1);
     overflow-y: auto;
@@ -341,7 +341,7 @@ onBeforeUnmount(() => {
     font-size: var(--text-base);
     text-align: left;
     padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     display: flex;
     align-items: center;

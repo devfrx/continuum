@@ -37,14 +37,14 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
  * The track has an intrinsic height (defaults to 32px / 28px for `sm`) that
  * the parent can override via the `--ui-seg-h` custom property. Buttons
  * stretch to fill the track height with `padding-block: 0`, so the active
- * pill never grows beyond the track regardless of its `box-shadow`.
+ * selection never grows beyond the track regardless of its `box-shadow`.
  */
 .ui-seg {
     display: inline-flex;
     align-items: stretch;
     background: var(--bg-soft);
     padding: 2px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     border: var(--border-width-1) solid var(--border);
     gap: 2px;
     height: var(--ui-seg-h, 32px);
@@ -67,7 +67,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
     font: inherit;
     cursor: pointer;
     padding: 0 var(--space-5);
-    border-radius: calc(var(--radius-sm) - 2px);
+    border-radius: var(--radius-sm);
     line-height: 1;
     display: inline-flex;
     align-items: center;

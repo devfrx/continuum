@@ -70,10 +70,15 @@ export interface DatabaseSchemaChangedEvent {
   databaseId: string;
 }
 
-/** A saved view changed (create / rename / type-change / config / delete). */
-export interface DatabaseViewChangedEvent {
-  kind: 'database.view.changed';
-  databaseId: string;
+/**
+ * A block-scoped saved view changed (create / rename / type-change /
+ * config / source swap / delete). `viewId` is `null` when the event
+ * announces a structural change to the block as a whole (e.g. its
+ * last view was deleted and the block is now unbound again).
+ */
+export interface BlockViewChangedEvent {
+  kind: 'block.view.changed';
+  blockId: string;
   viewId: string | null;
 }
 
@@ -105,7 +110,7 @@ export type RealtimeEvent =
   | DatabaseUpdatedEvent
   | DatabaseDeletedEvent
   | DatabaseSchemaChangedEvent
-  | DatabaseViewChangedEvent
+  | BlockViewChangedEvent
   | DatabaseRowsChangedEvent
   | PropertyValueChangedEvent;
 

@@ -5,8 +5,8 @@
  * panel knows which component to instantiate for the current view
  * type. Every `DatabaseViewType` has exactly one entry: ready types
  * point to their dedicated settings component; planned types fall back
- * to `PlannedLayoutSettings`, which still persists the shared display
- * knobs so the values are ready for the real renderer ships.
+ * to `PlannedLayoutSettings`, which intentionally exposes no controls
+ * until a renderer can consume them.
  */
 import type { Component } from 'vue';
 import type { DatabaseViewType } from '@continuum/shared';
@@ -15,6 +15,9 @@ import BoardLayoutSettings from './BoardLayoutSettings.vue';
 import GalleryLayoutSettings from './GalleryLayoutSettings.vue';
 import CalendarLayoutSettings from './CalendarLayoutSettings.vue';
 import ListLayoutSettings from './ListLayoutSettings.vue';
+import TimelineLayoutSettings from './TimelineLayoutSettings.vue';
+import FeedLayoutSettings from './FeedLayoutSettings.vue';
+import ChartLayoutSettings from './ChartLayoutSettings.vue';
 import PlannedLayoutSettings from './PlannedLayoutSettings.vue';
 
 export const layoutSettingsRegistry: Record<DatabaseViewType, Component> = {
@@ -23,10 +26,10 @@ export const layoutSettingsRegistry: Record<DatabaseViewType, Component> = {
     gallery: GalleryLayoutSettings,
     list: ListLayoutSettings,
     calendar: CalendarLayoutSettings,
-    timeline: PlannedLayoutSettings,
-    chart: PlannedLayoutSettings,
+    timeline: TimelineLayoutSettings,
+    chart: ChartLayoutSettings,
     dashboard: PlannedLayoutSettings,
-    feed: PlannedLayoutSettings,
+    feed: FeedLayoutSettings,
     map: PlannedLayoutSettings,
     form: PlannedLayoutSettings,
 };

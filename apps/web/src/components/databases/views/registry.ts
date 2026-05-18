@@ -22,6 +22,9 @@ import DatabaseListView from '../DatabaseListView.vue';
 import BoardView from './BoardView.vue';
 import GalleryView from './GalleryView.vue';
 import CalendarView from './CalendarView.vue';
+import TimelineView from './TimelineView.vue';
+import FeedView from './FeedView.vue';
+import ChartView from './ChartView.vue';
 import PlaceholderView from './PlaceholderView.vue';
 import type { DatabaseViewRegistryEntry } from './types';
 
@@ -71,16 +74,16 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         label: 'Timeline',
         description: 'Horizontal bars spanning a date range.',
         icon: 'view-timeline',
-        status: 'planned',
-        component: PlaceholderView,
+        status: 'ready',
+        component: TimelineView,
     },
     chart: {
         type: 'chart',
         label: 'Chart',
         description: 'Aggregate numbers into bars, lines or pies.',
         icon: 'view-chart',
-        status: 'planned',
-        component: PlaceholderView,
+        status: 'ready',
+        component: ChartView,
     },
     dashboard: {
         type: 'dashboard',
@@ -95,8 +98,8 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         label: 'Feed',
         description: 'Reverse-chronological stream of entries.',
         icon: 'view-feed',
-        status: 'planned',
-        component: PlaceholderView,
+        status: 'ready',
+        component: FeedView,
     },
     map: {
         type: 'map',

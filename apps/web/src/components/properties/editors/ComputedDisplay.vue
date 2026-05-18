@@ -102,7 +102,7 @@ const display = computed<{ text: string; muted: boolean; icon?: AppIconName; chi
 .prop-disp__count {
     display: inline-flex; align-items: center; justify-content: center;
     min-width: 18px; height: 16px; padding: 0 4px;
-    border-radius: 999px; background: var(--bg-soft);
+    border-radius: var(--radius-sm); background: var(--bg-soft);
     color: var(--fg-subtle); font-size: var(--text-2xs, 10px);
     font-weight: var(--font-weight-semibold);
 }

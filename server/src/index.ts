@@ -16,6 +16,7 @@ import { graphRoutes } from './routes/graph.js';
 import { uploadRoutes } from './routes/uploads.js';
 import { templateRoutes } from './routes/templates.js';
 import { databaseRoutes } from './routes/databases.js';
+import { blockViewRoutes } from './routes/blockViews.js';
 import { ensureDatabaseSchema } from './db/schemaMaintenance.js';
 import { seedKinds } from './db/seed.js';
 import { waitForDatabase } from './db/readiness.js';
@@ -64,6 +65,7 @@ async function start() {
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
   await app.register(templateRoutes, { prefix: '/api' });
   await app.register(databaseRoutes, { prefix: '/api/databases' });
+  await app.register(blockViewRoutes, { prefix: '/api/block-views' });
 
   try {
     await waitForDatabase({ logger: app.log });

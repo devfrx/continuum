@@ -289,11 +289,11 @@ export const propertyValues = pgTable(
 );
 
 /**
- * Notion-style Database — a persistent data source that lives outside any
- * single note. Schema (property definitions with `scope='database'`),
- * saved views (`database_views`) and row membership (`database_rows`)
- * hang off it via cascading FKs. Tiptap blocks render a database through
- * a stable `databaseId` reference and pick a view at render time.
+ * Notion-style Database — a persistent datasource that lives outside any
+ * single note. Schema (property definitions with `scope='database'`) and
+ * row membership (`database_rows`) hang off it via cascading FKs. Saved
+ * views, however, live block-scoped in `database_block_views` — a
+ * database is purely a row source.
  */
 export const databases = pgTable('databases', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -301,8 +301,8 @@ export const databases = pgTable('databases', {
   description: text('description'),
   icon: text('icon'),
   /**
-   * Mirrors `notes.locked` semantics — when true, every schema / view /
-   * row / cell mutation is rejected server-side with HTTP 423.
+   * Mirrors `notes.locked` semantics — when true, every schema / row /
+   * cell mutation is rejected server-side with HTTP 423.
    */
   locked: boolean('locked').notNull().default(false),
   /** Hidden from default listings when true. Rows remain intact. */
@@ -312,33 +312,31 @@ export const databases = pgTable('databases', {
 });
 
 /**
- * Saved view on a Database. Multiple views can render the same row set
- * differently (table, list, …) and persist their own filter / sort /
- * grouping / visibility / layout state inside `config` (jsonb).
+ * Saved view that belongs to a specific database block and points at a
+ * specific datasource. Multiple views on the same block can target the
+ * same or different datasources, each persisting its own filter / sort
+ * / grouping / visibility / layout in `config` (jsonb).
+ *
+ * The block_id column is a plain text foreign key to the Tiptap node
+ * attribute — there is no `blocks` table because blocks live inside the
+ * note body JSON. Lifecycle is therefore managed cooperatively: views
+ * are cleaned up on datasource delete (ON DELETE CASCADE on
+ * `data_source_database_id`) and by the editor when the user removes
+ * the block.
  */
-export const databaseViews = pgTable(
-  'database_views',
+export const databaseBlockViews = pgTable(
+  'database_block_views',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    databaseId: uuid('database_id')
+    blockId: text('block_id').notNull(),
+    dataSourceDatabaseId: uuid('data_source_database_id')
       .references(() => databases.id, { onDelete: 'cascade' })
       .notNull(),
     name: text('name').notNull(),
-    /** 'table' | 'list' | 'board' | 'calendar' | 'timeline' | 'gallery'. */
+    /** `DatabaseViewType` from `@continuum/shared`. */
     type: text('type').notNull(),
-    /** LexoRank string for stable ordering inside the database. */
+    /** LexoRank string for stable ordering inside the block. */
     position: text('position').notNull().default('a0'),
-    /**
-     * Optional per-view datasource override. When set (and different
-     * from the parent block's `databaseId`), this view resolves rows
-     * and schema against this database instead. Allows a single block
-     * to expose multiple views that point at unrelated databases.
-     * `null` falls back to the parent block's databaseId.
-     */
-    dataSourceDatabaseId: uuid('data_source_database_id').references(
-      () => databases.id,
-      { onDelete: 'set null' },
-    ),
     /**
      * `DatabaseViewConfig` (see `@continuum/shared`). Held as `jsonb`
      * because the shape grows per view type without altering the table.
@@ -348,8 +346,9 @@ export const databaseViews = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    databaseIdx: index('database_views_database_idx').on(t.databaseId),
-    positionIdx: index('database_views_position_idx').on(t.databaseId, t.position),
+    blockIdx: index('database_block_views_block_idx').on(t.blockId),
+    positionIdx: index('database_block_views_position_idx').on(t.blockId, t.position),
+    sourceIdx: index('database_block_views_source_idx').on(t.dataSourceDatabaseId),
   }),
 );
 
@@ -508,7 +507,7 @@ export type PageTemplateApplicationRow = typeof pageTemplateApplications.$inferS
 export type NewPageTemplateApplication = typeof pageTemplateApplications.$inferInsert;
 export type DatabaseRowEntity = typeof databases.$inferSelect;
 export type NewDatabaseEntity = typeof databases.$inferInsert;
-export type DatabaseViewRow = typeof databaseViews.$inferSelect;
-export type NewDatabaseView = typeof databaseViews.$inferInsert;
+export type DatabaseViewRow = typeof databaseBlockViews.$inferSelect;
+export type NewDatabaseView = typeof databaseBlockViews.$inferInsert;
 export type DatabaseMembershipRow = typeof databaseRows.$inferSelect;
 export type NewDatabaseMembership = typeof databaseRows.$inferInsert;

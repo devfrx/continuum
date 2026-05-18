@@ -13,8 +13,7 @@
  * persists the choice through `view-config-changed` so the saved view
  * stays explicit.
  */
-import { computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, watch } from 'vue';
 import { Icon } from '@/components/ui';
 import type {
     DatabaseRowSnapshot,
@@ -22,33 +21,45 @@ import type {
     PropertyOption,
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
+import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
-const router = useRouter();
+const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
 
 const layout = computed<Record<string, unknown>>(
     () => (props.activeView.config.layout ?? {}) as Record<string, unknown>,
 );
 
+const hasExplicitCoverProperty = computed(() =>
+    Object.prototype.hasOwnProperty.call(layout.value, 'coverPropertyId'),
+);
+
 const coverPropertyId = computed<string | null>(() => {
-    const explicit = typeof layout.value.coverPropertyId === 'string'
-        ? layout.value.coverPropertyId
-        : null;
-    if (explicit) {
+    if (hasExplicitCoverProperty.value) {
+        const explicit = layout.value.coverPropertyId;
+        if (typeof explicit !== 'string') return null;
         const def = props.schema.find((p) => p.id === explicit);
         if (def) return def.id;
     }
     return props.schema.find((p) => p.type === 'files' || p.type === 'url')?.id ?? null;
 });
 
-const layoutMissingExplicit = computed(() => typeof layout.value.coverPropertyId !== 'string');
+const layoutNeedsPersist = computed(() => {
+    const propertyId = coverPropertyId.value;
+    return !!propertyId && layout.value.coverPropertyId !== propertyId;
+});
 
-if (coverPropertyId.value && layoutMissingExplicit.value) {
-    emit('view-config-changed', {
-        layout: { ...layout.value, coverPropertyId: coverPropertyId.value },
-    });
-}
+watch(
+    [coverPropertyId, layoutNeedsPersist],
+    ([propertyId, needsPersist]) => {
+        if (!propertyId || !needsPersist) return;
+        emit('view-config-changed', {
+            layout: { coverPropertyId: propertyId },
+        });
+    },
+    { immediate: true },
+);
 
 const coverProperty = computed<PropertyDefinition | null>(
     () => props.schema.find((p) => p.id === coverPropertyId.value) ?? null,
@@ -102,12 +113,12 @@ function detailLines(row: DatabaseRowSnapshot): string[] {
 }
 
 function openRow(row: DatabaseRowSnapshot): void {
-    void router.push({ path: '/', query: { note: row.noteId } });
+    openRowById(row.noteId);
 }
 </script>
 
 <template>
-    <div class="db-gallery">
+    <div class="db-gallery" :class="{ 'db-gallery--wrap': common.wrapContent }">
         <div v-if="!rows.length" class="db-gallery__empty">
             <Icon name="view-gallery" :size="22" />
             <p>No rows yet — switch to Table or use the toolbar to add the first one.</p>
@@ -126,7 +137,15 @@ function openRow(row: DatabaseRowSnapshot): void {
                     <Icon name="image" :size="22" />
                 </div>
                 <div class="db-gallery__body">
-                    <strong class="db-gallery__title">{{ row.note.title || 'Untitled' }}</strong>
+                    <div class="db-gallery__title-row">
+                        <Icon
+                            v-if="common.showPageIcon"
+                            :name="iconOf(row.note.kind)"
+                            :size="13"
+                            class="db-gallery__icon"
+                            :style="{ color: colorOf(row.note.kind) }" />
+                        <strong class="db-gallery__title">{{ row.note.title || 'Untitled' }}</strong>
+                    </div>
                     <p v-for="(line, i) in detailLines(row)" :key="i" class="db-gallery__line">
                         {{ line }}
                     </p>
@@ -144,28 +163,32 @@ function openRow(row: DatabaseRowSnapshot): void {
 .db-gallery__grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 0.7rem;
+    gap: var(--space-3);
 }
 
 .db-gallery__card {
-    background: var(--bg-elev, #232323);
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
-    border-radius: 8px;
+    background: var(--surface-1);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
     overflow: hidden;
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    transition: border-color 80ms ease, transform 80ms ease;
+    transition:
+        border-color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        transform var(--duration-fast) var(--ease-standard);
 }
 
 .db-gallery__card:hover {
-    border-color: var(--accent, #e8dcc8);
+    border-color: var(--border-strong);
+    background: var(--surface-hover);
     transform: translateY(-1px);
 }
 
 .db-gallery__cover {
     aspect-ratio: 16 / 9;
-    background-color: var(--bg-soft, #1c1c1c);
+    background-color: var(--surface-2);
     background-size: cover;
     background-position: center;
 }
@@ -174,21 +197,35 @@ function openRow(row: DatabaseRowSnapshot): void {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--fg-muted, #a09b90);
+    color: var(--text-muted);
 }
 
 .db-gallery__body {
-    padding: 0.55rem 0.65rem 0.65rem;
+    padding: var(--space-2) var(--space-3) var(--space-3);
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: var(--space-1);
     min-width: 0;
 }
 
+.db-gallery__title-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.db-gallery__icon {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+}
+
 .db-gallery__title {
-    font-size: 0.85rem;
-    color: var(--fg, #ededed);
-    line-height: 1.2;
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-primary);
+    line-height: var(--leading-tight);
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -196,20 +233,28 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 .db-gallery__line {
     margin: 0;
-    font-size: 0.72rem;
-    color: var(--fg-muted, #a09b90);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.db-gallery--wrap .db-gallery__title,
+.db-gallery--wrap .db-gallery__line {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: break-word;
 }
 
 .db-gallery__empty {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.4rem;
-    padding: 2.5rem 1rem;
-    color: var(--fg-muted, #a09b90);
+    gap: var(--space-2);
+    padding: var(--space-10, 40px) var(--space-5);
+    color: var(--text-muted);
     text-align: center;
 }
 </style>

@@ -2,14 +2,16 @@
 /**
  * DataSourcePanel.vue — content of the "Data source" section.
  *
- * Extracted from `DatabaseViewSettings.vue` so the popover shell stays
- * thin and each section panel lives in its own file with focused
- * responsibilities. Lets the user override the database this view
- * resolves against; the parent block's `databaseId` stays put.
+ * Lets the user swap the datasource this view resolves against. With
+ * the new model each block view targets exactly one datasource (no
+ * parent/override concept), so the panel is just a flat picker:
  *
- * Owns no business logic — emits `change-source` with the target db id
- * (or `null` to clear the override) and lets the toolbar lift it up to
- * `useDatabaseBundle.patchView`.
+ *   – Click any row → emit `change-source` with that UUID.
+ *   – The currently-bound datasource is badged "current"; clicking it
+ *     is a no-op (parent toolbar can collapse the popover anyway).
+ *
+ * Datasource catalogue management (rename / delete / archive) lives in
+ * the dedicated `/databases` manager view, not here.
  */
 import { onMounted, ref } from 'vue';
 import { api } from '@/api';
@@ -18,14 +20,16 @@ import type { Database, DatabaseView } from '@continuum/shared';
 
 const props = defineProps<{
     view: DatabaseView;
-    /** Database id this view currently resolves against (parent or override). */
-    effectiveDatabaseId: string;
-    /** Parent block's database id — used as the fallback target. */
-    parentDatabaseId: string;
+    /**
+     * Datasource id currently resolved for this view (matches
+     * `view.dataSourceDatabaseId`; passed separately so the body can
+     * override for diagnostics / future scopes without re-rendering).
+     */
+    activeDatasourceId: string | null;
 }>();
 
 const emit = defineEmits<{
-    'change-source': [databaseId: string | null];
+    'change-source': [databaseId: string];
 }>();
 
 const databases = ref<Database[]>([]);
@@ -38,7 +42,7 @@ async function load(): Promise<void> {
     try {
         databases.value = await api.databases.list();
     } catch (err) {
-        error.value = err instanceof Error ? err.message : 'Failed to load databases';
+        error.value = err instanceof Error ? err.message : 'Failed to load datasources';
     } finally {
         loading.value = false;
     }
@@ -46,21 +50,16 @@ async function load(): Promise<void> {
 
 onMounted(load);
 
-const hasOverride = (): boolean =>
-    !!props.view.dataSourceDatabaseId
-    && props.view.dataSourceDatabaseId !== props.parentDatabaseId;
-
 function pickDatabase(database: Database): void {
-    // Picking the parent's database clears the override; any other choice sets it.
-    const next = database.id === props.parentDatabaseId ? null : database.id;
-    emit('change-source', next);
+    if (database.id === props.activeDatasourceId) return;
+    emit('change-source', database.id);
 }
 </script>
 
 <template>
     <div class="data-source">
         <p class="data-source__hint">
-            Choose which database this view resolves rows and schema against. Changing the source resets this view's layout to the defaults of the new database.
+            Choose which datasource this view resolves rows and schema against. Changing the datasource resets this view's layout to the defaults of the new source.
         </p>
         <div v-if="loading" class="data-source__empty">Loading…</div>
         <div v-else-if="error" class="data-source__error">{{ error }}</div>
@@ -69,22 +68,13 @@ function pickDatabase(database: Database): void {
                 v-for="db in databases"
                 :key="db.id"
                 class="data-source__item"
-                :class="{ 'is-active': db.id === effectiveDatabaseId }"
+                :class="{ 'is-active': db.id === activeDatasourceId }"
                 @click.stop="pickDatabase(db)">
-                <Icon :name="(db.icon as never) ?? 'database'" :size="14" />
-                <span class="data-source__name">{{ db.title || 'Untitled database' }}</span>
-                <span v-if="db.id === parentDatabaseId" class="data-source__badge">block default</span>
-                <span v-else-if="db.id === effectiveDatabaseId" class="data-source__badge data-source__badge--active">current</span>
+                <Icon :name="db.icon ?? 'database'" :size="14" />
+                <span class="data-source__name">{{ db.title || 'Untitled datasource' }}</span>
+                <span v-if="db.id === activeDatasourceId" class="data-source__badge data-source__badge--active">current</span>
             </li>
         </ul>
-        <button
-            v-if="hasOverride()"
-            type="button"
-            class="data-source__clear"
-            @click="emit('change-source', null)">
-            <Icon name="refresh" :size="12" />
-            <span>Reset to block default</span>
-        </button>
     </div>
 </template>
 
@@ -92,19 +82,30 @@ function pickDatabase(database: Database): void {
 .data-source {
     display: flex;
     flex-direction: column;
-    gap: 0.55rem;
+    gap: var(--space-3);
 }
 
 .data-source__hint {
     margin: 0;
-    color: var(--fg-muted, #a09b90);
-    font-size: 0.72rem;
-    line-height: 1.35;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: var(--leading-snug, 1.4);
+}
+
+.data-source__empty {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    padding: var(--space-3) var(--space-2);
+    text-align: center;
 }
 
 .data-source__error {
-    color: var(--danger, #b85c5c);
-    font-size: 0.72rem;
+    color: var(--danger);
+    font-size: var(--text-xs);
+    background: var(--danger-faint);
+    border: var(--border-width-1) solid var(--danger-border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
 }
 
 .data-source__list {
@@ -113,24 +114,27 @@ function pickDatabase(database: Database): void {
     padding: 0;
     display: flex;
     flex-direction: column;
+    gap: var(--space-px);
 }
 
 .data-source__item {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.35rem 0.45rem;
-    border-radius: 4px;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    color: var(--fg, #ededed);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .data-source__item:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    background: var(--surface-hover);
 }
 
 .data-source__item.is-active {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+    background: var(--surface-selected);
 }
 
 .data-source__name {
@@ -142,33 +146,18 @@ function pickDatabase(database: Database): void {
 }
 
 .data-source__badge {
-    font-size: 0.65rem;
-    color: var(--fg-muted, #a09b90);
-    padding: 0.05rem 0.3rem;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--surface-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: var(--font-weight-semibold);
 }
 
 .data-source__badge--active {
-    color: var(--accent, #e8dcc8);
-    background: var(--accent-faint, rgba(232, 220, 200, 0.12));
-}
-
-.data-source__clear {
-    align-self: flex-start;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.3rem 0.5rem;
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.12));
-    background: transparent;
-    color: var(--fg, #ededed);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.72rem;
-}
-
-.data-source__clear:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    color: var(--accent);
+    background: var(--accent-faint);
 }
 </style>

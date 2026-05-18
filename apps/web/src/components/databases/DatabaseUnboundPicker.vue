@@ -1,16 +1,25 @@
 <script setup lang="ts">
 /**
- * Placeholder shown when a `database` node is unbound — no
- * `databaseId` has been chosen yet. Offers the two paths the user
- * needs the first time they insert the block:
+ * Placeholder shown when a `database` block has no views yet.
  *
- *   1. Create a brand-new database (title input).
- *   2. Link an existing database from a small searchable list.
+ * Offers the two paths the user needs the first time they insert the
+ * block:
  *
- * Once the user picks an option, the parent emits `update:attrs` and
- * the block flips to the full `DatabaseBody`.
+ *   1. Create a brand-new datasource (title input).
+ *   2. Link an existing datasource from a small searchable list.
+ *
+ * The parent embed turns the chosen datasource into the block's first
+ * view (defaulting to a Table), which flips the block out of unbound
+ * state. The picker itself is intentionally datasource-aware only:
+ * the view type is decided by the parent so the picker stays simple
+ * and consistent with the "first view is always a Table" UX.
+ *
+ * Datasources can also be deleted from this list (trash icon on
+ * hover): a hard delete cascades to every block view that points at
+ * them, which is fine because the realtime bus pushes
+ * `database.deleted` to all open blocks.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { UiButton, UiInput, UiEmpty, UiConfirmModal, Icon } from '@/components/ui';
 import { api } from '@/api';
 import { publishDatabaseDeleted } from '@/lib/realtime';
@@ -31,26 +40,22 @@ const emit = defineEmits<{
 const mode = ref<'choose' | 'create' | 'link'>('choose');
 const title = ref('');
 const search = ref('');
-const databases = ref<Database[]>([]);
+const datasources = ref<Database[]>([]);
 const loaded = ref(false);
 const linkError = ref<string | null>(null);
 
 const visibleError = computed(() => props.error ?? linkError.value);
 
-async function loadDatabases(): Promise<void> {
+async function loadDatasources(): Promise<void> {
     if (loaded.value) return;
-    databases.value = await api.databases.list();
+    datasources.value = await api.databases.list();
     loaded.value = true;
 }
 
-onMounted(() => {
-    // Pre-fetch lazily so opening the picker feels instant.
-});
-
 const filtered = computed(() => {
     const q = search.value.trim().toLowerCase();
-    if (!q) return databases.value;
-    return databases.value.filter((d) => (d.title || '').toLowerCase().includes(q));
+    if (!q) return datasources.value;
+    return datasources.value.filter((d) => (d.title || '').toLowerCase().includes(q));
 });
 
 function openCreate(): void {
@@ -61,15 +66,15 @@ async function openLink(): Promise<void> {
     mode.value = 'link';
     linkError.value = null;
     try {
-        await loadDatabases();
+        await loadDatasources();
     } catch (err) {
-        linkError.value = err instanceof Error ? err.message : 'Could not load databases';
+        linkError.value = err instanceof Error ? err.message : 'Could not load datasources';
     }
 }
 
 function confirmCreate(): void {
     if (props.busy) return;
-    const value = title.value.trim() || 'Untitled database';
+    const value = title.value.trim() || 'Untitled datasource';
     emit('create', value);
 }
 
@@ -77,16 +82,14 @@ function pick(database: Database): void {
     emit('link', database);
 }
 
-// ── Delete an existing database from the link list ───────────────────────
-// Hover a row → trash icon → confirm modal → removal + realtime
-// broadcast so every other block bound to that DB unbinds.
+// ── Delete an existing datasource from the link list ─────────────────────
 const deleteTarget = ref<Database | null>(null);
 const deleteBusy = ref(false);
 
 const deleteMessage = computed(() => {
     const db = deleteTarget.value;
     return db
-        ? `Delete database "${db.title || 'Untitled'}"? All its rows, properties and views will be removed. This cannot be undone.`
+        ? `Delete datasource "${db.title || 'Untitled'}"? Every block view bound to it (in this and other notes) will disappear too. This cannot be undone.`
         : '';
 });
 
@@ -101,11 +104,11 @@ async function confirmDelete(): Promise<void> {
     deleteBusy.value = true;
     try {
         await api.databases.remove(target.id);
-        databases.value = databases.value.filter((d) => d.id !== target.id);
+        datasources.value = datasources.value.filter((d) => d.id !== target.id);
         publishDatabaseDeleted(target.id);
         deleteTarget.value = null;
     } catch (err) {
-        linkError.value = err instanceof Error ? err.message : 'Could not delete database';
+        linkError.value = err instanceof Error ? err.message : 'Could not delete datasource';
     } finally {
         deleteBusy.value = false;
     }
@@ -118,7 +121,7 @@ async function confirmDelete(): Promise<void> {
             <Icon name="database" />
             <div class="db-unbound__lead">
                 <strong>Database</strong>
-                <p>Notion-like data source — pick a starting point.</p>
+                <p>Pick a datasource to view here.</p>
             </div>
             <button
                 v-if="editable"
@@ -133,7 +136,7 @@ async function confirmDelete(): Promise<void> {
 
         <div v-if="mode === 'choose'" class="db-unbound__choices">
             <UiButton :disabled="!editable" @click="openCreate">
-                <Icon name="plus" /> New database
+                <Icon name="plus" /> New datasource
             </UiButton>
             <UiButton variant="ghost" :disabled="!editable" @click="openLink">
                 <Icon name="link" /> Link existing
@@ -146,7 +149,7 @@ async function confirmDelete(): Promise<void> {
             @submit.prevent="confirmCreate">
             <UiInput
                 v-model="title"
-                placeholder="Database title"
+                placeholder="Datasource title"
                 autofocus
                 :disabled="busy" />
             <div class="db-unbound__actions">
@@ -158,7 +161,7 @@ async function confirmDelete(): Promise<void> {
         </form>
 
         <div v-else class="db-unbound__link">
-            <UiInput v-model="search" placeholder="Search databases…" />
+            <UiInput v-model="search" placeholder="Search datasources…" />
             <ul v-if="filtered.length" class="db-unbound__list">
                 <li
                     v-for="db in filtered"
@@ -171,13 +174,13 @@ async function confirmDelete(): Promise<void> {
                         v-if="editable"
                         type="button"
                         class="db-unbound__item-delete"
-                        title="Delete database"
+                        title="Delete datasource"
                         @click="requestDelete(db, $event)">
                         <Icon name="trash" :size="12" />
                     </button>
                 </li>
             </ul>
-            <UiEmpty v-else label="No databases yet" />
+            <UiEmpty v-else label="No datasources yet" />
             <div class="db-unbound__actions">
                 <UiButton variant="ghost" type="button" @click="mode = 'choose'">Back</UiButton>
             </div>
@@ -185,7 +188,7 @@ async function confirmDelete(): Promise<void> {
 
         <UiConfirmModal
             :model-value="!!deleteTarget"
-            title="Delete database"
+            title="Delete datasource"
             :message="deleteMessage"
             confirm-label="Delete"
             confirm-variant="danger"
@@ -196,91 +199,103 @@ async function confirmDelete(): Promise<void> {
 
 <style scoped>
 .db-unbound {
-    padding: 1rem;
+    padding: var(--space-5);
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    color: var(--fg, #ededed);
+    gap: var(--space-4);
+    color: var(--text-primary);
+    background: var(--surface-1);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
 }
 
 .db-unbound__head {
     display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    align-items: flex-start;
+    gap: var(--space-3);
 }
 
 .db-unbound__lead {
     flex: 1;
+    min-width: 0;
 }
-
 .db-unbound__lead strong {
     display: block;
-    font-size: 0.95rem;
+    font-size: var(--text-md);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-1);
 }
-
 .db-unbound__lead p {
     margin: 0;
-    font-size: 0.8rem;
-    color: var(--fg-muted, #a09b90);
+    font-size: var(--text-xs);
+    line-height: var(--leading-snug, 1.4);
+    color: var(--text-secondary);
 }
 
 .db-unbound__close {
-    border: none;
+    border: 0;
     background: transparent;
     cursor: pointer;
-    color: var(--fg-muted, #a09b90);
-    padding: 0.25rem;
-    border-radius: 4px;
+    color: var(--text-muted);
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
 }
-
 .db-unbound__close:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    background: var(--surface-hover);
+    color: var(--text-primary);
 }
 
 .db-unbound__error {
     margin: 0;
-    padding: 0.5rem 0.6rem;
-    border-radius: var(--radius-xs, 4px);
-    background: var(--danger-faint, rgba(184, 92, 92, 0.08));
-    border: var(--border-width-1, 1px) solid var(--danger-border, rgba(184, 92, 92, 0.3));
-    color: var(--danger, #b85c5c);
-    font-size: var(--text-sm, 0.75rem);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--danger-faint);
+    border: var(--border-width-1) solid var(--danger-border);
+    color: var(--danger);
+    font-size: var(--text-xs);
 }
 
 .db-unbound__choices,
 .db-unbound__actions {
     display: flex;
-    gap: 0.5rem;
+    gap: var(--space-2);
 }
 
 .db-unbound__form,
 .db-unbound__link {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--space-3);
 }
 
 .db-unbound__list {
     list-style: none;
-    padding: 0;
+    padding: var(--space-1);
     margin: 0;
     max-height: 220px;
     overflow-y: auto;
-    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
-    border-radius: 6px;
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-0);
 }
 
 .db-unbound__item {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
-    font-size: 0.875rem;
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
-
 .db-unbound__item:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    background: var(--surface-hover);
 }
 
 .db-unbound__item-label {
@@ -292,22 +307,23 @@ async function confirmDelete(): Promise<void> {
 }
 
 .db-unbound__item-delete {
-    border: none;
+    border: 0;
     background: transparent;
     cursor: pointer;
-    color: var(--fg-muted, #a09b90);
-    padding: 0.2rem;
-    border-radius: 4px;
+    color: var(--text-muted);
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
     opacity: 0;
-    transition: opacity 0.12s ease;
+    transition:
+        opacity var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
 }
-
 .db-unbound__item:hover .db-unbound__item-delete {
     opacity: 1;
 }
-
 .db-unbound__item-delete:hover {
-    color: var(--danger, #b85c5c);
-    background: var(--danger-faint, rgba(184, 92, 92, 0.08));
+    color: var(--danger);
+    background: var(--danger-faint);
 }
 </style>

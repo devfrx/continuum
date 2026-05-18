@@ -98,7 +98,7 @@ function onChange(event: Event): void {
     height: 20px;
     padding: 0 2px;
     box-sizing: border-box;
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: var(--surface-3, #2a2a2a);
     flex-shrink: 0;
     vertical-align: middle;
@@ -119,7 +119,7 @@ function onChange(event: Event): void {
     display: block;
     width: 16px;
     height: 16px;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     background: var(--accent);
     will-change: transform;
     transition:
