@@ -48,8 +48,17 @@ export interface PlanResult {
   postFilters: FilterCondition[];
 }
 
-/** Lookup table for property defs the planner needs while walking the tree. */
-export type PropertyDefIndex = Map<string, PropertyDefinitionRow>;
+/**
+ * Lookup table the planner consults for `property`-flavoured conditions.
+ *
+ * Keyed by the property's canonical `key` because that's what the filter
+ * tree carries; the value is the *array* of definition rows sharing that
+ * key. Per-note properties create one row per owning note, so a single
+ * filter condition typically resolves to many definition ids — the SQL
+ * builder receives the full list and emits a `property_id IN (...)`
+ * predicate so the condition matches across every backing definition.
+ */
+export type PropertyDefIndex = Map<string, PropertyDefinitionRow[]>;
 
 /**
  * Recursively translate a filter node into a SQL fragment and a residual
@@ -57,9 +66,10 @@ export type PropertyDefIndex = Map<string, PropertyDefinitionRow>;
  * always safe to drop into the outer `notes` query's `WHERE` as-is.
  *
  * @param node    The current tree node.
- * @param defs    All property definitions referenced by `property` fields.
- *                Conditions referencing an unknown id resolve to "match
- *                everything" (we don't want a stale saved view to crash).
+ * @param defs    Property definitions referenced by `property` fields,
+ *                grouped by canonical key. Conditions whose key is
+ *                missing or resolves to zero definitions match everything
+ *                (we don't want a stale saved view to crash).
  * @param now     Reference time for relative date operators.
  */
 export function planFilter(
@@ -111,9 +121,9 @@ function planCondition(
     case 'system':
       return { sql: planSystem(field.id, condition, now), postFilters: [] };
     case 'property': {
-      const def = defs.get(field.propertyId);
-      if (!def) return { sql: sql`true`, postFilters: [] };
-      return { sql: buildPropertyConditionSQL(def, condition, now), postFilters: [] };
+      const matching = defs.get(field.key);
+      if (!matching || matching.length === 0) return { sql: sql`true`, postFilters: [] };
+      return { sql: buildPropertyConditionSQL(matching, condition, now), postFilters: [] };
     }
     case 'graphMetric':
       return { sql: null, postFilters: [condition] };
@@ -251,14 +261,15 @@ function escapeLike(value: string): string {
 }
 
 /**
- * Walk a node tree and collect every `property`-flavoured field id so the
- * caller can pre-fetch the matching `PropertyDefinitionRow`s in one round
- * trip before invoking `planFilter`.
+ * Walk a node tree and collect every property `key` referenced by a
+ * `property`-flavoured field so the caller can pre-fetch the matching
+ * `PropertyDefinitionRow`s in one round trip before invoking
+ * `planFilter`.
  */
-export function collectPropertyIds(node: FilterNode): string[] {
+export function collectPropertyKeys(node: FilterNode): string[] {
   const out = new Set<string>();
   visit(node, (cond) => {
-    if (cond.field.kind === 'property') out.add(cond.field.propertyId);
+    if (cond.field.kind === 'property') out.add(cond.field.key);
   });
   return Array.from(out);
 }

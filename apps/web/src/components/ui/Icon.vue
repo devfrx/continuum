@@ -88,8 +88,17 @@ function escapeXml(s: string): string {
 <template>
   <svg v-if="useInner" :width="px" :height="px" :viewBox="innerViewBox" fill="none" :role="title ? 'img' : undefined"
     :aria-hidden="title ? undefined : 'true'" focusable="false" class="icon" v-html="innerHtml" />
-  <IconifyIcon v-else-if="iconifyId" :icon="iconifyId" :width="px" :height="px" :title="title"
-    :aria-hidden="title ? undefined : 'true'" class="icon" />
+  <!--
+    IconifyIcon is wrapped in a span: when the requested icon isn't bundled
+    in the offline collection (e.g. a stale id), the iconify component
+    renders a fragment placeholder which would drop our `class="icon"` and
+    trigger Vue's "Extraneous non-props attributes (class)" warning. The
+    span hosts the class unconditionally.
+  -->
+  <span v-else-if="iconifyId" class="icon" :role="title ? 'img' : undefined"
+    :aria-hidden="title ? undefined : 'true'">
+    <IconifyIcon :icon="iconifyId" :width="px" :height="px" :title="title" />
+  </span>
   <svg v-else :width="px" :height="px" viewBox="0 0 24 24" fill="none" :role="title ? 'img' : undefined"
     :aria-hidden="title ? undefined : 'true'" focusable="false" class="icon" v-html="innerHtml" />
 </template>

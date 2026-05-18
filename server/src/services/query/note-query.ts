@@ -16,7 +16,7 @@ import {
   type PropertyDefinitionRow,
 } from '../../db/schema.js';
 import {
-  collectPropertyIds,
+  collectPropertyKeys,
   planFilter,
   type PlanResult,
   type PropertyDefIndex,
@@ -43,14 +43,18 @@ export async function executeNoteQuery(
   filter: FilterNode,
   now: Date = new Date(),
 ): Promise<NoteQueryResult> {
-  const propertyIds = collectPropertyIds(filter);
-  const defIndex: PropertyDefIndex = new Map<string, PropertyDefinitionRow>();
-  if (propertyIds.length > 0) {
+  const keys = collectPropertyKeys(filter);
+  const defIndex: PropertyDefIndex = new Map<string, PropertyDefinitionRow[]>();
+  if (keys.length > 0) {
     const defs = await db
       .select()
       .from(propertyDefinitions)
-      .where(inArray(propertyDefinitions.id, propertyIds));
-    for (const def of defs) defIndex.set(def.id, def);
+      .where(inArray(propertyDefinitions.key, keys));
+    for (const def of defs) {
+      const bucket = defIndex.get(def.key);
+      if (bucket) bucket.push(def);
+      else defIndex.set(def.key, [def]);
+    }
   }
 
   const plan = planFilter(filter, defIndex, now);

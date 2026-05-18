@@ -36,7 +36,7 @@ const EDGE_SOURCES_KEY = STORAGE_KEYS.graphEdgeSources;
 
 export interface UseGraphQueryOptions {
   encodings: Ref<GraphEncodings>;
-  requiredPropertyIds: ComputedRef<string[]>;
+  requiredPropertyKeys: ComputedRef<string[]>;
   requiresMetrics: ComputedRef<boolean>;
 }
 
@@ -53,33 +53,41 @@ export interface UseGraphQueryReturn {
   resetEdgeSources: () => void;
 }
 
-/** Defensive parse: only accept the exact `GraphEdgeSourceSelection` shape. */
+/**
+ * Defensive parse: only accept the current `GraphEdgeSourceSelection`
+ * shape. Legacy persisted payloads that used `relationPropertyIds`
+ * (definition ids) are rejected so the user falls back to the default
+ * "all relations" selection — the keys can't be reconstructed from ids
+ * client-side.
+ */
 export function coerceGraphEdgeSources(value: unknown): GraphEdgeSourceSelection | null {
   if (!value || typeof value !== 'object') return null;
-  const v = value as Partial<GraphEdgeSourceSelection>;
+  const v = value as Partial<GraphEdgeSourceSelection> & {
+    relationPropertyIds?: unknown;
+  };
   if (typeof v.includeLinks !== 'boolean') return null;
   if (typeof v.allRelationProperties !== 'boolean') return null;
-  if (!Array.isArray(v.relationPropertyIds)) return null;
-  if (!v.relationPropertyIds.every((id) => typeof id === 'string')) return null;
+  if (!Array.isArray(v.relationPropertyKeys)) return null;
+  if (!v.relationPropertyKeys.every((k) => typeof k === 'string')) return null;
   return {
     includeLinks: v.includeLinks,
     allRelationProperties: v.allRelationProperties,
-    relationPropertyIds: v.relationPropertyIds.slice(),
+    relationPropertyKeys: v.relationPropertyKeys.slice(),
   };
 }
 
 function readStoredEdgeSources(): GraphEdgeSourceSelection {
   try {
     const raw = localStorage.getItem(EDGE_SOURCES_KEY);
-    if (!raw) return { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyIds: [] };
+    if (!raw) return { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyKeys: [] };
     return (
       coerceGraphEdgeSources(JSON.parse(raw)) ?? {
         ...DEFAULT_EDGE_SOURCE_SELECTION,
-        relationPropertyIds: [],
+        relationPropertyKeys: [],
       }
     );
   } catch {
-    return { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyIds: [] };
+    return { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyKeys: [] };
   }
 }
 
@@ -103,7 +111,7 @@ export function useGraphQuery(options: UseGraphQueryOptions): UseGraphQueryRetur
     return {
       filter: filter.root.value,
       edgeSources: edgeSources.value,
-      includeProperties: options.requiredPropertyIds.value.slice(),
+      includeProperties: options.requiredPropertyKeys.value.slice(),
       includeMetrics: options.requiresMetrics.value,
     };
   }
@@ -120,7 +128,7 @@ export function useGraphQuery(options: UseGraphQueryOptions): UseGraphQueryRetur
   }
 
   function resetEdgeSources(): void {
-    edgeSources.value = { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyIds: [] };
+    edgeSources.value = { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyKeys: [] };
   }
 
   return { filter, edgeSources, payload, loading, buildRequest, fetch, resetEdgeSources };

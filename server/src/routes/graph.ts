@@ -46,7 +46,7 @@ const fieldRefSchema = z.discriminatedUnion('kind', [
       'note.tags',
     ]),
   }),
-  z.object({ kind: z.literal('property'), propertyId: z.string().uuid() }),
+  z.object({ kind: z.literal('property'), key: z.string().min(1) }),
   z.object({
     kind: z.literal('graphMetric'),
     id: z.enum(['degree', 'inDegree', 'outDegree']),
@@ -109,13 +109,13 @@ const filterNodeSchema: z.ZodType<FilterNode> = z.lazy(() =>
 const edgeSourcesSchema = z.object({
   includeLinks: z.boolean(),
   allRelationProperties: z.boolean(),
-  relationPropertyIds: z.array(z.string().uuid()),
+  relationPropertyKeys: z.array(z.string().min(1)),
 });
 
 const graphQueryRequestSchema: z.ZodType<GraphQueryRequest> = z.object({
   filter: filterNodeSchema,
   edgeSources: edgeSourcesSchema,
-  includeProperties: z.array(z.string().uuid()),
+  includeProperties: z.array(z.string().min(1)),
   includeMetrics: z.boolean(),
 });
 

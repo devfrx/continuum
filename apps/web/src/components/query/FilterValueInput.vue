@@ -24,14 +24,11 @@ import {
     type FieldDescriptor,
     type FilterOperatorId,
     type FilterValue,
-    type PropertyOption,
-    type StatusOption,
 } from '@continuum/shared';
 import UiInput from '@/components/ui/UiInput.vue';
 import UiSelect from '@/components/ui/UiSelect.vue';
 import UiSegmented from '@/components/ui/UiSegmented.vue';
 import UiDatePicker from '@/components/ui/UiDatePicker.vue';
-import { useProperties } from '@/composables/useProperties';
 import { useKinds } from '@/composables/useKinds';
 import { useFolders } from '@/composables/useFolders';
 import { valueKindForField } from './filterValueKinds';
@@ -45,7 +42,6 @@ interface Props {
 const props = defineProps<Props>();
 const emit = defineEmits<{ 'update:modelValue': [v: FilterValue] }>();
 
-const properties = useProperties();
 const kinds = useKinds();
 const folders = useFolders();
 void kinds.load();
@@ -147,11 +143,13 @@ interface SelectableOption {
 }
 
 function optionsForChoice(): SelectableOption[] {
-    if (props.field.ref.kind !== 'property') return [];
-    const def = properties.byId(props.field.ref.propertyId);
-    if (!def) return [];
-    const cfg = def.config as { options?: ReadonlyArray<PropertyOption | StatusOption> };
-    const opts = cfg.options ?? [];
+    // Phase 3: choice options are surfaced directly on the field
+    // descriptor. The catalog merges options across every backing
+    // definition that shares the property's key, so the editor no
+    // longer needs to dereference a per-note id back to a definition
+    // — and works correctly when a property exists only as per-note
+    // clones with no global parent.
+    const opts = props.field.options ?? [];
     return opts.map((o) => ({ label: o.label, value: o.id }));
 }
 

@@ -196,6 +196,35 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
+    /**
+     * Create a new property definition that lives on a single note. This
+     * is the default code path used by the inline property panel: each
+     * note keeps its own schema, so adding a property here never leaks
+     * to its siblings (kind-scoped definitions remain available for
+     * the future Templates feature).
+     */
+    createForNote: (
+      noteId: string,
+      data: {
+        label: string;
+        type: PropertyType;
+        key?: string;
+        icon?: string | null;
+        description?: string | null;
+        config?: PropertyConfig;
+        position?: string;
+      },
+    ) =>
+      http<PropertyDefinition>(`/notes/${noteId}/properties`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    /** Persist the complete display order for a note's property definitions. */
+    reorderForNote: (noteId: string, ids: string[]) =>
+      http<PropertyDefinition[]>(`/notes/${noteId}/properties/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
     /** Delete a definition (cascades all stored values). */
     remove: (id: string) =>
       http<{ ok: true }>(`/properties/${id}`, { method: 'DELETE' }),

@@ -44,7 +44,7 @@ import {
 } from './graph-projections.js';
 import {
   buildRelationEdges,
-  listAllRelationPropertyIds,
+  listAllRelationPropertyKeys,
 } from './relation-edge-source.js';
 
 /**
@@ -88,9 +88,9 @@ export async function executeGraphQuery(
     }
   }
 
-  const relationIds = await resolveRelationPropertyIds(req);
-  if (relationIds.length > 0) {
-    const relEdges = await buildRelationEdges(relationIds, candidateIds);
+  const relationKeys = await resolveRelationPropertyKeys(req);
+  if (relationKeys.length > 0) {
+    const relEdges = await buildRelationEdges(relationKeys, candidateIds);
     for (const e of relEdges) edges.push(e);
   }
 
@@ -126,6 +126,7 @@ export async function executeGraphQuery(
       kind: note.kind,
       folderId: note.folderId,
       tags: note.tags,
+      locked: note.locked,
       createdAt: note.createdAt.toISOString(),
       updatedAt: note.updatedAt.toISOString(),
     };
@@ -146,28 +147,30 @@ export async function executeGraphQuery(
 }
 
 /**
- * Resolve which relation-property ids feed the edge set. When the
- * request asks for "all", we hit the property-definitions table once;
- * otherwise the explicit allow-list is used as-is (still validated
- * against `type='relation'` inside `buildRelationEdges`).
+ * Resolve which relation-property keys feed the edge set. When the
+ * request asks for "all", we list every distinct relation-property key
+ * once; otherwise the explicit allow-list is filtered down to keys that
+ * actually correspond to a relation-typed definition (so a stale saved
+ * view doesn't silently include arbitrary keys).
  */
-async function resolveRelationPropertyIds(req: GraphQueryRequest): Promise<string[]> {
+async function resolveRelationPropertyKeys(req: GraphQueryRequest): Promise<string[]> {
   const sources = req.edgeSources;
   if (sources.allRelationProperties) {
-    return listAllRelationPropertyIds();
+    return listAllRelationPropertyKeys();
   }
-  if (sources.relationPropertyIds.length === 0) return [];
+  if (sources.relationPropertyKeys.length === 0) return [];
   // Restrict the explicit list to actual relation defs.
   const rows = await db
-    .select({ id: propertyDefinitions.id, type: propertyDefinitions.type })
+    .select({ key: propertyDefinitions.key })
     .from(propertyDefinitions)
     .where(
       and(
-        inArray(propertyDefinitions.id, sources.relationPropertyIds),
+        inArray(propertyDefinitions.key, sources.relationPropertyKeys),
         eq(propertyDefinitions.type, 'relation'),
       ),
-    );
-  return rows.map((r) => r.id);
+    )
+    .groupBy(propertyDefinitions.key);
+  return rows.map((r) => r.key);
 }
 
 // Reference to keep `drizzleOr` available for future composite predicates

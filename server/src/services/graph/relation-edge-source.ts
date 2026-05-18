@@ -9,15 +9,20 @@
  *
  * Edges are produced with:
  *  – `sourceKind: 'relationProperty'` so the UI can style them differently,
- *  – `propertyId` carrying the originating definition for filtering,
- *  – a deterministic `id` (`rel:<propId>:<src>:<tgt>`) so re-runs of the
- *    same query yield stable Vue keys without a roundtrip to the DB.
+ *  – `propertyKey` carrying the originating property's canonical key for
+ *    filtering and grouping (per-note properties may live behind several
+ *    backing definition rows; the key collapses them back into a single
+ *    logical relation in the UI),
+ *  – a deterministic `id` (`rel:<key>:<src>:<tgt>`) so re-runs of the
+ *    same query yield stable Vue keys without a roundtrip to the DB and
+ *    so two notes that share the same per-note relation key don't emit
+ *    duplicate edges.
  *
  * Self-edges and edges that point outside the filtered universe of nodes
  * are dropped — keeping the graph closed makes the metric calculations
  * downstream actually correspond to what the user sees.
  */
-import { inArray, and } from 'drizzle-orm';
+import { inArray, and, eq, sql } from 'drizzle-orm';
 import type { GraphEdge } from '@continuum/shared';
 import { db } from '../../db/client.js';
 import { propertyDefinitions, propertyValues } from '../../db/schema.js';
@@ -25,30 +30,38 @@ import { propertyDefinitions, propertyValues } from '../../db/schema.js';
 /**
  * Build the relation-property edge set restricted to the given nodes.
  *
- * @param relationPropertyIds  Property definition ids of type `relation`.
- *                             Anything else is silently ignored so the
- *                             caller can pass an unfiltered allow-list.
- * @param nodeIds              The closed universe of node ids the graph
- *                             query already settled on. Both endpoints of
- *                             each emitted edge are guaranteed to be in
- *                             this set.
+ * @param relationPropertyKeys  Property keys whose definitions are of
+ *                              type `relation`. Each key may resolve to
+ *                              several backing definition rows (per-note
+ *                              properties), all of which contribute to
+ *                              the edge set; the resulting edges are
+ *                              deduplicated by `(source, target, key)`
+ *                              so the user sees one edge per logical
+ *                              relation.
+ * @param nodeIds               The closed universe of node ids the graph
+ *                              query already settled on. Both endpoints
+ *                              of each emitted edge are guaranteed to be
+ *                              in this set.
  */
 export async function buildRelationEdges(
-  relationPropertyIds: string[],
+  relationPropertyKeys: string[],
   nodeIds: string[],
 ): Promise<GraphEdge[]> {
-  if (relationPropertyIds.length === 0 || nodeIds.length === 0) return [];
+  if (relationPropertyKeys.length === 0 || nodeIds.length === 0) return [];
 
-  // Verify the supplied ids actually point at relation properties — caller
-  // may have been given a stale list. Cheap to do, prevents surprises.
+  // Resolve keys to the actual relation-typed definition rows.
   const defs = await db
     .select()
     .from(propertyDefinitions)
-    .where(inArray(propertyDefinitions.id, relationPropertyIds));
-  const validDefs = defs.filter((d) => d.type === 'relation');
-  if (validDefs.length === 0) return [];
-  const validIds = validDefs.map((d) => d.id);
-  const defKeyById = new Map(validDefs.map((d) => [d.id, d.key] as const));
+    .where(
+      and(
+        inArray(propertyDefinitions.key, relationPropertyKeys),
+        eq(propertyDefinitions.type, 'relation'),
+      ),
+    );
+  if (defs.length === 0) return [];
+  const validIds = defs.map((d) => d.id);
+  const keyByDefId = new Map(defs.map((d) => [d.id, d.key] as const));
 
   const rows = await db
     .select()
@@ -62,30 +75,43 @@ export async function buildRelationEdges(
 
   const nodeIdSet = new Set(nodeIds);
   const edges: GraphEdge[] = [];
+  // (source, target, key) seen — dedupes when the same logical relation
+  // is backed by several per-note definitions and a target is repeated.
+  const seen = new Set<string>();
   for (const row of rows) {
     const targets = row.valueJson;
     if (!Array.isArray(targets)) continue;
+    const key = keyByDefId.get(row.propertyId);
+    if (!key) continue;
     for (const raw of targets) {
       if (typeof raw !== 'string') continue;
       if (raw === row.noteId) continue;
       if (!nodeIdSet.has(raw)) continue;
+      const dedupKey = `${row.noteId}\u0001${raw}\u0001${key}`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
       edges.push({
-        id: `rel:${row.propertyId}:${row.noteId}:${raw}`,
+        id: `rel:${key}:${row.noteId}:${raw}`,
         source: row.noteId,
         target: raw,
-        type: defKeyById.get(row.propertyId) ?? 'relation',
+        type: key,
         sourceKind: 'relationProperty',
-        propertyId: row.propertyId,
+        propertyKey: key,
       });
     }
   }
   return edges;
 }
 
-/** Fetch every relation-property definition id in one query. */
-export async function listAllRelationPropertyIds(): Promise<string[]> {
+/** Fetch every distinct relation-property key in one query. */
+export async function listAllRelationPropertyKeys(): Promise<string[]> {
   const rows = await db
-    .select({ id: propertyDefinitions.id, type: propertyDefinitions.type })
-    .from(propertyDefinitions);
-  return rows.filter((r) => r.type === 'relation').map((r) => r.id);
+    .select({ key: propertyDefinitions.key })
+    .from(propertyDefinitions)
+    .where(eq(propertyDefinitions.type, 'relation'))
+    .groupBy(propertyDefinitions.key);
+  return rows.map((r) => r.key);
 }
+
+// Reference unused `sql` import to avoid an extra ts pragma.
+void sql;

@@ -33,6 +33,13 @@ export interface UsePropertiesReturn {
   load: (kindId: string, force?: boolean) => Promise<PropertyDefinition[]>;
   /** Look up a single definition by id across every cached kind. */
   byId: (id: string) => PropertyDefinition | null;
+  /**
+   * Look up the first cached definition matching a property `key`. After
+   * Phase 3 the canonical identity is the slug, not the row id — callers
+   * that need shared metadata (icon, type, options) should index by key
+   * so per-note definition clones collapse to a single logical property.
+   */
+  byKey: (key: string) => PropertyDefinition | null;
   /** Create a new property definition for a kind. */
   create: (
     kindId: string,
@@ -100,6 +107,14 @@ export function useProperties(): UsePropertiesReturn {
     return null;
   }
 
+  function byKey(key: string): PropertyDefinition | null {
+    for (const list of byKind.value.values()) {
+      const match = list.find((d) => d.key === key);
+      if (match) return match;
+    }
+    return null;
+  }
+
   async function create(
     kindId: string,
     data: Parameters<UsePropertiesReturn['create']>[1],
@@ -144,5 +159,5 @@ export function useProperties(): UsePropertiesReturn {
     byKind.value = next;
   }
 
-  return { byKind, loaded, loading, forKind, load, byId, create, update, reorder, remove };
+  return { byKind, loaded, loading, forKind, load, byId, byKey, create, update, reorder, remove };
 }

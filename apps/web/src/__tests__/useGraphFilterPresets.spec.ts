@@ -22,7 +22,7 @@ function payload(title: string): GraphFilterPresetPayload {
     edgeSources: {
       includeLinks: true,
       allRelationProperties: false,
-      relationPropertyIds: ['rel-1'],
+      relationPropertyKeys: ['rel-1'],
     },
     encodings: {
       color: { kind: 'graphMetric', id: 'degree' },
@@ -77,7 +77,7 @@ describe('useGraphFilterPresets', () => {
     const { value: second, unmount: unmountSecond } = withHost(() => mod.useGraphFilterPresets());
     expect(second.presets.value).toHaveLength(1);
     expect(second.presets.value[0].payload.searchQuery).toBe('task');
-    expect(second.presets.value[0].payload.edgeSources.relationPropertyIds).toEqual(['rel-1']);
+    expect(second.presets.value[0].payload.edgeSources.relationPropertyKeys).toEqual(['rel-1']);
     unmountSecond();
   });
 

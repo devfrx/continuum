@@ -117,8 +117,15 @@ export const PROPERTY_TYPE_GROUPS: PropertyTypeGroup[] = [
   { id: 'tracking', label: 'Tracking', types: ['verification', 'progress'] },
 ];
 
-/** Where a property definition is mounted. */
-export type PropertyScope = 'kind' | 'global';
+/**
+ * Where a property definition is mounted.
+ *
+ * - `'note'`   — owned by a single note (each note has its own schema).
+ * - `'kind'`   — reserved for the future Templates feature: a definition
+ *                shared across notes of a kind. Not auto-applied.
+ * - `'global'` — reserved for properties shared across every note.
+ */
+export type PropertyScope = 'kind' | 'global' | 'note';
 
 /** A coloured option for select / multiSelect properties. */
 export interface PropertyOption {
@@ -420,8 +427,10 @@ export type PropertyConfig =
 export interface PropertyDefinition {
   id: UUID;
   scope: PropertyScope;
-  /** Owning kind id when `scope='kind'`; `null` for `scope='global'`. */
+  /** Owning kind id when `scope='kind'`; `null` otherwise. */
   kindId: EntityKind | null;
+  /** Owning note id when `scope='note'`; `null` otherwise. */
+  noteId: UUID | null;
   /** Stable identifier (slug). Immutable once created. */
   key: string;
   /** Display label. Rename-safe. */

@@ -144,27 +144,44 @@ export const kinds = pgTable('kinds', {
 
 /**
  * Custom property schema. A `property_definition` describes the shape of a
- * property (text, number, select, …) attached to a given scope. v1 only
- * exposes `scope='kind'` (per-kind properties) in the UI; `scope='global'`
- * is reserved for properties shared across every note.
+ * property (text, number, select, …) attached to a given scope.
+ *
+ * - `scope='note'`   — owned by a single note (the default the UI creates).
+ * - `scope='kind'`   — reserved for the future Templates feature.
+ * - `scope='global'` — reserved for properties shared across every note.
  *
  * The `config` JSON column holds type-specific settings (e.g. select
  * options, number unit, relation target kind). See the discriminated union
  * `PropertyConfig` in `@continuum/shared` for the canonical shape.
  *
  * The `key` column is a slug derived once from the label, immutable, and
- * unique per `(scope, kind_id)`. The label is rename-safe.
+ * unique per owner (per-kind for kind-scoped, per-note for note-scoped).
+ * The label is rename-safe.
  */
 export const propertyDefinitions = pgTable(
   'property_definitions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    /** `'kind'` (per-kind) or `'global'` (every note). */
-    scope: text('scope').notNull().default('kind'),
-    /** FK to `kinds.id` when scope='kind'; NULL when scope='global'. */
+    /**
+     * Where the definition is mounted:
+     *  - `'note'`   — owned by a single note (default for user-created
+     *                 properties; only that note sees it).
+     *  - `'kind'`   — reserved for the future Templates feature: a
+     *                 definition shared across every note of a kind.
+     *                 Not auto-applied to notes; the Templates UI must
+     *                 explicitly materialise per-note copies.
+     *  - `'global'` — reserved for properties shared across every note
+     *                 (not yet exposed in the UI).
+     */
+    scope: text('scope').notNull().default('note'),
+    /** FK to `kinds.id` when scope='kind'; NULL otherwise. */
     kindId: text('kind_id').references(() => kinds.id, {
       onDelete: 'cascade',
       onUpdate: 'cascade',
+    }),
+    /** FK to `notes.id` when scope='note'; NULL otherwise. */
+    noteId: uuid('note_id').references(() => notes.id, {
+      onDelete: 'cascade',
     }),
     /** Stable, immutable identifier (slug derived from label). */
     key: text('key').notNull(),
@@ -185,14 +202,24 @@ export const propertyDefinitions = pgTable(
   },
   (t) => ({
     // Postgres treats NULL as distinct in unique indexes, so the routes
-    // layer enforces global-scope uniqueness separately.
-    uniqKey: uniqueIndex('property_definitions_scope_kind_key_uniq').on(
+    // layer enforces uniqueness for the all-NULL (global) bucket
+    // separately. For scoped buckets, including the owner column in the
+    // index keeps `(kind, key)` and `(note, key)` collisions out of the
+    // database while still allowing the same `key` to appear under
+    // different owners (which is exactly what per-note scope requires).
+    uniqKey: uniqueIndex('property_definitions_scope_owner_key_uniq').on(
       t.scope,
       t.kindId,
+      t.noteId,
       t.key,
     ),
     kindIdx: index('property_definitions_kind_idx').on(t.kindId),
+    noteIdx: index('property_definitions_note_idx').on(t.noteId),
     positionIdx: index('property_definitions_position_idx').on(t.kindId, t.position),
+    notePositionIdx: index('property_definitions_note_position_idx').on(
+      t.noteId,
+      t.position,
+    ),
   }),
 );
 

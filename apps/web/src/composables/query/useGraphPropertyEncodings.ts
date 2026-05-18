@@ -31,8 +31,8 @@ export const DEFAULT_GRAPH_ENCODINGS: GraphEncodings = {
 
 export interface UseGraphPropertyEncodingsReturn {
   encodings: Ref<GraphEncodings>;
-  /** Computed list of property ids referenced by `color/size/badge` so callers can pass them to `includeProperties`. */
-  requiredPropertyIds: ComputedRef<string[]>;
+  /** Property keys referenced by `color/size/badge` so callers can pass them to `includeProperties`. */
+  requiredPropertyKeys: ComputedRef<string[]>;
   /** Computed `includeMetrics` boolean — true when any encoding references a graphMetric field. */
   requiresMetrics: ComputedRef<boolean>;
   setEncoding: (slot: keyof GraphEncodings, ref: FieldRef | null) => void;
@@ -41,23 +41,41 @@ export interface UseGraphPropertyEncodingsReturn {
 
 const STORAGE_KEY = STORAGE_KEYS.graphEncodings;
 
-/** Coerce an unknown payload into `GraphEncodings`. */
+/**
+ * Coerce an unknown payload into `GraphEncodings`. Slots whose `FieldRef`
+ * doesn't match the current contract are silently dropped — in particular
+ * legacy property refs that carried `propertyId: UUID` instead of
+ * `key: string` are demoted to `null` because the UI cannot recover the
+ * key without an extra server round-trip and a stale id would silently
+ * point at nothing.
+ */
 export function coerceGraphEncodings(value: unknown): GraphEncodings {
   if (!value || typeof value !== 'object') return { ...DEFAULT_GRAPH_ENCODINGS };
   const v = value as Partial<GraphEncodings>;
-  // Each slot is either null/undefined or a FieldRef object — we don't
-  // exhaustively validate the FieldRef shape (cheap defensive parse).
   return {
-    color: isFieldRefLike(v.color) ? v.color : null,
-    size: isFieldRefLike(v.size) ? v.size : null,
-    badge: isFieldRefLike(v.badge) ? v.badge : null,
+    color: coerceFieldRef(v.color),
+    size: coerceFieldRef(v.size),
+    badge: coerceFieldRef(v.badge),
   };
 }
 
-function isFieldRefLike(value: unknown): value is FieldRef {
-  if (!value || typeof value !== 'object') return false;
-  const kind = (value as { kind?: unknown }).kind;
-  return kind === 'system' || kind === 'property' || kind === 'graphMetric';
+function coerceFieldRef(value: unknown): FieldRef | null {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  switch (obj.kind) {
+    case 'system':
+      return typeof obj.id === 'string' ? ({ kind: 'system', id: obj.id } as FieldRef) : null;
+    case 'graphMetric':
+      return typeof obj.id === 'string' ? ({ kind: 'graphMetric', id: obj.id } as FieldRef) : null;
+    case 'property':
+      // Only the key-based contract is supported. Legacy `propertyId`
+      // refs lose their slot — the user can re-pick the property.
+      return typeof obj.key === 'string' && obj.key.length > 0
+        ? ({ kind: 'property', key: obj.key } as FieldRef)
+        : null;
+    default:
+      return null;
+  }
 }
 
 function readStored(): GraphEncodings {
@@ -81,12 +99,12 @@ function persist(value: GraphEncodings): void {
 export function useGraphPropertyEncodings(): UseGraphPropertyEncodingsReturn {
   const encodings = ref<GraphEncodings>(readStored());
 
-  const requiredPropertyIds = computed<string[]>(() => {
-    const ids = new Set<string>();
+  const requiredPropertyKeys = computed<string[]>(() => {
+    const keys = new Set<string>();
     for (const slot of [encodings.value.color, encodings.value.size, encodings.value.badge]) {
-      if (slot && slot.kind === 'property') ids.add(slot.propertyId);
+      if (slot && slot.kind === 'property') keys.add(slot.key);
     }
-    return Array.from(ids);
+    return Array.from(keys);
   });
 
   const requiresMetrics = computed<boolean>(() => {
@@ -105,5 +123,5 @@ export function useGraphPropertyEncodings(): UseGraphPropertyEncodingsReturn {
 
   watch(encodings, (next) => persist(next), { deep: true });
 
-  return { encodings, requiredPropertyIds, requiresMetrics, setEncoding, reset };
+  return { encodings, requiredPropertyKeys, requiresMetrics, setEncoding, reset };
 }

@@ -25,7 +25,13 @@ export interface GraphEncodingMaps {
 export interface BuildGraphEncodingMapsOptions {
   nodes: GraphNode[];
   encodings: GraphEncodings;
-  propertyById(id: string): PropertyDefinition | null;
+  /**
+   * Property metadata lookup by canonical key. Returns the first
+   * applicable definition (or any per-note clone) so the renderer can
+   * read shared fields like `icon`, `type` and `config.options`. Returns
+   * `null` when the key is unknown — the encoding silently degrades.
+   */
+  propertyByKey(key: string): PropertyDefinition | null;
   colorOfKind(kind: string): string;
   iconOfKind(kind: string): string;
 }
@@ -73,21 +79,21 @@ function colorForNumber(value: number, range: NumericRange): string | null {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function propertySnapshot(node: GraphNode, propertyId: string): GraphPropertySnapshot | null {
-  return node.properties?.find((p) => p.propertyId === propertyId) ?? null;
+function propertySnapshot(node: GraphNode, key: string): GraphPropertySnapshot | null {
+  return node.properties?.find((p) => p.key === key) ?? null;
 }
 
 function colorForOptionRef(
   node: GraphNode,
-  propertyId: string,
-  propertyById: BuildGraphEncodingMapsOptions['propertyById'],
+  key: string,
+  propertyByKey: BuildGraphEncodingMapsOptions['propertyByKey'],
 ): string | null {
-  const def = propertyById(propertyId);
+  const def = propertyByKey(key);
   if (!def) return null;
   const cfg = def.config as { options?: ReadonlyArray<PropertyOption | StatusOption> };
   const options = cfg.options ?? [];
   if (options.length === 0) return null;
-  const value = propertySnapshot(node, propertyId)?.value;
+  const value = propertySnapshot(node, key)?.value;
   if (!value) return null;
   if (value.type === 'select' || value.type === 'status') {
     const opt = options.find((o) => o.id === value.value);
@@ -146,7 +152,7 @@ function numberForNode(node: GraphNode, ref: FieldRef): number | null {
     if (ref.id === 'note.updatedAt') return node.updatedAt ? timestampValue(node.updatedAt) : null;
     return null;
   }
-  return numberForPropertyValue(propertySnapshot(node, ref.propertyId)?.value);
+  return numberForPropertyValue(propertySnapshot(node, ref.key)?.value);
 }
 
 function categoryKeyForPropertyValue(value: PropertyValue | null | undefined): string | null {
@@ -201,7 +207,7 @@ function categoryKeyForNode(node: GraphNode, ref: FieldRef): string | null {
     return null;
   }
   if (ref.kind === 'property') {
-    return categoryKeyForPropertyValue(propertySnapshot(node, ref.propertyId)?.value);
+    return categoryKeyForPropertyValue(propertySnapshot(node, ref.key)?.value);
   }
   return null;
 }
@@ -210,11 +216,11 @@ function colorForNode(
   node: GraphNode,
   ref: FieldRef,
   numericRange: NumericRange,
-  opts: Pick<BuildGraphEncodingMapsOptions, 'propertyById' | 'colorOfKind'>,
+  opts: Pick<BuildGraphEncodingMapsOptions, 'propertyByKey' | 'colorOfKind'>,
 ): string | null {
   if (ref.kind === 'system' && ref.id === 'note.kind') return opts.colorOfKind(node.kind);
   if (ref.kind === 'property') {
-    const optionColor = colorForOptionRef(node, ref.propertyId, opts.propertyById);
+    const optionColor = colorForOptionRef(node, ref.key, opts.propertyByKey);
     if (optionColor) return optionColor;
   }
   const numeric = numberForNode(node, ref);
@@ -231,29 +237,31 @@ function hasBadgeValue(node: GraphNode, ref: FieldRef): boolean {
   if (ref.kind === 'system') {
     if (ref.id === 'note.folderId') return Boolean(node.folderId);
     if (ref.id === 'note.tags') return (node.tags?.length ?? 0) > 0;
+    if (ref.id === 'note.locked') return Boolean(node.locked);
     if (ref.id === 'note.title') return node.label.trim().length > 0;
     if (ref.id === 'note.kind') return Boolean(node.kind);
     return false;
   }
-  const value = propertySnapshot(node, ref.propertyId)?.value;
+  const value = propertySnapshot(node, ref.key)?.value;
   return categoryKeyForPropertyValue(value) != null || numberForPropertyValue(value) != null;
 }
 
 function badgeIconForNode(
   node: GraphNode,
   ref: FieldRef,
-  opts: Pick<BuildGraphEncodingMapsOptions, 'propertyById' | 'iconOfKind'>,
+  opts: Pick<BuildGraphEncodingMapsOptions, 'propertyByKey' | 'iconOfKind'>,
 ): string | null {
   if (!hasBadgeValue(node, ref)) return null;
   if (ref.kind === 'system') {
     if (ref.id === 'note.folderId') return 'folder';
     if (ref.id === 'note.tags') return 'tag';
+    if (ref.id === 'note.locked') return 'lock';
     if (ref.id === 'note.kind') return opts.iconOfKind(node.kind);
     if (ref.id === 'note.title') return 'note-title';
     return null;
   }
   if (ref.kind === 'graphMetric') return 'graph';
-  return opts.propertyById(ref.propertyId)?.icon ?? 'sparkles';
+  return opts.propertyByKey(ref.key)?.icon ?? 'sparkles';
 }
 
 function numericRangeFor(nodes: GraphNode[], ref: FieldRef | null): NumericRange {

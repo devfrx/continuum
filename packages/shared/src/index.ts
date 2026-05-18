@@ -76,6 +76,12 @@ export interface GraphNode {
    */
   updatedAt?: string;
   /**
+   * Mirror of `Note.locked`. Populated only by the new graph-query
+   * endpoint so visual encodings (badges) and filters can react to lock
+   * state without an extra round-trip. Absent on legacy graph payloads.
+   */
+  locked?: boolean;
+  /**
    * Materialised property snapshots — present only when the request asked
    * for them via `GraphQueryRequest.includeProperties`. Order matches the
    * `includeProperties` array so the client can render columns predictably.
@@ -101,10 +107,12 @@ export interface GraphEdge {
    */
   sourceKind?: import('./query/graph.js').GraphEdgeSourceKind;
   /**
-   * Originating relation-property id. Present only when
-   * `sourceKind === 'relationProperty'`.
+   * Originating relation-property key. Present only when
+   * `sourceKind === 'relationProperty'`. Carries the canonical key
+   * (rather than a per-note definition id) so the client groups edges
+   * by logical relation, not by storage row.
    */
-  propertyId?: UUID;
+  propertyKey?: string;
 }
 
 // ===== AI types =====

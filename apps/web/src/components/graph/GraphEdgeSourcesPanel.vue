@@ -42,38 +42,49 @@ function setAllRelationProperties(value: boolean): void {
     // server falls through to the fast path on the next request.
     patch({
         allRelationProperties: value,
-        relationPropertyIds: value ? [] : edgeSources.value.relationPropertyIds,
+        relationPropertyKeys: value ? [] : edgeSources.value.relationPropertyKeys,
     });
 }
 
 // ───────── Relation-property catalog (every kind, every relation prop) ─────────
+//
+// Property identity in this layer is the canonical `key`: per-note
+// definition clones share the same key, and we want a single pill per
+// logical relation regardless of how many backing rows exist. The catalog
+// therefore deduplicates by key while preserving a representative label.
 
 interface RelationEntry {
-    id: string;
+    key: string;
     label: string;
-    kindLabel: string;
+    kindLabels: string[];
 }
 
 const relationProperties = computed<RelationEntry[]>(() => {
-    const out: RelationEntry[] = [];
+    const byKey = new Map<string, RelationEntry>();
     for (const k of kinds.kinds.value) {
         const defs = properties.byKind.value.get(k.id) ?? [];
         for (const d of defs) {
             if (d.type !== 'relation') continue;
-            out.push({ id: d.id, label: d.label, kindLabel: k.label });
+            const existing = byKey.get(d.key);
+            if (existing) {
+                if (!existing.kindLabels.includes(k.label)) existing.kindLabels.push(k.label);
+            } else {
+                byKey.set(d.key, { key: d.key, label: d.label, kindLabels: [k.label] });
+            }
         }
     }
-    out.sort((a, b) => a.kindLabel.localeCompare(b.kindLabel) || a.label.localeCompare(b.label));
+    const out = Array.from(byKey.values());
+    out.sort((a, b) => a.label.localeCompare(b.label));
     return out;
 });
 
-const selectedSet = computed<Set<string>>(() => new Set(edgeSources.value.relationPropertyIds));
+const selectedSet = computed<Set<string>>(() => new Set(edgeSources.value.relationPropertyKeys));
 
-function togglePropertyId(id: string): void {
+function togglePropertyKey(key: string): void {
     const next = new Set(selectedSet.value);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    patch({ relationPropertyIds: [...next] });
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    patch({ relationPropertyKeys: [...next] });
 }
 
 // ───────── Lazy-load every kind's properties on mount ─────────
@@ -121,20 +132,20 @@ watch(
             </div>
             <button
                 v-for="rel in relationProperties"
-                :key="rel.id"
+                :key="rel.key"
                 type="button"
                 class="edge-sources__pill"
-                :class="{ 'is-on': selectedSet.has(rel.id) }"
-                @click="togglePropertyId(rel.id)"
+                :class="{ 'is-on': selectedSet.has(rel.key) }"
+                @click="togglePropertyKey(rel.key)"
             >
                 <Icon
-                    v-if="selectedSet.has(rel.id)"
+                    v-if="selectedSet.has(rel.key)"
                     name="check"
                     :size="11"
                     class="edge-sources__pill-icon"
                 />
                 <span class="edge-sources__pill-label">{{ rel.label }}</span>
-                <span class="edge-sources__pill-kind">{{ rel.kindLabel }}</span>
+                <span class="edge-sources__pill-kind">{{ rel.kindLabels.join(', ') }}</span>
             </button>
         </div>
     </div>

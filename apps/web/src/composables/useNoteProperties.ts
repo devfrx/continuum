@@ -12,7 +12,13 @@
  */
 import { ref, watch, type Ref } from 'vue';
 import { api } from '@/api';
-import type { NoteProperty, PropertyValue } from '@continuum/shared';
+import type {
+  NoteProperty,
+  PropertyConfig,
+  PropertyDefinition,
+  PropertyType,
+  PropertyValue,
+} from '@continuum/shared';
 
 export interface UseNotePropertiesReturn {
   entries: Ref<NoteProperty[]>;
@@ -24,6 +30,18 @@ export interface UseNotePropertiesReturn {
   set: (propertyId: string, value: PropertyValue) => Promise<void>;
   /** Explicitly clear a value. */
   clear: (propertyId: string) => Promise<void>;
+  /** Create a new note-scoped property definition on this note. */
+  createDefinition: (data: {
+    label: string;
+    type: PropertyType;
+    key?: string;
+    icon?: string | null;
+    description?: string | null;
+    config?: PropertyConfig;
+    position?: string;
+  }) => Promise<PropertyDefinition>;
+  /** Persist the complete display order of this note's definitions. */
+  reorderDefinitions: (ids: string[]) => Promise<void>;
 }
 
 /**
@@ -86,5 +104,37 @@ export function useNoteProperties(
     { immediate: true },
   );
 
-  return { entries, loaded, loading, reload, set, clear };
+  async function createDefinition(data: {
+    label: string;
+    type: PropertyType;
+    key?: string;
+    icon?: string | null;
+    description?: string | null;
+    config?: PropertyConfig;
+    position?: string;
+  }): Promise<PropertyDefinition> {
+    const id = noteIdRef.value;
+    if (!id) throw new Error('Cannot create a property without an active note');
+    const created = await api.properties.createForNote(id, data);
+    await reload();
+    return created;
+  }
+
+  async function reorderDefinitions(ids: string[]): Promise<void> {
+    const id = noteIdRef.value;
+    if (!id) return;
+    await api.properties.reorderForNote(id, ids);
+    await reload();
+  }
+
+  return {
+    entries,
+    loaded,
+    loading,
+    reload,
+    set,
+    clear,
+    createDefinition,
+    reorderDefinitions,
+  };
 }

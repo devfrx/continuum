@@ -12,9 +12,11 @@
  *
  *  – System fields (`note.title`, `note.kind`…) — hardcoded list with the
  *    operator preset that matches each column's data type.
- *  – Property definitions — every kind-scoped + global property is
- *    surfaced as one descriptor; `dataType`, `operators`, `hasOptions`
- *    and `computed` come straight from `PROPERTY_TYPE_CAPABILITIES`.
+ *  – Property definitions — grouped by `key` so the picker shows one
+ *    entry per logical property even when many notes own a per-note copy
+ *    of the same definition. The first definition encountered for a key
+ *    wins for label/icon/type; option lists are unioned across all defs
+ *    sharing the key so the value picker sees every selectable option.
  *  – Graph metrics (`degree`, `inDegree`, `outDegree`) — appended only
  *    when `surface === 'graph'`. They never carry presence operators
  *    because metrics are always defined for every node.
@@ -28,7 +30,9 @@ import {
   type FieldGroupId,
   type FilterOperatorId,
   type GraphMetricId,
+  type PropertyOption,
   type PropertyType,
+  type StatusOption,
   type SystemFieldId,
 } from '@continuum/shared';
 import { db } from '../../db/client.js';
@@ -167,6 +171,10 @@ export async function buildFieldCatalog(
   const fields: FieldDescriptor[] = [];
 
   // ── System fields ───────────────────────────────────────────────────
+  // System fields apply uniformly to every note regardless of kind, so
+  // their hint reads "System" — not "Note" — to avoid being confused with
+  // the user-defined `note` kind. The descriptor's `group` stays `note`
+  // so the picker still nests them under the "Note" section header.
   const systemGroup: FieldGroupId = 'note';
   for (const sys of SYSTEM_FIELDS) {
     fields.push({
@@ -174,7 +182,7 @@ export async function buildFieldCatalog(
       key: fieldRefKey({ kind: 'system', id: sys.id }),
       label: sys.label,
       icon: sys.icon,
-      hint: 'Note',
+      hint: 'System',
       group: systemGroup,
       dataType: sys.dataType,
       operators: sys.operators,
@@ -184,6 +192,12 @@ export async function buildFieldCatalog(
   }
 
   // ── Property fields ─────────────────────────────────────────────────
+  // Property fields are addressed by `key` (one descriptor per distinct
+  // key) so the picker stays clean even when 50 notes each own a copy of
+  // the same per-note definition. Within a key the first definition
+  // encountered wins for label/icon/type; choice options are unioned
+  // across every definition sharing the key (deduped by id) so the
+  // value picker sees the full catalogue.
   const [allDefs, allKinds] = await Promise.all([
     db
       .select()
@@ -193,17 +207,46 @@ export async function buildFieldCatalog(
   ]);
   const kindLabelById = new Map(allKinds.map((k) => [k.id, k.label] as const));
 
-  const propertyGroup: FieldGroupId = 'property';
+  interface KeyGroup {
+    representative: (typeof allDefs)[number];
+    kindIds: Set<string>;
+    scopes: Set<string>;
+    options: Map<string, PropertyOption | StatusOption>;
+  }
+
+  const byKey = new Map<string, KeyGroup>();
   for (const def of allDefs) {
     const cap = PROPERTY_TYPE_CAPABILITIES[def.type as PropertyType];
     if (!cap) continue;
-    const hint =
-      def.scope === 'global'
-        ? 'Global'
-        : (def.kindId && kindLabelById.get(def.kindId)) || def.kindId || 'Kind';
-    fields.push({
-      ref: { kind: 'property', propertyId: def.id },
-      key: fieldRefKey({ kind: 'property', propertyId: def.id }),
+    let group = byKey.get(def.key);
+    if (!group) {
+      group = {
+        representative: def,
+        kindIds: new Set(),
+        scopes: new Set(),
+        options: new Map(),
+      };
+      byKey.set(def.key, group);
+    }
+    group.scopes.add(def.scope);
+    if (def.kindId) group.kindIds.add(def.kindId);
+    if (cap.hasOptions) {
+      const cfg = def.config as { options?: ReadonlyArray<PropertyOption | StatusOption> };
+      for (const opt of cfg?.options ?? []) {
+        if (!group.options.has(opt.id)) group.options.set(opt.id, opt);
+      }
+    }
+  }
+
+  const propertyGroup: FieldGroupId = 'property';
+  for (const [key, group] of byKey) {
+    const def = group.representative;
+    const cap = PROPERTY_TYPE_CAPABILITIES[def.type as PropertyType];
+    if (!cap) continue;
+    const hint = computePropertyHint(group.scopes, group.kindIds, kindLabelById);
+    const descriptor: FieldDescriptor = {
+      ref: { kind: 'property', key },
+      key: fieldRefKey({ kind: 'property', key }),
       label: def.label,
       icon: def.icon ?? null,
       hint,
@@ -212,7 +255,11 @@ export async function buildFieldCatalog(
       operators: cap.operators,
       hasOptions: cap.hasOptions,
       computed: cap.computed,
-    });
+    };
+    if (cap.hasOptions && group.options.size > 0) {
+      descriptor.options = Array.from(group.options.values());
+    }
+    fields.push(descriptor);
   }
 
   // ── Graph metrics (graph surface only) ──────────────────────────────
@@ -235,4 +282,26 @@ export async function buildFieldCatalog(
   }
 
   return { fields };
+}
+
+/**
+ * Render the secondary hint shown below a property's label in the
+ * picker. A key that is purely global stays `Global`; a key owned by
+ * note-scoped definitions only gets a generic `Property` hint (we
+ * deliberately don't enumerate owning notes); a key bound to a single
+ * kind names that kind. Anything spanning multiple kinds collapses to
+ * `Multiple` so the hint stays one line.
+ */
+function computePropertyHint(
+  scopes: Set<string>,
+  kindIds: Set<string>,
+  kindLabelById: Map<string, string>,
+): string {
+  if (scopes.size === 1 && scopes.has('global')) return 'Global';
+  if (kindIds.size === 0) return 'Property';
+  if (kindIds.size === 1) {
+    const [only] = kindIds;
+    return (only && kindLabelById.get(only)) || only || 'Kind';
+  }
+  return 'Multiple';
 }

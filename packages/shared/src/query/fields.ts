@@ -13,8 +13,8 @@
 // mix "title contains 'todo'" with "degree > 5" without any special-casing
 // at the call site.
 
-import type { UUID } from '../index.js';
 import type { FilterOperatorId } from './filters.js';
+import type { PropertyOption, StatusOption } from '../properties.js';
 
 /**
  * Built-in note fields the query layer understands. These map 1:1 to columns
@@ -41,10 +41,18 @@ export type GraphMetricId = 'degree' | 'inDegree' | 'outDegree';
 /**
  * Discriminated reference to a queryable field. The `kind` tag is what every
  * downstream consumer (filter compiler, value picker, sort) switches on.
+ *
+ * For `kind: 'property'` the addressing is by `key` — the canonical,
+ * scope-independent identifier of a property. The same key may be backed
+ * by many `property_definitions` rows (one per note that owns it, plus
+ * optional kind-scoped Templates). The query layer resolves a key into
+ * the matching definition rows at evaluation time, so saved filters and
+ * encodings keep working when properties are added/removed on individual
+ * notes.
  */
 export type FieldRef =
   | { kind: 'system'; id: SystemFieldId }
-  | { kind: 'property'; propertyId: UUID }
+  | { kind: 'property'; key: string }
   | { kind: 'graphMetric'; id: GraphMetricId };
 
 /**
@@ -122,10 +130,23 @@ export interface FieldDescriptor {
    * affordances elsewhere.
    */
   computed?: boolean;
+  /**
+   * Inline option catalogue for `select` / `multiSelect` / `status`
+   * properties — the union of options across every per-note definition
+   * sharing this property's key (deduped by `id`). Surfacing it on the
+   * descriptor lets the filter UI render choice menus without a
+   * round-trip through the per-kind property cache, which doesn't see
+   * note-scoped definitions.
+   */
+  options?: ReadonlyArray<PropertyOption | StatusOption>;
 }
 
-/** Loose UUID shape used by `parseFieldRefKey`. */
-const UUID_RE = /^[0-9a-f-]{36}$/i;
+/**
+ * Property keys are slugs — lowercase letters, digits, underscores. Used
+ * to validate the `prop:<key>` form so a malformed saved view can't sneak
+ * arbitrary text into the field-ref space.
+ */
+const PROPERTY_KEY_RE = /^[a-z0-9_]+$/;
 
 /**
  * Encode a `FieldRef` as a stable string key. The format is intentionally
@@ -134,7 +155,7 @@ const UUID_RE = /^[0-9a-f-]{36}$/i;
  *
  * @example
  *   fieldRefKey({ kind: 'system', id: 'note.title' })   // 'sys:note.title'
- *   fieldRefKey({ kind: 'property', propertyId: '…' })  // 'prop:<uuid>'
+ *   fieldRefKey({ kind: 'property', key: 'priority' })  // 'prop:priority'
  *   fieldRefKey({ kind: 'graphMetric', id: 'degree' })  // 'metric:degree'
  */
 export function fieldRefKey(ref: FieldRef): string {
@@ -142,7 +163,7 @@ export function fieldRefKey(ref: FieldRef): string {
     case 'system':
       return `sys:${ref.id}`;
     case 'property':
-      return `prop:${ref.propertyId}`;
+      return `prop:${ref.key}`;
     case 'graphMetric':
       return `metric:${ref.id}`;
   }
@@ -164,7 +185,7 @@ export function parseFieldRefKey(key: string): FieldRef | null {
     case 'sys':
       return { kind: 'system', id: rest as SystemFieldId };
     case 'prop':
-      return UUID_RE.test(rest) ? { kind: 'property', propertyId: rest } : null;
+      return PROPERTY_KEY_RE.test(rest) ? { kind: 'property', key: rest } : null;
     case 'metric':
       return { kind: 'graphMetric', id: rest as GraphMetricId };
     default:

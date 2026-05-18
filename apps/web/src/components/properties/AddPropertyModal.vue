@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * Modal that walks the user through creating a new property definition:
+ * Modal that walks the user through creating a new property definition
+ * for a single note (per-note schema):
  *
  *   1. Pick a type (tiles grouped by PROPERTY_TYPE_GROUPS).
  *   2. Type a label.
@@ -9,9 +10,11 @@
  *      uniqueId / verification / progress / phone). Other types fall
  *      back to `defaultConfigFor(type)` and can be tuned later.
  *
- * On submit the modal calls `useProperties().create()` and closes.
+ * On submit the modal calls `useNoteProperties().createDefinition()` so
+ * the new property only appears on the active note (kind-wide template
+ * propagation is reserved for the future Templates feature).
  */
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, toRef, watch } from 'vue';
 import { UiModal, UiButton, UiInput, UiSelect } from '@/components/ui';
 import Icon from '@/components/ui/Icon.vue';
 import {
@@ -41,11 +44,18 @@ import {
     type VerificationConfig,
 } from '@continuum/shared';
 import { useProperties } from '@/composables/useProperties';
+import { useNoteProperties } from '@/composables/useNoteProperties';
 import { useKinds } from '@/composables/useKinds';
 
 const props = defineProps<{
     modelValue: boolean;
-    kindId: string;
+    noteId: string;
+    /**
+     * Owning kind of the note. Optional and informational only — used
+     * by future template-aware behaviours; per-note creation does not
+     * read from kind-scoped definitions.
+     */
+    kindId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -54,6 +64,7 @@ const emit = defineEmits<{
 }>();
 
 const properties = useProperties();
+const noteProps = useNoteProperties(toRef(props, 'noteId'));
 const kinds = useKinds();
 
 const step = ref<'type' | 'details'>('type');
@@ -86,9 +97,16 @@ const extra = reactive({
     },
 });
 
-/** Other property definitions on this kind, used to populate relation/target selectors. */
-const sameKindDefs = computed(() => properties.byKind.value.get(props.kindId) ?? []);
-const relationOptions = computed(() => sameKindDefs.value.filter((d) => d.type === 'relation'));
+/**
+ * Definitions already attached to this note. Drives relation / rollup
+ * / formula / button selectors that need to point at sibling props on
+ * the same note. (Cross-note rollup target lookups walk kind templates,
+ * which are populated separately through `useProperties`.)
+ */
+const sameNoteDefs = computed<PropertyDefinition[]>(() =>
+    noteProps.entries.value.map((entry) => entry.definition),
+);
+const relationOptions = computed(() => sameNoteDefs.value.filter((d) => d.type === 'relation'));
 const selectedRollupRelation = computed(
     () => relationOptions.value.find((r) => r.key === extra.rollup.relationKey) ?? null,
 );
@@ -191,7 +209,7 @@ function rollupTargetKindIdsForSelectedRelation(): string[] {
 }
 
 const formulaPropertyOptions = computed(() =>
-    propertyOptionsFromDefinitions(sameKindDefs.value.filter(isFormulaReadableDefinition), false),
+    propertyOptionsFromDefinitions(sameNoteDefs.value.filter(isFormulaReadableDefinition), false),
 );
 
 const rollupTargetKindIds = computed(() => rollupTargetKindIdsForSelectedRelation());
@@ -211,14 +229,16 @@ const rollupTargetPropertyOptions = computed(() => {
 
 const buttonTargetOptions = computed(() => {
     const numericOnly = extra.button.actionType === 'increment-property';
-    const defs = sameKindDefs.value.filter(
+    const defs = sameNoteDefs.value.filter(
         (def) => isStoredValueDefinition(def) && (!numericOnly || isNumericDefinition(def)),
     );
     return propertyOptionsFromDefinitions(defs, false);
 });
 
 async function ensureSelectableDefinitionsLoaded(): Promise<void> {
-    await properties.load(props.kindId);
+    // Make sure the active note's definitions are loaded so the
+    // relation / formula / button selectors above see fresh data.
+    if (!noteProps.loaded.value) await noteProps.reload();
     if (type.value !== 'rollup') return;
     await kinds.load();
     const targetKindIds = [...new Set(rollupTargetKindIdsForSelectedRelation())];
@@ -473,7 +493,7 @@ async function submit(): Promise<void> {
     error.value = null;
     try {
         const config = buildConfig();
-        await properties.create(props.kindId, {
+        await noteProps.createDefinition({
             label: label.value.trim(),
             type: type.value,
             config,

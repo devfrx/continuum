@@ -1,17 +1,25 @@
 /**
  * Custom Properties REST API.
  *
- *  Definitions
- *  ─────────────
+ *  Definitions — per note (default UI path)
+ *  ───────────────────────────────────────
+ *  POST   /api/notes/:noteId/properties           create a note-scoped definition
+ *  POST   /api/notes/:noteId/properties/reorder   persist the note's definition order
+ *
+ *  Definitions — per kind (reserved for future Templates feature)
+ *  ──────────────────────────────────────────────────────────────
  *  GET    /api/kinds/:kindId/properties           list definitions for a kind
  *  POST   /api/kinds/:kindId/properties           create a kind-scoped definition
  *  POST   /api/kinds/:kindId/properties/reorder   persist the kind's definition order
+ *
+ *  Definitions — generic
+ *  ─────────────────────
  *  PATCH  /api/properties/:id                     update a definition (label, icon, description, config, position)
  *  DELETE /api/properties/:id                     delete a definition (cascades values)
  *
  *  Values (per-note)
  *  ─────────────────
- *  GET    /api/notes/:noteId/properties           list every property for the note's kind + current values
+ *  GET    /api/notes/:noteId/properties           list every property for the note + current values
  *  PUT    /api/notes/:noteId/properties/:propId   set / update a single value (DELETE-when-empty semantics)
  *  DELETE /api/notes/:noteId/properties/:propId   clear a value
  *
@@ -82,8 +90,8 @@ const reorderDefinitionsSchema = z.object({
 
 // ───────────────────────────── Helpers ─────────────────────────────────
 
-/** Find the next LexoRank-style position string for a kind (lexicographic). */
-async function nextPosition(kindId: string | null): Promise<string> {
+/** Find the next LexoRank-style position string for an owner (lexicographic). */
+async function nextPositionForKind(kindId: string | null): Promise<string> {
   const where = kindId === null
     ? isNull(propertyDefinitions.kindId)
     : eq(propertyDefinitions.kindId, kindId);
@@ -93,8 +101,16 @@ async function nextPosition(kindId: string | null): Promise<string> {
     .where(where)
     .orderBy(asc(propertyDefinitions.position));
   if (rows.length === 0) return 'a0';
-  // Append a char beyond the last position to keep ordering stable without
-  // implementing a full LexoRank library. Good enough for a few hundred rows.
+  return `${rows[rows.length - 1].position}m`;
+}
+
+async function nextPositionForNote(noteId: string): Promise<string> {
+  const rows = await db
+    .select({ position: propertyDefinitions.position })
+    .from(propertyDefinitions)
+    .where(eq(propertyDefinitions.noteId, noteId))
+    .orderBy(asc(propertyDefinitions.position));
+  if (rows.length === 0) return 'a0';
   return `${rows[rows.length - 1].position}m`;
 }
 
@@ -145,13 +161,14 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
     const configParser = configSchemaFor(body.type);
     const config = configParser.parse(body.config ?? { type: body.type });
 
-    const position = body.position ?? (await nextPosition(kindId));
+    const position = body.position ?? (await nextPositionForKind(kindId));
 
     const [created] = await db
       .insert(propertyDefinitions)
       .values({
         scope: 'kind',
         kindId,
+        noteId: null,
         key,
         label: body.label,
         type: body.type,
@@ -203,6 +220,105 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
         .select()
         .from(propertyDefinitions)
         .where(eq(propertyDefinitions.kindId, kindId))
+        .orderBy(asc(propertyDefinitions.position));
+    });
+
+    return updated.map(definitionRowToDto);
+  });
+
+  // ───────────── Definitions: create per note ─────────────
+  // POST /api/notes/:noteId/properties
+  // The default code path used by the inline property panel: each note
+  // owns its own schema, so adding a property here never leaks to its
+  // siblings. Kind-scoped definitions remain available for the future
+  // Templates feature but are not auto-applied.
+  app.post('/notes/:noteId/properties', async (req, reply) => {
+    const { noteId } = noteIdParamSchema.parse(req.params);
+    const body = createDefinitionSchema.parse(req.body);
+
+    const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
+    if (!note) return reply.notFound('Note not found');
+    if (note.locked) {
+      return reply.code(423).send({
+        error: 'note-locked',
+        message: 'Note is locked. Unlock it before editing properties.',
+      });
+    }
+
+    const key = body.key?.trim() ? slugify(body.key, 60) : slugify(body.label, 60);
+    if (!key) return reply.badRequest('Could not derive a valid key from the label');
+
+    const [existing] = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(
+        and(eq(propertyDefinitions.noteId, noteId), eq(propertyDefinitions.key, key)),
+      )
+      .limit(1);
+    if (existing) return reply.conflict(`A property with key "${key}" already exists on this note`);
+
+    const configParser = configSchemaFor(body.type);
+    const config = configParser.parse(body.config ?? { type: body.type });
+
+    const position = body.position ?? (await nextPositionForNote(noteId));
+
+    const [created] = await db
+      .insert(propertyDefinitions)
+      .values({
+        scope: 'note',
+        kindId: null,
+        noteId,
+        key,
+        label: body.label,
+        type: body.type,
+        icon: body.icon ?? null,
+        description: body.description ?? null,
+        config,
+        position,
+      })
+      .returning();
+    return definitionRowToDto(created);
+  });
+
+  // ───────────── Definitions: reorder per note ─────────────
+  app.post('/notes/:noteId/properties/reorder', async (req, reply) => {
+    const { noteId } = noteIdParamSchema.parse(req.params);
+    const body = reorderDefinitionsSchema.parse(req.body);
+
+    const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
+    if (!note) return reply.notFound('Note not found');
+
+    const uniqueIds = new Set(body.ids);
+    if (uniqueIds.size !== body.ids.length) {
+      return reply.badRequest('Duplicate property ids in reorder payload');
+    }
+
+    const existing = await db
+      .select()
+      .from(propertyDefinitions)
+      .where(eq(propertyDefinitions.noteId, noteId))
+      .orderBy(asc(propertyDefinitions.position));
+
+    const existingIds = new Set(existing.map((row) => row.id));
+    const payloadMatches = body.ids.length === existing.length
+      && body.ids.every((id) => existingIds.has(id));
+    if (!payloadMatches) {
+      return reply.badRequest(
+        'Reorder payload must include every property for this note exactly once',
+      );
+    }
+
+    const updated = await db.transaction(async (tx) => {
+      for (const [index, id] of body.ids.entries()) {
+        await tx
+          .update(propertyDefinitions)
+          .set({ position: positionForIndex(index), updatedAt: new Date() })
+          .where(eq(propertyDefinitions.id, id));
+      }
+      return tx
+        .select()
+        .from(propertyDefinitions)
+        .where(eq(propertyDefinitions.noteId, noteId))
         .orderBy(asc(propertyDefinitions.position));
     });
 
@@ -280,7 +396,11 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(propertyDefinitions.id, propId))
       .limit(1);
     if (!defRow) return reply.notFound('Property not found');
-    if (defRow.scope === 'kind' && defRow.kindId !== note.kind) {
+    if (defRow.scope === 'note') {
+      if (defRow.noteId !== noteId) {
+        return reply.badRequest('Property does not belong to this note');
+      }
+    } else if (defRow.scope === 'kind' && defRow.kindId !== note.kind) {
       return reply.badRequest("Property does not belong to this note's kind");
     }
     if (defRow.type === 'button' || isComputedPropertyType(defRow.type as PropertyType)) {

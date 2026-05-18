@@ -3,21 +3,20 @@
  * NotesSidebar — left rail of the notes view.
  *
  * Layout shell composed of:
- *   • {@link FolderTree}                  — folder navigation deck
  *   • search input + mode toggle          — local command surface
  *   • {@link RecentNotesSection}          — recently opened pin list
  *   • {@link NotesSidebarSearchResults}   — semantic search results path
- *   • {@link NotesSidebarList}            — folder/filter list path
+ *   • {@link FolderTree}                  — unified folder + notes tree
  *
- * The two list children are mutually exclusive (chosen by `searchMode`
- * + non-empty query). Each owns its own row rendering; this shell just
- * picks which one to mount and wires shared events back up to NotesView.
+ * In the default browse path the folder tree is the single navigator
+ * for both folders and notes (notes are rendered inline beneath their
+ * parent folder, root-less notes after the forest). Semantic search
+ * still owns its own dedicated results list.
  */
 import { computed, onMounted, watch } from 'vue';
 import { UiButton, UiInput, UiSegmented, Icon } from '@/components/ui';
 import { FolderTree } from '@/components/folders';
 import RecentNotesSection from '@/components/notes/RecentNotesSection.vue';
-import NotesSidebarList from '@/components/notes/NotesSidebarList.vue';
 import NotesSidebarSearchResults from '@/components/notes/NotesSidebarSearchResults.vue';
 import { useKinds } from '@/composables/useKinds';
 import { useFolders } from '@/composables/useFolders';
@@ -92,8 +91,8 @@ const visibleCount = computed<number>(() => {
     ).length;
 });
 
-/** Count of notes living at root (no folder) for the "All notes" row. */
-const rootNoteCount = computed(() => props.notes.filter((n) => !n.folderId).length);
+/** Total note count for the root "All notes" row. */
+const rootNoteCount = computed(() => props.notes.length);
 
 /** Name of the currently scoped folder (for the "in: …" chip). */
 const scopeFolderName = computed<string>(() =>
@@ -126,14 +125,6 @@ onMounted(() => {
 
 <template>
     <aside class="sidebar">
-        <section class="nav-deck" aria-label="Folder navigation">
-            <FolderTree class="folder-navigator" :selected-folder-id="selectedFolderId" :root-note-count="rootNoteCount"
-                @update:selected-folder-id="(v) => emit('update:selectedFolderId', v)"
-                @create-folder="(parentId) => emit('create-folder', parentId)"
-                @edit-folder="(f) => emit('edit-folder', f)" @delete-folder="(f) => emit('delete-folder', f)"
-                @drop-note="(p) => emit('move-note', p)" />
-        </section>
-
         <section class="command-deck" aria-label="Note commands">
             <UiInput :model-value="searchQuery" placeholder="Search notes…" size="sm" left-icon class="note-search"
                 @update:model-value="onSearchInput" @keydown.enter.prevent="onEnter">
@@ -193,9 +184,15 @@ onMounted(() => {
                 :semantic-hits="semanticHits" :semantic-busy="semanticBusy"
                 @select="(id: string) => emit('select', id)" />
 
-            <NotesSidebarList v-else :notes="folderScopedNotes" :selected-id="selectedId"
-                :selected-folder-id="selectedFolderId" :search-query="searchQuery"
-                @select="(id: string) => emit('select', id)" @delete="(id: string) => emit('delete', id)" />
+            <FolderTree v-else class="folder-navigator" :selected-folder-id="selectedFolderId"
+                :root-note-count="rootNoteCount" :notes="folderScopedNotes" :selected-note-id="selectedId"
+                :note-search="searchQuery"
+                @update:selected-folder-id="(v) => emit('update:selectedFolderId', v)"
+                @select-note="(id) => emit('select', id)"
+                @delete-note="(id) => emit('delete', id)"
+                @create-folder="(parentId) => emit('create-folder', parentId)"
+                @edit-folder="(f) => emit('edit-folder', f)" @delete-folder="(f) => emit('delete-folder', f)"
+                @drop-note="(p) => emit('move-note', p)" />
         </section>
     </aside>
 </template>
@@ -203,8 +200,9 @@ onMounted(() => {
 <style scoped>
 /**
  * Notes sidebar shell. Per-row styling lives in
- * `NotesSidebarList.vue` / `NotesSidebarSearchResults.vue`; this file
- * only owns the deck/command layout.
+ * `FolderTree.vue` / `FolderTreeNode.vue` /
+ * `NotesSidebarSearchResults.vue`; this file only owns the deck/command
+ * layout.
  */
 .sidebar {
     display: flex;
@@ -214,23 +212,9 @@ onMounted(() => {
     min-height: 0;
 }
 
-.nav-deck {
-    flex: 0 0 118px;
-    min-height: 104px;
-    max-height: 24%;
-    overflow: hidden;
-}
-
 .folder-navigator {
-    height: 100%;
-}
-
-.nav-deck :deep(.folder-tree) {
-    height: 100%;
-}
-
-.nav-deck :deep(.tree) {
-    padding-right: var(--space-1);
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .command-deck {

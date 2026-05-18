@@ -38,6 +38,37 @@ export function bindInteractions(
   let draggedNode: string | null = null;
   let isDragging = false;
 
+  // ── Drag coalescing ──────────────────────────────────────────────────
+  // High-Hz mice / trackpads can fire `mousemove` 120-1000 times per
+  // second. Each `setNodeAttribute` invalidates Sigma's spatial index
+  // (quadtree) and schedules a refresh, so naively writing on every
+  // event burns far more CPU than the renderer can consume — the
+  // dragged node lags behind the cursor. We coalesce instead: store the
+  // latest cursor position and flush it once per `requestAnimationFrame`
+  // with a single `mergeNodeAttributes` call (one Graphology event,
+  // one Sigma reindex). This is the same pattern Sigma's official drag
+  // example recommends for production-scale graphs.
+  let pendingPos: { x: number; y: number } | null = null;
+  let rafHandle: number | null = null;
+
+  function flushDragPosition(): void {
+    rafHandle = null;
+    if (!isDragging || !draggedNode || !pendingPos) return;
+    graph.mergeNodeAttributes(draggedNode, {
+      x: pendingPos.x,
+      y: pendingPos.y,
+    });
+    pendingPos = null;
+  }
+
+  function cancelPendingDrag(): void {
+    if (rafHandle !== null) {
+      cancelAnimationFrame(rafHandle);
+      rafHandle = null;
+    }
+    pendingPos = null;
+  }
+
   // --- Node drag (LEFT mouse button only — right is reserved for ctx menu) ---
   sigma.on('downNode', (e) => {
     const orig = e.event.original as MouseEvent | undefined;
@@ -52,9 +83,10 @@ export function bindInteractions(
 
   sigma.getMouseCaptor().on('mousemovebody', (e) => {
     if (!isDragging || !draggedNode) return;
-    const pos = sigma.viewportToGraph(e);
-    graph.setNodeAttribute(draggedNode, 'x', pos.x);
-    graph.setNodeAttribute(draggedNode, 'y', pos.y);
+    pendingPos = sigma.viewportToGraph(e);
+    if (rafHandle === null) {
+      rafHandle = requestAnimationFrame(flushDragPosition);
+    }
     e.preventSigmaDefault();
     e.original.preventDefault();
     e.original.stopPropagation();
@@ -67,6 +99,16 @@ export function bindInteractions(
       ?? (wrapped as MouseEvent | undefined);
     if (ev && typeof ev.button === 'number' && ev.button !== 0) return;
     if (!isDragging) return;
+    // Flush any in-flight position synchronously before releasing so the
+    // dropped node lands exactly under the cursor instead of one frame
+    // behind it.
+    if (pendingPos && draggedNode) {
+      graph.mergeNodeAttributes(draggedNode, {
+        x: pendingPos.x,
+        y: pendingPos.y,
+      });
+    }
+    cancelPendingDrag();
     isDragging = false;
     draggedNode = null;
     liveSim?.setDragged(null);
@@ -146,6 +188,7 @@ export function bindInteractions(
     isDragging: () => isDragging,
     releaseDrag: () => {
       if (!isDragging) return;
+      cancelPendingDrag();
       isDragging = false;
       draggedNode = null;
       liveSim?.setDragged(null);

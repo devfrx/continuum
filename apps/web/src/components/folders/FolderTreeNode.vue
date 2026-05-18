@@ -15,20 +15,35 @@
  * folder's effective values (Modality B walk-up via `useFolders`), so a
  * subfolder without explicit overrides visually mirrors its ancestor.
  */
-import { ref, computed } from 'vue';
+import { ref, computed, watchEffect } from 'vue';
 import { Icon, UiContextMenu, type ContextMenuItem } from '@/components/ui';
 import { useFolders } from '@/composables/useFolders';
-import type { FolderNode } from '@continuum/shared';
+import FolderTreeNoteRow from './FolderTreeNoteRow.vue';
+import type { FolderNode, Note } from '@continuum/shared';
 import type { AppIconName as IconName } from '@/assets/icons';
 
 const props = defineProps<{
     node: FolderNode;
     depth: number;
     selectedId: string | null;
+    /** Notes grouped by folder id (key = folder id, key `null` = root). */
+    notesByFolder?: Map<string | null, Note[]>;
+    /** Currently open note id, used to highlight the note row. */
+    selectedNoteId?: string | null;
+    /**
+     * Folder ids whose subtree contains a search match. When this folder's
+     * id is present we force the row to be expanded so the matching note
+     * is reachable without manual chevron clicks.
+     */
+    expandedFolderSet?: Set<string> | null;
+    /** Optional predicate filtering which notes to render under this folder. */
+    noteFilter?: ((n: Note) => boolean) | null;
 }>();
 
 const emit = defineEmits<{
     (e: 'select', id: string): void;
+    (e: 'select-note', id: string): void;
+    (e: 'delete-note', id: string): void;
     (e: 'create-folder', parentId: string | null): void;
     (e: 'edit-folder', folder: FolderNode): void;
     (e: 'delete-folder', folder: FolderNode): void;
@@ -40,13 +55,27 @@ const folders = useFolders();
 const expanded = ref(true);
 const dragOver = ref(false);
 
+// Auto-expand when the active search has matches inside this subtree, so
+// users never have to manually drill down to find the match.
+watchEffect(() => {
+    if (props.expandedFolderSet?.has(props.node.id)) expanded.value = true;
+});
+
 const isSelected = computed(() => props.selectedId === props.node.id);
 const hasChildren = computed(() => props.node.children.length > 0);
+
+/** Notes belonging directly to this folder (post-filter). */
+const folderNotes = computed<Note[]>(() => {
+    const all = props.notesByFolder?.get(props.node.id) ?? [];
+    return props.noteFilter ? all.filter(props.noteFilter) : all;
+});
+const hasNotes = computed(() => folderNotes.value.length > 0);
+const hasContent = computed(() => hasChildren.value || hasNotes.value);
 
 const effective = computed(() => folders.effectiveFor(props.node.id));
 const folderIconName = computed<IconName>(() => {
     // Effective icon may be any string from the registry; cast at the boundary.
-    const fallback: IconName = expanded.value && hasChildren.value ? 'folder-open' : 'folder';
+    const fallback: IconName = expanded.value && hasContent.value ? 'folder-open' : 'folder';
     return (effective.value.icon as IconName) ?? fallback;
 });
 
@@ -89,13 +118,13 @@ function onContextMenu(ev: MouseEvent): void {
 </script>
 
 <template>
-    <li role="treeitem" :aria-selected="isSelected" :aria-expanded="hasChildren ? expanded : undefined"
-        :class="['tree-item', { 'drag-over': dragOver }]">
-        <div :class="['tree-row', { active: isSelected }]" :style="{ '--depth': depth }" @click="onClick"
+    <li role="treeitem" :aria-selected="isSelected" :aria-expanded="hasContent ? expanded : undefined"
+        :class="['tree-item', { 'drag-over': dragOver }]" :style="{ '--depth': depth }">
+        <div :class="['tree-row', { active: isSelected }]" @click="onClick"
             @contextmenu="onContextMenu" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
             <span class="indent" aria-hidden="true" />
 
-            <button v-if="hasChildren" type="button" class="chev" :aria-label="expanded ? 'Collapse' : 'Expand'"
+            <button v-if="hasContent" type="button" class="chev" :aria-label="expanded ? 'Collapse' : 'Expand'"
                 @click="toggle">
                 <Icon :name="expanded ? 'chevron-down' : 'chevron-right'" :size="10" />
             </button>
@@ -107,12 +136,20 @@ function onContextMenu(ev: MouseEvent): void {
             <span v-if="node.noteCount" class="count">{{ node.noteCount }}</span>
         </div>
 
-        <ul v-if="hasChildren && expanded" class="children" role="group">
+        <ul v-if="hasContent && expanded" class="children" role="group">
             <FolderTreeNode v-for="child in node.children" :key="child.id" :node="child" :depth="depth + 1"
-                :selected-id="selectedId" @select="(id) => emit('select', id)"
+                :selected-id="selectedId" :notes-by-folder="notesByFolder" :selected-note-id="selectedNoteId"
+                :expanded-folder-set="expandedFolderSet" :note-filter="noteFilter"
+                @select="(id) => emit('select', id)"
+                @select-note="(id) => emit('select-note', id)"
+                @delete-note="(id) => emit('delete-note', id)"
                 @create-folder="(parentId) => emit('create-folder', parentId)"
                 @edit-folder="(f) => emit('edit-folder', f)" @delete-folder="(f) => emit('delete-folder', f)"
                 @drop-note="(payload) => emit('drop-note', payload)" />
+
+            <FolderTreeNoteRow v-for="n in folderNotes" :key="`note-${n.id}`" :note="n" :depth="depth + 1"
+                :selected="n.id === selectedNoteId" @select="(id) => emit('select-note', id)"
+                @delete="(id) => emit('delete-note', id)" />
         </ul>
 
         <UiContextMenu v-model="menuOpen" :x="menuX" :y="menuY" :items="menuItems" />
@@ -125,21 +162,23 @@ function onContextMenu(ev: MouseEvent): void {
  *
  * Visual contract intentionally identical to the root "All notes" row in
  * FolderTree.vue (height, padding, hover, active) so the tree reads as a
- * single ordered list. Depth is conveyed only by left padding — no
- * vertical guides or connectors, which kept the surface noisy at deep
- * trees in earlier iterations.
+ * single ordered list. Depth is conveyed by left padding plus a subtle
+ * branch guide on expanded groups, giving the unified notes tree enough
+ * structure without adding connector clutter around each row.
  */
 .tree-item {
     list-style: none;
+    min-width: 0;
 }
 
 .tree-row {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    height: 28px;
-    padding: 0 var(--space-3);
-    padding-left: calc(var(--space-3) + var(--depth, 0) * var(--space-4));
+    min-height: 30px;
+    padding: 0 var(--space-2);
+    padding-left: calc(var(--tree-gutter, var(--space-3)) + var(--depth, 0) * var(--tree-indent, 18px));
+    border: var(--border-width-1) solid transparent;
     border-radius: var(--radius-sm);
     cursor: pointer;
     color: var(--fg);
@@ -149,11 +188,13 @@ function onContextMenu(ev: MouseEvent): void {
 }
 
 .tree-row:hover {
-    background: var(--bg-soft);
+    background: color-mix(in srgb, var(--bg-soft) 82%, transparent);
+    border-color: color-mix(in srgb, var(--border) 68%, transparent);
 }
 
 .tree-row.active {
-    background: var(--accent-soft);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev));
+    border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
     color: var(--fg-strong);
 }
 
@@ -169,12 +210,24 @@ function onContextMenu(ev: MouseEvent): void {
 
 .children {
     list-style: none;
-    margin: 0;
+    margin: 2px 0 0;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-px);
-    margin-top: var(--space-px);
+    gap: 2px;
+    position: relative;
+}
+
+.children::before {
+    content: '';
+    position: absolute;
+    left: calc(var(--tree-gutter, var(--space-3)) + var(--depth, 0) * var(--tree-indent, 18px) + 7px);
+    top: 2px;
+    bottom: 4px;
+    width: var(--border-width-1);
+    border-radius: var(--radius-pill);
+    background: var(--tree-guide-color, color-mix(in srgb, var(--fg-muted) 20%, transparent));
+    pointer-events: none;
 }
 
 .chev {
@@ -206,6 +259,7 @@ function onContextMenu(ev: MouseEvent): void {
 }
 
 .folder-icon {
+    width: 18px;
     flex-shrink: 0;
 }
 
@@ -219,6 +273,14 @@ function onContextMenu(ev: MouseEvent): void {
 }
 
 .count {
+    min-width: 20px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--bg-soft) 78%, transparent);
     font-variant-numeric: tabular-nums;
     color: var(--fg-subtle);
     font-size: var(--text-xs);
@@ -228,4 +290,5 @@ function onContextMenu(ev: MouseEvent): void {
 .tree-row.active .count {
     color: var(--fg-muted);
 }
+
 </style>

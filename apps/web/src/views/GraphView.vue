@@ -78,14 +78,14 @@ const noteExport = useNoteExport({ onError: (msg) => { graphError.value = msg; }
 // ───────── Property Query Layer ─────────
 //
 // `useGraphPropertyEncodings` owns the user's color/size/badge mapping plus
-// the derived `requiredPropertyIds` / `requiresMetrics` flags consumed by
+// the derived `requiredPropertyKeys` / `requiresMetrics` flags consumed by
 // `useGraphQuery`. The query composable is configured once with these
 // references — every nested panel reads the same singleton via
 // `useGraphQuery()` (no args).
 const graphPropertyEncodings = useGraphPropertyEncodings();
 const graphQuery = useGraphQuery({
   encodings: graphPropertyEncodings.encodings,
-  requiredPropertyIds: graphPropertyEncodings.requiredPropertyIds,
+  requiredPropertyKeys: graphPropertyEncodings.requiredPropertyKeys,
   requiresMetrics: graphPropertyEncodings.requiresMetrics,
 });
 
@@ -124,7 +124,7 @@ const encodingMaps = computed<GraphEncodingMaps | undefined>(() => {
   return buildGraphEncodingMaps({
     nodes: payload.nodes,
     encodings: graphPropertyEncodings.encodings.value,
-    propertyById: (id) => properties.byId(id),
+    propertyByKey: (key) => properties.byKey(key),
     colorOfKind: (kind) => kindStore.colorOf(kind),
     iconOfKind: (kind) => kindStore.iconOf(kind),
   });

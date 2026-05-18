@@ -78,7 +78,7 @@ function encodingCount(payload: GraphFilterPresetPayload): number {
 
 function edgeSourceLabel(payload: GraphFilterPresetPayload): string {
     const edgeSources = payload.edgeSources;
-    const hasRelationSubset = edgeSources.relationPropertyIds.length > 0;
+    const hasRelationSubset = edgeSources.relationPropertyKeys.length > 0;
     if (edgeSources.includeLinks && edgeSources.allRelationProperties) return 'Link + relazioni';
     if (edgeSources.includeLinks && hasRelationSubset) return 'Link + selezione';
     if (edgeSources.includeLinks) return 'Solo link';
@@ -100,7 +100,7 @@ function capturePayload(): GraphFilterPresetPayload {
         filterRoot: cloneJson(query.filter.root.value) as FilterGroup,
         edgeSources: {
             ...query.edgeSources.value,
-            relationPropertyIds: query.edgeSources.value.relationPropertyIds.slice(),
+            relationPropertyKeys: query.edgeSources.value.relationPropertyKeys.slice(),
         },
         encodings: cloneJson(encodings.encodings.value),
         filters: { ...props.filters },

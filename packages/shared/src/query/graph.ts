@@ -9,7 +9,7 @@
 // the exported constants) means the server can validate it with a strict
 // schema and the client can serialise saved views without losing intent.
 
-import type { GraphEdge, GraphNode, UUID } from '../index.js';
+import type { GraphEdge, GraphNode } from '../index.js';
 import type { PropertyType, PropertyValue } from '../properties.js';
 import type { FieldDescriptor } from './fields.js';
 import type { FilterNode } from './filters.js';
@@ -34,11 +34,14 @@ export interface GraphNodeMetrics {
  * requests it via `GraphQueryRequest.includeProperties`. The shape is
  * deliberately self-describing (carries `key` and `type`) so the client can
  * render a value without a second lookup against the property definitions.
+ *
+ * Identity is by `key`: with per-note definitions there is no longer a
+ * single stable definition id shared across notes for the same property,
+ * so the snapshot drops the per-row id and exposes only the canonical
+ * key the rest of the query layer addresses properties by.
  */
 export interface GraphPropertySnapshot {
-  /** Property definition id this value is for. */
-  propertyId: UUID;
-  /** Convenience copy of the definition's `key` for client-side lookups. */
+  /** Canonical property key — matches `FieldRef.key`. */
   key: string;
   /** Property type — drives client-side rendering. */
   type: PropertyType;
@@ -57,21 +60,22 @@ export type GraphEdgeSourceKind = 'link' | 'relationProperty';
  * Knobs controlling which edge sources participate in the response.
  *
  * `allRelationProperties` is a fast path for "give me everything"; when
- * `false`, only edges originating from the property ids in
- * `relationPropertyIds` are emitted. The two flags are independent so a
- * caller can request, say, "no classic links, only the `dependsOn`
- * relation" with a single request.
+ * `false`, only edges originating from relation properties whose `key`
+ * is in `relationPropertyKeys` are emitted. Addressing by key — not row
+ * id — means a single allow-list entry covers every per-note clone of
+ * the same relation property.
  */
 export interface GraphEdgeSourceSelection {
   /** Include classic edges from the `links` table. */
   includeLinks: boolean;
   /**
    * When `true`, every relation-property edge is included. When `false`,
-   * only edges originating from `relationPropertyIds` are included.
+   * only edges whose property key is in `relationPropertyKeys` are
+   * included.
    */
   allRelationProperties: boolean;
-  /** Allow-list applied when `allRelationProperties` is `false`. */
-  relationPropertyIds: UUID[];
+  /** Allow-list of relation-property keys; ignored when `allRelationProperties` is `true`. */
+  relationPropertyKeys: string[];
 }
 
 /**
@@ -82,7 +86,7 @@ export interface GraphEdgeSourceSelection {
 export const DEFAULT_EDGE_SOURCE_SELECTION: GraphEdgeSourceSelection = {
   includeLinks: true,
   allRelationProperties: true,
-  relationPropertyIds: [],
+  relationPropertyKeys: [],
 };
 
 /**
@@ -95,8 +99,8 @@ export interface GraphQueryRequest {
   filter: FilterNode;
   /** Which edge sources to include in the response. */
   edgeSources: GraphEdgeSourceSelection;
-  /** Property definition ids whose values must be materialised on each node. */
-  includeProperties: UUID[];
+  /** Property keys whose values must be materialised on each node. */
+  includeProperties: string[];
   /** When `true`, every node carries `metrics`. */
   includeMetrics: boolean;
 }

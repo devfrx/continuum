@@ -37,7 +37,7 @@ export interface RtLink {
   target: string | RtNode;
   type: string;
   sourceKind?: GraphEdge['sourceKind'];
-  propertyId?: string | null;
+  propertyKey?: string | null;
 }
 
 export interface GraphObject3D extends THREE.Object3D {

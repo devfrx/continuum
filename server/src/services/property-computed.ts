@@ -318,7 +318,7 @@ export async function resolveNoteProperties(noteId: string): Promise<NotePropert
   const defs = await db
     .select()
     .from(propertyDefinitions)
-    .where(eq(propertyDefinitions.kindId, note.kind))
+    .where(eq(propertyDefinitions.noteId, noteId))
     .orderBy(asc(propertyDefinitions.position));
   if (defs.length === 0) return [];
 
@@ -437,8 +437,8 @@ async function resolveFromPrefetched(
  *
  *  – `notes` rows fetched once with `inArray`.
  *  – Property definitions fetched once for the union of (kindId IN kinds)
- *    OR `scope='global'`, then optionally narrowed to `propertyIds` when
- *    the caller passes an allow-list (graph projection case).
+ *    OR `scope='global'`, then optionally narrowed to `propertyKeys`
+ *    when the caller passes an allow-list (graph projection case).
  *  – `property_values` rows fetched once per (note × def) pair, indexed
  *    by `noteId` for fast per-note lookup.
  *  – `uniqueId` allocation, rollup resolution and formula evaluation
@@ -451,7 +451,7 @@ async function resolveFromPrefetched(
  */
 export async function resolveNotePropertiesBatch(
   noteIds: string[],
-  propertyIds?: string[] | null,
+  propertyKeys?: string[] | null,
 ): Promise<Map<string, NoteProperty[]>> {
   const out = new Map<string, NoteProperty[]>();
   if (noteIds.length === 0) return out;
@@ -459,15 +459,14 @@ export async function resolveNotePropertiesBatch(
   const noteRows = await db.select().from(notes).where(inArray(notes.id, noteIds));
   const notesById = new Map(noteRows.map((n) => [n.id, n] as const));
 
-  const kindIds = Array.from(new Set(noteRows.map((n) => n.kind)));
-  if (kindIds.length === 0) {
+  if (noteRows.length === 0) {
     for (const id of noteIds) out.set(id, []);
     return out;
   }
 
-  const defConds = [inArray(propertyDefinitions.kindId, kindIds)];
-  if (propertyIds && propertyIds.length > 0) {
-    defConds.push(inArray(propertyDefinitions.id, propertyIds));
+  const defConds = [inArray(propertyDefinitions.noteId, noteRows.map((n) => n.id))];
+  if (propertyKeys && propertyKeys.length > 0) {
+    defConds.push(inArray(propertyDefinitions.key, propertyKeys));
   }
   const defs = await db
     .select()
@@ -475,13 +474,13 @@ export async function resolveNotePropertiesBatch(
     .where(and(...defConds))
     .orderBy(asc(propertyDefinitions.position));
 
-  // Group defs by kindId for per-note lookup.
-  const defsByKind = new Map<string, PropertyDefinitionRow[]>();
+  // Group defs by noteId for per-note lookup.
+  const defsByNote = new Map<string, PropertyDefinitionRow[]>();
   for (const def of defs) {
-    if (!def.kindId) continue;
-    const arr = defsByKind.get(def.kindId) ?? [];
+    if (!def.noteId) continue;
+    const arr = defsByNote.get(def.noteId) ?? [];
     arr.push(def);
-    defsByKind.set(def.kindId, arr);
+    defsByNote.set(def.noteId, arr);
   }
 
   const allDefIds = defs.map((d) => d.id);
@@ -512,7 +511,7 @@ export async function resolveNotePropertiesBatch(
         out.set(id, []);
         return;
       }
-      const noteDefs = defsByKind.get(note.kind) ?? [];
+      const noteDefs = defsByNote.get(id) ?? [];
       const noteValues = valuesByNote.get(id) ?? [];
       out.set(id, await resolveFromPrefetched(note, noteDefs, noteValues));
     }),
@@ -543,7 +542,7 @@ export async function executeButtonAction(
     .from(propertyDefinitions)
     .where(
       and(
-        eq(propertyDefinitions.kindId, note.kind),
+        eq(propertyDefinitions.noteId, note.id),
         eq(propertyDefinitions.key, action.targetKey ?? ''),
       ),
     )

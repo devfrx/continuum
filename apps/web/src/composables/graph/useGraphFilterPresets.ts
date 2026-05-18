@@ -59,7 +59,7 @@ function cloneJson<T>(value: T): T {
 }
 
 function defaultEdgeSources(): GraphEdgeSourceSelection {
-  return { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyIds: [] };
+  return { ...DEFAULT_EDGE_SOURCE_SELECTION, relationPropertyKeys: [] };
 }
 
 function coerceTimestamp(value: unknown, fallback: number): number {
@@ -74,7 +74,7 @@ export function cloneGraphFilterPresetPayload(
     filterRoot: cloneJson(payload.filterRoot),
     edgeSources: {
       ...payload.edgeSources,
-      relationPropertyIds: payload.edgeSources.relationPropertyIds.slice(),
+      relationPropertyKeys: payload.edgeSources.relationPropertyKeys.slice(),
     },
     encodings: cloneJson(payload.encodings),
     filters: { ...payload.filters },

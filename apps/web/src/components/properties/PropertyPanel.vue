@@ -2,14 +2,16 @@
 /**
  * Inline properties panel for the note page.
  *
- * Shows every property defined for the note kind and its current value,
- * then lets the user edit values inline, add new definitions, or delete a
- * definition for the kind.
+ * Each note owns its own property schema (per-note definitions): the
+ * panel shows every definition attached to the note and its current
+ * value, then lets the user edit, add, reorder or remove them. Adding a
+ * property here never affects sibling notes — the kind-scoped path is
+ * reserved for the future Templates feature.
  */
-import { computed, ref, toRef, watch } from 'vue';
+import { computed, ref, toRef } from 'vue';
 import { UiButton, UiConfirmModal } from '@/components/ui';
 import Icon from '@/components/ui/Icon.vue';
-import { useProperties } from '@/composables/useProperties';
+import { api } from '@/api';
 import { useNoteProperties } from '@/composables/useNoteProperties';
 import PropertyRow from './PropertyRow.vue';
 import AddPropertyModal from './AddPropertyModal.vue';
@@ -25,7 +27,6 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ (e: 'select', id: string): void }>();
 
-const properties = useProperties();
 const noteProps = useNoteProperties(toRef(props, 'noteId'));
 
 const showAdd = ref(false);
@@ -33,14 +34,6 @@ const pendingDelete = ref<{ id: string; label: string } | null>(null);
 const draggedPropertyId = ref<string | null>(null);
 const dragOverPropertyId = ref<string | null>(null);
 const reorderBusy = ref(false);
-
-watch(
-    () => props.kindId,
-    (kindId) => {
-        if (kindId) void properties.load(kindId);
-    },
-    { immediate: true },
-);
 
 const hasNote = computed(() => Boolean(props.noteId && props.kindId));
 
@@ -63,7 +56,7 @@ async function confirmDelete(): Promise<void> {
     if (!pendingDelete.value) return;
     const id = pendingDelete.value.id;
     pendingDelete.value = null;
-    await properties.remove(id);
+    await api.properties.remove(id);
     await noteProps.reload();
 }
 
@@ -101,7 +94,7 @@ function onPropertyDragOver(id: string, event: DragEvent): void {
 }
 
 async function onPropertyDrop(id: string, event: DragEvent): Promise<void> {
-    if (props.readonly || reorderBusy.value || !props.kindId || !draggedPropertyId.value) return;
+    if (props.readonly || reorderBusy.value || !props.noteId || !draggedPropertyId.value) return;
     event.preventDefault();
     const fromId = draggedPropertyId.value;
     clearDragState();
@@ -114,11 +107,9 @@ async function onPropertyDrop(id: string, event: DragEvent): Promise<void> {
     noteProps.entries.value = next;
     reorderBusy.value = true;
     try {
-        await properties.reorder(
-            props.kindId,
+        await noteProps.reorderDefinitions(
             next.map((entry) => entry.definition.id),
         );
-        await noteProps.reload();
     } catch (err) {
         noteProps.entries.value = previous;
         throw err;
@@ -168,10 +159,11 @@ function clearDragState(): void {
             </UiButton>
         </template>
 
-        <AddPropertyModal v-if="kindId && !readonly" v-model="showAdd" :kindId="kindId" @created="onCreated" />
+        <AddPropertyModal v-if="!readonly && noteId" v-model="showAdd" :noteId="noteId" :kindId="kindId"
+            @created="onCreated" />
 
         <UiConfirmModal :model-value="pendingDelete !== null" title="Delete property?"
-            :message="`Remove '${pendingDelete?.label}' from every note of this kind? This cannot be undone.`"
+            :message="`Remove '${pendingDelete?.label}' from this note? This cannot be undone.`"
             confirm-label="Delete" confirm-variant="danger" @update:model-value="onDeleteOpenChange"
             @confirm="confirmDelete" @cancel="pendingDelete = null" />
     </div>

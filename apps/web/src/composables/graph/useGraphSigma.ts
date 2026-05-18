@@ -58,7 +58,7 @@ export type GraphAxisView = 'x' | 'y' | 'z';
 /**
  * Seed Graphology node/edge attributes that the new query endpoint adds on
  * top of the legacy `{id,label,kind,…}` shape — properties / metrics / tags
- * / folderId on nodes, sourceKind / propertyId on edges. Reducers and the
+ * / folderId on nodes, sourceKind / propertyKey on edges. Reducers and the
  * label renderer read these as plain attributes (`getNodeAttribute(...)`),
  * so persisting them once at load time is enough to keep them addressable
  * for the lifetime of the graph.
@@ -77,7 +77,7 @@ function attachExtendedAttributes(g: Graph, response: GraphQueryResponse): void 
   for (const e of response.edges) {
     if (!g.hasEdge(e.id)) continue;
     g.setEdgeAttribute(e.id, 'sourceKind', e.sourceKind ?? null);
-    g.setEdgeAttribute(e.id, 'propertyId', e.propertyId ?? null);
+    g.setEdgeAttribute(e.id, 'propertyKey', e.propertyKey ?? null);
   }
 }
 
@@ -255,7 +255,7 @@ export function useGraphSigma(opts: UseGraphSigmaOptions): UseGraphSigmaReturn {
         runLayout: false,
       });
       // Seed the new GraphQueryResponse-only fields (properties, metrics,
-      // tags, folderId, sourceKind, propertyId) onto Graphology so the
+      // tags, folderId, sourceKind, propertyKey) onto Graphology so the
       // reducers and label renderer can read them as plain attributes.
       attachExtendedAttributes(g, response);
       if (prefs.layoutMode.value === 'circular') runCircularLayout(g);

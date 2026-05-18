@@ -22,33 +22,33 @@ describe('useGraphPropertyEncodings', () => {
   it('defaults to all-null slots', () => {
     const { value: api, unmount } = withHost(() => mod.useGraphPropertyEncodings());
     expect(api.encodings.value).toEqual({ color: null, size: null, badge: null });
-    expect(api.requiredPropertyIds.value).toEqual([]);
+    expect(api.requiredPropertyKeys.value).toEqual([]);
     expect(api.requiresMetrics.value).toBe(false);
     unmount();
   });
 
   it('setEncoding updates a single slot in place', () => {
     const { value: api, unmount } = withHost(() => mod.useGraphPropertyEncodings());
-    const propId = '11111111-1111-1111-1111-111111111111';
-    api.setEncoding('color', { kind: 'property', propertyId: propId });
-    expect(api.encodings.value.color).toEqual({ kind: 'property', propertyId: propId });
+    const propKey = 'priority';
+    api.setEncoding('color', { kind: 'property', key: propKey });
+    expect(api.encodings.value.color).toEqual({ kind: 'property', key: propKey });
     expect(api.encodings.value.size).toBeNull();
     expect(api.encodings.value.badge).toBeNull();
     unmount();
   });
 
-  it('requiredPropertyIds reflects only property-kind refs and dedupes them', () => {
+  it('requiredPropertyKeys reflects only property-kind refs and dedupes them', () => {
     const { value: api, unmount } = withHost(() => mod.useGraphPropertyEncodings());
-    const propA = '11111111-1111-1111-1111-111111111111';
-    const propB = '22222222-2222-2222-2222-222222222222';
-    api.setEncoding('color', { kind: 'property', propertyId: propA });
-    api.setEncoding('size', { kind: 'property', propertyId: propA });
-    api.setEncoding('badge', { kind: 'property', propertyId: propB });
-    expect(api.requiredPropertyIds.value.sort()).toEqual([propA, propB].sort());
+    const propA = 'priority';
+    const propB = 'status';
+    api.setEncoding('color', { kind: 'property', key: propA });
+    api.setEncoding('size', { kind: 'property', key: propA });
+    api.setEncoding('badge', { kind: 'property', key: propB });
+    expect(api.requiredPropertyKeys.value.sort()).toEqual([propA, propB].sort());
 
-    // System refs and graphMetric refs do not contribute property ids.
+    // System refs and graphMetric refs do not contribute property keys.
     api.setEncoding('badge', { kind: 'graphMetric', id: 'degree' });
-    expect(api.requiredPropertyIds.value).toEqual([propA]);
+    expect(api.requiredPropertyKeys.value).toEqual([propA]);
     unmount();
   });
 
@@ -70,7 +70,7 @@ describe('useGraphPropertyEncodings', () => {
     api.reset();
     expect(api.encodings.value).toEqual({ color: null, size: null, badge: null });
     expect(api.requiresMetrics.value).toBe(false);
-    expect(api.requiredPropertyIds.value).toEqual([]);
+    expect(api.requiredPropertyKeys.value).toEqual([]);
     // Storage key matches the documented one.
     expect(STORAGE_KEYS.graphEncodings).toBe('continuum.graph.encodings.v1');
     unmount();

@@ -4,7 +4,7 @@
  * (Color · Dimensione · Badge) to a property/metric `FieldRef` each.
  *
  * The panel is purely presentational over `useGraphPropertyEncodings`,
- * which owns persistence and the derived `requiredPropertyIds` /
+ * which owns persistence and the derived `requiredPropertyKeys` /
  * `requiresMetrics` flags consumed by `useGraphQuery`.
  */
 import { computed, inject } from 'vue';
@@ -90,8 +90,8 @@ function reset(): void {
     encodings.reset();
 }
 
-function propertySnapshot(node: GraphNode, propertyId: string): PropertyValue | null {
-    return node.properties?.find((p) => p.propertyId === propertyId)?.value ?? null;
+function propertySnapshot(node: GraphNode, key: string): PropertyValue | null {
+    return node.properties?.find((p) => p.key === key)?.value ?? null;
 }
 
 function hasPropertyValue(value: PropertyValue | null): boolean {
@@ -143,7 +143,7 @@ function hasSystemValue(node: GraphNode, ref: Extract<FieldRef, { kind: 'system'
         case 'note.folderId':
             return Boolean(node.folderId);
         case 'note.locked':
-            return Boolean((node as GraphNode & { locked?: boolean }).locked);
+            return Boolean(node.locked);
         case 'note.createdAt':
             return Boolean(node.createdAt);
         case 'note.updatedAt':
@@ -159,7 +159,7 @@ function hasEncodingValue(node: GraphNode, ref: FieldRef): boolean {
         const value = node.metrics?.[ref.id];
         return typeof value === 'number' && Number.isFinite(value);
     }
-    return hasPropertyValue(propertySnapshot(node, ref.propertyId));
+    return hasPropertyValue(propertySnapshot(node, ref.key));
 }
 
 const coverageByChannel = computed<Record<Channel, CoverageInfo | null>>(() => {

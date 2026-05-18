@@ -8,8 +8,19 @@
  * The output is always a Drizzle `SQL` fragment that evaluates to boolean
  * in the context of an outer query on `notes`. For stored property types
  * the predicate is wrapped in `EXISTS (SELECT 1 FROM property_values pv
- * WHERE pv.note_id = notes.id AND pv.property_id = $id AND <typed>)` so it
- * can be AND-ed straight into the notes `WHERE`.
+ * WHERE pv.note_id = notes.id AND pv.property_id IN (...) AND <typed>)`
+ * so it can be AND-ed straight into the notes `WHERE`.
+ *
+ * The `IN (...)` form (rather than `= $id`) is what makes the per-note
+ * property model work: a single logical property — addressed by `key` in
+ * the filter UI — may be backed by many `property_definitions` rows
+ * (one per note that owns the property, plus optional kind/global
+ * Templates). The planner resolves the key to all matching definition
+ * ids and passes them as an array; `EXISTS` over `property_id IN (ids)`
+ * then treats the property as a single field even though storage is
+ * sharded across many definition rows. `IS EMPTY` / `NEQ` / `NOT IN`
+ * remain semantically correct because `NOT EXISTS` over the same set
+ * means "no row across any of those definitions".
  *
  * Two property types are special-cased:
  *
@@ -49,43 +60,61 @@ function asRef(def: PropertyDefRef | PropertyDefinitionRow): PropertyDefRef {
 }
 
 /**
+ * Render `pv.property_id IN ($1, $2, …)` with each id parameterised so
+ * Drizzle's value-binding (and the underlying postgres driver) handle
+ * UUID escaping. The caller guarantees `ids` is non-empty.
+ */
+function inIds(ids: readonly string[]): SQL {
+  return sql`pv.property_id IN (${sql.join(
+    ids.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  )})`;
+}
+
+/**
  * Wrap a typed inner predicate in the canonical `EXISTS` shape so it can
  * be ANDed into a `notes` query. The inner fragment is evaluated against
  * the `pv` alias and may reference `pv.value_text` / `pv.value_number` /
  * `pv.value_bool` / `pv.value_date` / `pv.value_json` directly.
  */
-function existsRow(propertyId: string, inner: SQL): SQL {
-  return sql`EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND pv.property_id = ${propertyId} AND ${inner})`;
+function existsRow(propertyIds: readonly string[], inner: SQL): SQL {
+  return sql`EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND ${inIds(propertyIds)} AND ${inner})`;
 }
 
 /** Negation of `existsRow` — "no row, or no row matching the inner test". */
-function notExistsRow(propertyId: string, inner: SQL): SQL {
-  return sql`NOT EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND pv.property_id = ${propertyId} AND ${inner})`;
+function notExistsRow(propertyIds: readonly string[], inner: SQL): SQL {
+  return sql`NOT EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND ${inIds(propertyIds)} AND ${inner})`;
 }
 
 /** "Row missing or its typed column is null" — used for `isEmpty`. */
-function isEmptyOnColumn(propertyId: string, column: 'value_text' | 'value_number' | 'value_bool' | 'value_date' | 'value_json'): SQL {
-  return sql`NOT EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND pv.property_id = ${propertyId} AND pv.${sql.raw(column)} IS NOT NULL)`;
+function isEmptyOnColumn(
+  propertyIds: readonly string[],
+  column: 'value_text' | 'value_number' | 'value_bool' | 'value_date' | 'value_json',
+): SQL {
+  return sql`NOT EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND ${inIds(propertyIds)} AND pv.${sql.raw(column)} IS NOT NULL)`;
 }
 
-function isNotEmptyOnColumn(propertyId: string, column: 'value_text' | 'value_number' | 'value_bool' | 'value_date' | 'value_json'): SQL {
-  return sql`EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND pv.property_id = ${propertyId} AND pv.${sql.raw(column)} IS NOT NULL)`;
+function isNotEmptyOnColumn(
+  propertyIds: readonly string[],
+  column: 'value_text' | 'value_number' | 'value_bool' | 'value_date' | 'value_json',
+): SQL {
+  return sql`EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND ${inIds(propertyIds)} AND pv.${sql.raw(column)} IS NOT NULL)`;
 }
 
-function isEmptyText(propertyId: string): SQL {
-  return sql`NOT EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND pv.property_id = ${propertyId} AND pv.value_text IS NOT NULL AND pv.value_text <> '')`;
+function isEmptyText(propertyIds: readonly string[]): SQL {
+  return sql`NOT EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND ${inIds(propertyIds)} AND pv.value_text IS NOT NULL AND pv.value_text <> '')`;
 }
 
-function isNotEmptyText(propertyId: string): SQL {
-  return existsRow(propertyId, sql`pv.value_text IS NOT NULL AND pv.value_text <> ''`);
+function isNotEmptyText(propertyIds: readonly string[]): SQL {
+  return existsRow(propertyIds, sql`pv.value_text IS NOT NULL AND pv.value_text <> ''`);
 }
 
-function isEmptyJsonArray(propertyId: string): SQL {
-  return sql`(${isEmptyOnColumn(propertyId, 'value_json')}) OR EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND pv.property_id = ${propertyId} AND (jsonb_typeof(pv.value_json) <> 'array' OR jsonb_array_length(pv.value_json) = 0))`;
+function isEmptyJsonArray(propertyIds: readonly string[]): SQL {
+  return sql`(${isEmptyOnColumn(propertyIds, 'value_json')}) OR EXISTS (SELECT 1 FROM ${propertyValues} pv WHERE pv.note_id = ${notes.id} AND ${inIds(propertyIds)} AND (jsonb_typeof(pv.value_json) <> 'array' OR jsonb_array_length(pv.value_json) = 0))`;
 }
 
-function isNotEmptyJsonArray(propertyId: string): SQL {
-  return existsRow(propertyId, sql`jsonb_typeof(pv.value_json) = 'array' AND jsonb_array_length(pv.value_json) > 0`);
+function isNotEmptyJsonArray(propertyIds: readonly string[]): SQL {
+  return existsRow(propertyIds, sql`jsonb_typeof(pv.value_json) = 'array' AND jsonb_array_length(pv.value_json) > 0`);
 }
 
 function jsonArrayHasAny(values: readonly string[]): SQL {
@@ -98,75 +127,77 @@ function jsonArrayHasAll(values: readonly string[]): SQL {
 
 // ────────────────────── per-column-shape helpers ──────────────────────
 
-function buildTextPredicate(propertyId: string, condition: FilterCondition): SQL {
+function buildTextPredicate(propertyIds: readonly string[], condition: FilterCondition): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
   switch (operator) {
     case 'isEmpty':
-      return isEmptyText(propertyId);
+      return isEmptyText(propertyIds);
     case 'isNotEmpty':
-      return isNotEmptyText(propertyId);
+      return isNotEmptyText(propertyIds);
     case 'eq':
       if (value.kind !== 'string') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_text = ${value.value}`);
+      return existsRow(propertyIds, sql`pv.value_text = ${value.value}`);
     case 'neq':
       if (value.kind !== 'string') return sql`true`;
-      return notExistsRow(propertyId, sql`pv.value_text = ${value.value}`);
+      return notExistsRow(propertyIds, sql`pv.value_text = ${value.value}`);
     case 'contains':
       if (value.kind !== 'string') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_text ILIKE ${'%' + escapeLike(value.value) + '%'}`);
+      return existsRow(propertyIds, sql`pv.value_text ILIKE ${'%' + escapeLike(value.value) + '%'}`);
     case 'notContains':
       if (value.kind !== 'string') return sql`true`;
-      return notExistsRow(propertyId, sql`pv.value_text ILIKE ${'%' + escapeLike(value.value) + '%'}`);
+      return notExistsRow(propertyIds, sql`pv.value_text ILIKE ${'%' + escapeLike(value.value) + '%'}`);
     case 'startsWith':
       if (value.kind !== 'string') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_text ILIKE ${escapeLike(value.value) + '%'}`);
+      return existsRow(propertyIds, sql`pv.value_text ILIKE ${escapeLike(value.value) + '%'}`);
     case 'endsWith':
       if (value.kind !== 'string') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_text ILIKE ${'%' + escapeLike(value.value)}`);
+      return existsRow(propertyIds, sql`pv.value_text ILIKE ${'%' + escapeLike(value.value)}`);
     case 'inAny':
       if (value.kind !== 'stringList' || value.values.length === 0) return sql`false`;
-      return existsRow(propertyId, sql`pv.value_text = ANY(${textArray(value.values)})`);
+      return existsRow(propertyIds, sql`pv.value_text = ANY(${textArray(value.values)})`);
     case 'notIn':
       if (value.kind !== 'stringList' || value.values.length === 0) return sql`true`;
-      return notExistsRow(propertyId, sql`pv.value_text = ANY(${textArray(value.values)})`);
+      return notExistsRow(propertyIds, sql`pv.value_text = ANY(${textArray(value.values)})`);
     default:
       return sql`true`;
   }
 }
 
-function buildNumberPredicate(propertyId: string, condition: FilterCondition): SQL {
+function buildNumberPredicate(propertyIds: readonly string[], condition: FilterCondition): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
   switch (operator) {
     case 'isEmpty':
-      return isEmptyOnColumn(propertyId, 'value_number');
+      return isEmptyOnColumn(propertyIds, 'value_number');
     case 'isNotEmpty':
-      return isNotEmptyOnColumn(propertyId, 'value_number');
-    case 'eq':
+      return isNotEmptyOnColumn(propertyIds, 'value_number');
+    case 'eq': {
       const eqNumber = numberFromValue(value);
       if (eqNumber === null) return sql`false`;
-      return existsRow(propertyId, sql`pv.value_number = ${eqNumber}`);
-    case 'neq':
+      return existsRow(propertyIds, sql`pv.value_number = ${eqNumber}`);
+    }
+    case 'neq': {
       const neqNumber = numberFromValue(value);
       if (neqNumber === null) return sql`true`;
-      return notExistsRow(propertyId, sql`pv.value_number = ${neqNumber}`);
+      return notExistsRow(propertyIds, sql`pv.value_number = ${neqNumber}`);
+    }
     case 'gt':
       if (value.kind !== 'number') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_number > ${value.value}`);
+      return existsRow(propertyIds, sql`pv.value_number > ${value.value}`);
     case 'gte':
       if (value.kind !== 'number') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_number >= ${value.value}`);
+      return existsRow(propertyIds, sql`pv.value_number >= ${value.value}`);
     case 'lt':
       if (value.kind !== 'number') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_number < ${value.value}`);
+      return existsRow(propertyIds, sql`pv.value_number < ${value.value}`);
     case 'lte':
       if (value.kind !== 'number') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_number <= ${value.value}`);
+      return existsRow(propertyIds, sql`pv.value_number <= ${value.value}`);
     case 'between':
       if (value.kind !== 'numberRange') return sql`false`;
       return existsRow(
-        propertyId,
+        propertyIds,
         sql`pv.value_number BETWEEN ${value.from} AND ${value.to}`,
       );
     default:
@@ -182,7 +213,7 @@ function numberFromValue(value: FilterCondition['value']): number | null {
 }
 
 function buildUniqueIdPredicate(
-  propertyId: string,
+  propertyIds: readonly string[],
   config: unknown,
   condition: FilterCondition,
 ): SQL {
@@ -192,29 +223,29 @@ function buildUniqueIdPredicate(
 
   switch (operator) {
     case 'isEmpty':
-      return isEmptyOnColumn(propertyId, 'value_number');
+      return isEmptyOnColumn(propertyIds, 'value_number');
     case 'isNotEmpty':
-      return isNotEmptyOnColumn(propertyId, 'value_number');
+      return isNotEmptyOnColumn(propertyIds, 'value_number');
     case 'eq': {
       const sequence = uniqueIdSequenceFromValue(value);
       if (sequence !== null) {
-        return existsRow(propertyId, sql`pv.value_number = ${sequence}`);
+        return existsRow(propertyIds, sql`pv.value_number = ${sequence}`);
       }
       if (value.kind !== 'string') return sql`false`;
-      return existsRow(propertyId, sql`${display} = ${value.value.trim()}`);
+      return existsRow(propertyIds, sql`${display} = ${value.value.trim()}`);
     }
     case 'neq': {
       const sequence = uniqueIdSequenceFromValue(value);
       if (sequence !== null) {
-        return notExistsRow(propertyId, sql`pv.value_number = ${sequence}`);
+        return notExistsRow(propertyIds, sql`pv.value_number = ${sequence}`);
       }
       if (value.kind !== 'string') return sql`true`;
-      return notExistsRow(propertyId, sql`${display} = ${value.value.trim()}`);
+      return notExistsRow(propertyIds, sql`${display} = ${value.value.trim()}`);
     }
     case 'contains':
       if (value.kind !== 'string') return sql`false`;
       return existsRow(
-        propertyId,
+        propertyIds,
         sql`${display} ILIKE ${'%' + escapeLike(value.value.trim()) + '%'}`,
       );
     default:
@@ -249,38 +280,38 @@ function uniqueIdPrefix(config: unknown): string {
   return typeof prefix === 'string' ? prefix.trim() : '';
 }
 
-function buildBooleanPredicate(propertyId: string, condition: FilterCondition): SQL {
+function buildBooleanPredicate(propertyIds: readonly string[], condition: FilterCondition): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
   switch (operator) {
     case 'isTrue':
-      return existsRow(propertyId, sql`pv.value_bool = TRUE`);
+      return existsRow(propertyIds, sql`pv.value_bool = TRUE`);
     case 'isFalse':
       // "is false" includes the unset row (no row at all). Notion semantics.
-      return notExistsRow(propertyId, sql`pv.value_bool = TRUE`);
+      return notExistsRow(propertyIds, sql`pv.value_bool = TRUE`);
     case 'isEmpty':
-      return isEmptyOnColumn(propertyId, 'value_bool');
+      return isEmptyOnColumn(propertyIds, 'value_bool');
     case 'isNotEmpty':
-      return isNotEmptyOnColumn(propertyId, 'value_bool');
+      return isNotEmptyOnColumn(propertyIds, 'value_bool');
     case 'eq':
       if (value.kind !== 'boolean') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_bool = ${value.value}`);
+      return existsRow(propertyIds, sql`pv.value_bool = ${value.value}`);
     case 'neq':
       if (value.kind !== 'boolean') return sql`true`;
-      return notExistsRow(propertyId, sql`pv.value_bool = ${value.value}`);
+      return notExistsRow(propertyIds, sql`pv.value_bool = ${value.value}`);
     default:
       return sql`true`;
   }
 }
 
 function buildDatePredicate(
-  propertyId: string,
+  propertyIds: readonly string[],
   condition: FilterCondition,
   now: Date,
 ): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
-  return buildDateOnColumn(sql`pv.value_date`, operator, value, now, propertyId, true);
+  return buildDateOnColumn(sql`pv.value_date`, operator, value, now, propertyIds, true);
 }
 
 /**
@@ -288,39 +319,44 @@ function buildDatePredicate(
  * expression. Used both for `pv.value_date` (custom date properties) and
  * for `notes.created_at` / `notes.updated_at` (auto-managed property types
  * and system fields).
+ *
+ * `propertyIds === null` signals "no `property_values` join" (system
+ * date columns) and short-circuits the wrapping logic.
  */
 export function buildDateOnColumn(
   column: SQL,
   operator: FilterCondition['operator'],
   value: FilterCondition['value'],
   now: Date,
-  propertyId: string | null,
+  propertyIds: readonly string[] | null,
   wrapInExists: boolean,
 ): SQL {
   const wrap = (inner: SQL): SQL =>
-    wrapInExists && propertyId
-      ? existsRow(propertyId, inner)
+    wrapInExists && propertyIds && propertyIds.length > 0
+      ? existsRow(propertyIds, inner)
       : inner;
   const wrapNot = (inner: SQL): SQL =>
-    wrapInExists && propertyId
-      ? notExistsRow(propertyId, inner)
+    wrapInExists && propertyIds && propertyIds.length > 0
+      ? notExistsRow(propertyIds, inner)
       : sql`NOT (${inner})`;
 
   switch (operator) {
     case 'isEmpty':
-      if (!wrapInExists || !propertyId) return sql`${column} IS NULL`;
-      return isEmptyOnColumn(propertyId, 'value_date');
+      if (!wrapInExists || !propertyIds || propertyIds.length === 0) return sql`${column} IS NULL`;
+      return isEmptyOnColumn(propertyIds, 'value_date');
     case 'isNotEmpty':
-      if (!wrapInExists || !propertyId) return sql`${column} IS NOT NULL`;
-      return isNotEmptyOnColumn(propertyId, 'value_date');
-    case 'eq':
+      if (!wrapInExists || !propertyIds || propertyIds.length === 0) return sql`${column} IS NOT NULL`;
+      return isNotEmptyOnColumn(propertyIds, 'value_date');
+    case 'eq': {
       const eqDate = dateStringFromValue(value);
       if (!eqDate) return sql`false`;
       return wrap(sql`${column}::date = ${eqDate}::date`);
-    case 'neq':
+    }
+    case 'neq': {
       const neqDate = dateStringFromValue(value);
       if (!neqDate) return sql`true`;
       return wrapNot(sql`${column}::date = ${neqDate}::date`);
+    }
     case 'before':
       if (value.kind !== 'date') return sql`false`;
       return wrap(sql`${column} < ${value.value}::timestamptz`);
@@ -381,18 +417,18 @@ function dateStringFromValue(value: FilterCondition['value']): string | null {
   return trimmed ? trimmed : null;
 }
 
-function buildDateRangePredicate(propertyId: string, condition: FilterCondition): SQL {
+function buildDateRangePredicate(propertyIds: readonly string[], condition: FilterCondition): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
   switch (operator) {
     case 'isEmpty':
-      return isEmptyOnColumn(propertyId, 'value_json');
+      return isEmptyOnColumn(propertyIds, 'value_json');
     case 'isNotEmpty':
-      return isNotEmptyOnColumn(propertyId, 'value_json');
+      return isNotEmptyOnColumn(propertyIds, 'value_json');
     case 'inRange':
       if (value.kind !== 'dateRange') return sql`false`;
       return existsRow(
-        propertyId,
+        propertyIds,
         sql`(pv.value_json->>'from') <= ${value.to} AND (pv.value_json->>'to') >= ${value.from}`,
       );
     default:
@@ -400,66 +436,66 @@ function buildDateRangePredicate(propertyId: string, condition: FilterCondition)
   }
 }
 
-function buildJsonArrayPredicate(propertyId: string, condition: FilterCondition): SQL {
+function buildJsonArrayPredicate(propertyIds: readonly string[], condition: FilterCondition): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
   switch (operator) {
     case 'isEmpty':
       // Either no row or an empty array.
-      return isEmptyJsonArray(propertyId);
+      return isEmptyJsonArray(propertyIds);
     case 'isNotEmpty':
-      return isNotEmptyJsonArray(propertyId);
+      return isNotEmptyJsonArray(propertyIds);
     case 'inAny':
       if (value.kind !== 'stringList' || value.values.length === 0) return sql`false`;
-      return existsRow(propertyId, jsonArrayHasAny(value.values));
+      return existsRow(propertyIds, jsonArrayHasAny(value.values));
     case 'inAll':
       if (value.kind !== 'stringList' || value.values.length === 0) return sql`false`;
-      return existsRow(propertyId, jsonArrayHasAll(value.values));
+      return existsRow(propertyIds, jsonArrayHasAll(value.values));
     case 'notIn':
       if (value.kind !== 'stringList' || value.values.length === 0) return sql`true`;
-      return notExistsRow(propertyId, jsonArrayHasAny(value.values));
+      return notExistsRow(propertyIds, jsonArrayHasAny(value.values));
     case 'eq':
       // Multi-select "equals" — a single-element array containing the value.
       if (value.kind !== 'string') return sql`false`;
-      return existsRow(propertyId, jsonArrayHasAll([value.value]));
+      return existsRow(propertyIds, jsonArrayHasAll([value.value]));
     case 'neq':
       if (value.kind !== 'string') return sql`true`;
-      return notExistsRow(propertyId, jsonArrayHasAll([value.value]));
+      return notExistsRow(propertyIds, jsonArrayHasAll([value.value]));
     default:
       return sql`true`;
   }
 }
 
-function buildVerificationPredicate(propertyId: string, condition: FilterCondition): SQL {
+function buildVerificationPredicate(propertyIds: readonly string[], condition: FilterCondition): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
   switch (operator) {
     case 'isEmpty':
-      return isEmptyOnColumn(propertyId, 'value_json');
+      return isEmptyOnColumn(propertyIds, 'value_json');
     case 'isNotEmpty':
-      return isNotEmptyOnColumn(propertyId, 'value_json');
+      return isNotEmptyOnColumn(propertyIds, 'value_json');
     case 'eq':
       if (value.kind !== 'string') return sql`false`;
-      return existsRow(propertyId, sql`pv.value_json->>'state' = ${value.value}`);
+      return existsRow(propertyIds, sql`pv.value_json->>'state' = ${value.value}`);
     case 'neq':
       if (value.kind !== 'string') return sql`true`;
-      return notExistsRow(propertyId, sql`pv.value_json->>'state' = ${value.value}`);
+      return notExistsRow(propertyIds, sql`pv.value_json->>'state' = ${value.value}`);
     case 'inAny':
       if (value.kind !== 'stringList' || value.values.length === 0) return sql`false`;
-      return existsRow(propertyId, sql`pv.value_json->>'state' = ANY(${textArray(value.values)})`);
+      return existsRow(propertyIds, sql`pv.value_json->>'state' = ANY(${textArray(value.values)})`);
     default:
       return sql`true`;
   }
 }
 
-function buildFilesPredicate(propertyId: string, condition: FilterCondition): SQL {
+function buildFilesPredicate(propertyIds: readonly string[], condition: FilterCondition): SQL {
   const { operator, value } = condition;
   validateOperatorValue(operator, value);
   switch (operator) {
     case 'isEmpty':
-      return isEmptyJsonArray(propertyId);
+      return isEmptyJsonArray(propertyIds);
     case 'isNotEmpty':
-      return isNotEmptyJsonArray(propertyId);
+      return isNotEmptyJsonArray(propertyIds);
     default:
       return sql`true`;
   }
@@ -469,26 +505,40 @@ function buildFilesPredicate(propertyId: string, condition: FilterCondition): SQ
 
 /**
  * Build a SQL boolean expression that evaluates true for `notes` rows
- * which satisfy the supplied condition against the given property
- * definition.
+ * which satisfy the supplied condition against the supplied set of
+ * property definitions (all sharing the same `key`, hence the same
+ * `type`).
+ *
+ * The array form lets the planner treat per-note property definitions as
+ * a single field: pass every definition row whose `key` matches the
+ * `FieldRef.key`, and the generated SQL evaluates the condition over
+ * the union of their `property_values` rows.
  *
  * Returns `sql\`true\`` for property types we can't filter at the SQL
  * layer (formula, rollup, button, createdBy, lastEditedBy) — the planner
  * is expected to either accept the over-approximation or push such
- * conditions into the JS post-pass.
+ * conditions into the JS post-pass. Also returns `sql\`true\`` for an
+ * empty `defs` array (the field reference resolved to nothing) so a
+ * stale saved filter doesn't inadvertently exclude every note.
  *
- * @param def      The property definition (only `id` and `type` are read).
+ * @param defs      Definitions sharing the same `key` (must be non-empty
+ *                  for stored types; for `createdTime`/`lastEditedTime`
+ *                  the array is ignored and the system column is used).
  * @param condition The user-supplied filter condition.
- * @param now      Reference time used for relative date operators
+ * @param now       Reference time used for relative date operators
  *                  (`today`, `lastNDays`…). Pass the request timestamp.
  */
 export function buildPropertyConditionSQL(
-  def: PropertyDefRef | PropertyDefinitionRow,
+  defs: ReadonlyArray<PropertyDefRef | PropertyDefinitionRow>,
   condition: FilterCondition,
   now: Date = new Date(),
 ): SQL {
-  const ref = asRef(def);
-  switch (ref.type) {
+  if (defs.length === 0) return sql`true`;
+  const refs = defs.map(asRef);
+  const ids = refs.map((r) => r.id);
+  const type = refs[0].type;
+  const config = refs[0].config;
+  switch (type) {
     case 'text':
     case 'longText':
     case 'url':
@@ -496,25 +546,25 @@ export function buildPropertyConditionSQL(
     case 'phone':
     case 'select':
     case 'status':
-      return buildTextPredicate(ref.id, condition);
+      return buildTextPredicate(ids, condition);
     case 'number':
     case 'progress':
-      return buildNumberPredicate(ref.id, condition);
+      return buildNumberPredicate(ids, condition);
     case 'uniqueId':
-      return buildUniqueIdPredicate(ref.id, ref.config, condition);
+      return buildUniqueIdPredicate(ids, config, condition);
     case 'checkbox':
-      return buildBooleanPredicate(ref.id, condition);
+      return buildBooleanPredicate(ids, condition);
     case 'date':
-      return buildDatePredicate(ref.id, condition, now);
+      return buildDatePredicate(ids, condition, now);
     case 'dateRange':
-      return buildDateRangePredicate(ref.id, condition);
+      return buildDateRangePredicate(ids, condition);
     case 'multiSelect':
     case 'relation':
-      return buildJsonArrayPredicate(ref.id, condition);
+      return buildJsonArrayPredicate(ids, condition);
     case 'verification':
-      return buildVerificationPredicate(ref.id, condition);
+      return buildVerificationPredicate(ids, condition);
     case 'files':
-      return buildFilesPredicate(ref.id, condition);
+      return buildFilesPredicate(ids, condition);
     case 'createdTime':
       return buildDateOnColumn(
         sql`${notes.createdAt}`,

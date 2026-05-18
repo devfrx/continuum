@@ -71,10 +71,10 @@ describe('fieldRefKey / parseFieldRefKey', () => {
   it('round-trips a property ref', () => {
     const ref = {
       kind: 'property' as const,
-      propertyId: '11111111-1111-1111-1111-111111111111',
+      key: 'priority',
     };
     const key = fieldRefKey(ref);
-    expect(key).toBe('prop:11111111-1111-1111-1111-111111111111');
+    expect(key).toBe('prop:priority');
     expect(parseFieldRefKey(key)).toEqual(ref);
   });
 
@@ -93,8 +93,10 @@ describe('fieldRefKey / parseFieldRefKey', () => {
     expect(parseFieldRefKey('unknown:foo')).toBeNull();
   });
 
-  it('rejects property refs whose payload is not a UUID', () => {
-    expect(parseFieldRefKey('prop:not-a-uuid')).toBeNull();
+  it('rejects property refs whose payload is not a valid slug key', () => {
+    expect(parseFieldRefKey('prop:Not-A-Slug')).toBeNull();
+    expect(parseFieldRefKey('prop:has space')).toBeNull();
+    expect(parseFieldRefKey('prop:UPPER')).toBeNull();
   });
 });
 

@@ -55,7 +55,7 @@ export function rebuildRuntimeGraph(
       target: e.target,
       type: e.type,
       sourceKind: e.sourceKind ?? 'link',
-      propertyId: e.propertyId ?? null,
+      propertyKey: e.propertyKey ?? null,
     });
     s.neighbors.add(t.id);
     t.neighbors.add(s.id);

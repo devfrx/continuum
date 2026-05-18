@@ -45,8 +45,9 @@ import type {
 export function definitionRowToDto(row: PropertyDefinitionRow): PropertyDefinition {
   return {
     id: row.id,
-    scope: row.scope as 'kind' | 'global',
+    scope: row.scope as PropertyDefinition['scope'],
     kindId: row.kindId,
+    noteId: row.noteId,
     key: row.key,
     label: row.label,
     type: row.type as PropertyType,
