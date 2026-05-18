@@ -65,6 +65,12 @@ export const notes = pgTable(
     content: text('content').notNull().default(''),
     contentJson: jsonb('content_json'),
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    /**
+     * Optional cover image URL/path shown above the editor and used by
+     * Gallery views as the card header when no other heuristic matches.
+     * Stored as a string (relative `/uploads/...` or absolute URL).
+     */
+    coverImage: text('cover_image'),
     /** Owning folder; `null` = root ("Inbox"). */
     folderId: uuid('folder_id').references(() => folders.id, { onDelete: 'set null' }),
     /**
@@ -183,6 +189,10 @@ export const propertyDefinitions = pgTable(
     noteId: uuid('note_id').references(() => notes.id, {
       onDelete: 'cascade',
     }),
+    /** FK to `databases.id` when scope='database'; NULL otherwise. */
+    databaseId: uuid('database_id').references((): AnyPgColumn => databases.id, {
+      onDelete: 'cascade',
+    }),
     /** Stable, immutable identifier (slug derived from label). */
     key: text('key').notNull(),
     /** Display label (rename-safe). */
@@ -211,13 +221,19 @@ export const propertyDefinitions = pgTable(
       t.scope,
       t.kindId,
       t.noteId,
+      t.databaseId,
       t.key,
     ),
     kindIdx: index('property_definitions_kind_idx').on(t.kindId),
     noteIdx: index('property_definitions_note_idx').on(t.noteId),
+    databaseIdx: index('property_definitions_database_idx').on(t.databaseId),
     positionIdx: index('property_definitions_position_idx').on(t.kindId, t.position),
     notePositionIdx: index('property_definitions_note_position_idx').on(
       t.noteId,
+      t.position,
+    ),
+    databasePositionIdx: index('property_definitions_database_position_idx').on(
+      t.databaseId,
       t.position,
     ),
   }),
@@ -269,6 +285,103 @@ export const propertyValues = pgTable(
       t.valueNumber,
     ),
     filterDateIdx: index('property_values_filter_date_idx').on(t.propertyId, t.valueDate),
+  }),
+);
+
+/**
+ * Notion-style Database — a persistent data source that lives outside any
+ * single note. Schema (property definitions with `scope='database'`),
+ * saved views (`database_views`) and row membership (`database_rows`)
+ * hang off it via cascading FKs. Tiptap blocks render a database through
+ * a stable `databaseId` reference and pick a view at render time.
+ */
+export const databases = pgTable('databases', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  title: text('title').notNull().default(''),
+  description: text('description'),
+  icon: text('icon'),
+  /**
+   * Mirrors `notes.locked` semantics — when true, every schema / view /
+   * row / cell mutation is rejected server-side with HTTP 423.
+   */
+  locked: boolean('locked').notNull().default(false),
+  /** Hidden from default listings when true. Rows remain intact. */
+  archived: boolean('archived').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Saved view on a Database. Multiple views can render the same row set
+ * differently (table, list, …) and persist their own filter / sort /
+ * grouping / visibility / layout state inside `config` (jsonb).
+ */
+export const databaseViews = pgTable(
+  'database_views',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    databaseId: uuid('database_id')
+      .references(() => databases.id, { onDelete: 'cascade' })
+      .notNull(),
+    name: text('name').notNull(),
+    /** 'table' | 'list' | 'board' | 'calendar' | 'timeline' | 'gallery'. */
+    type: text('type').notNull(),
+    /** LexoRank string for stable ordering inside the database. */
+    position: text('position').notNull().default('a0'),
+    /**
+     * Optional per-view datasource override. When set (and different
+     * from the parent block's `databaseId`), this view resolves rows
+     * and schema against this database instead. Allows a single block
+     * to expose multiple views that point at unrelated databases.
+     * `null` falls back to the parent block's databaseId.
+     */
+    dataSourceDatabaseId: uuid('data_source_database_id').references(
+      () => databases.id,
+      { onDelete: 'set null' },
+    ),
+    /**
+     * `DatabaseViewConfig` (see `@continuum/shared`). Held as `jsonb`
+     * because the shape grows per view type without altering the table.
+     */
+    config: jsonb('config').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    databaseIdx: index('database_views_database_idx').on(t.databaseId),
+    positionIdx: index('database_views_position_idx').on(t.databaseId, t.position),
+  }),
+);
+
+/**
+ * Membership row tying a Note to a Database. Rows are notes — every row
+ * in a database is a full first-class note (own page, lock, tags, links,
+ * graph). The unique index forbids the same note appearing twice in the
+ * same database; a note may belong to multiple databases simultaneously.
+ */
+export const databaseRows = pgTable(
+  'database_rows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    databaseId: uuid('database_id')
+      .references(() => databases.id, { onDelete: 'cascade' })
+      .notNull(),
+    noteId: uuid('note_id')
+      .references(() => notes.id, { onDelete: 'cascade' })
+      .notNull(),
+    /** LexoRank string for stable manual ordering inside the database. */
+    position: text('position').notNull().default('a0'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    databaseIdx: index('database_rows_database_idx').on(t.databaseId),
+    noteIdx: index('database_rows_note_idx').on(t.noteId),
+    positionIdx: index('database_rows_position_idx').on(t.databaseId, t.position),
+    uniqMembership: uniqueIndex('database_rows_database_note_uniq').on(
+      t.databaseId,
+      t.noteId,
+    ),
   }),
 );
 
@@ -393,3 +506,9 @@ export type TemplatePropertyRow = typeof templateProperties.$inferSelect;
 export type NewTemplateProperty = typeof templateProperties.$inferInsert;
 export type PageTemplateApplicationRow = typeof pageTemplateApplications.$inferSelect;
 export type NewPageTemplateApplication = typeof pageTemplateApplications.$inferInsert;
+export type DatabaseRowEntity = typeof databases.$inferSelect;
+export type NewDatabaseEntity = typeof databases.$inferInsert;
+export type DatabaseViewRow = typeof databaseViews.$inferSelect;
+export type NewDatabaseView = typeof databaseViews.$inferInsert;
+export type DatabaseMembershipRow = typeof databaseRows.$inferSelect;
+export type NewDatabaseMembership = typeof databaseRows.$inferInsert;

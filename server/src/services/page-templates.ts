@@ -142,6 +142,7 @@ export function parseDefaultValue(
     scope: 'note',
     kindId: null,
     noteId: null,
+    databaseId: null,
     key: '_',
     label: '_',
     type,

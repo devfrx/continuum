@@ -12,6 +12,7 @@
  * Keep this file free of Vue / DOM imports — it is pure data + commands.
  */
 import type { Editor, Range } from '@tiptap/core';
+import { createDatabaseBlockAttrs } from '@continuum/shared';
 
 /** Logical sections rendered as headers in the popup, in display order. */
 export const SLASH_COMMAND_SECTIONS = ['Basic', 'Lists', 'Blocks', 'Insert'] as const;
@@ -245,6 +246,33 @@ export function createDefaultSlashCommands(): SlashCommandItem[] {
             },
           })
           .run(),
+    },
+    {
+      id: 'database',
+      title: 'Database',
+      description: 'Notion-like data source (table, list, board, \u2026)',
+      icon: 'database',
+      section: 'Insert',
+      keywords: ['table', 'list', 'board', 'kanban', 'data', 'notion'],
+      action: ({ editor, range }) => {
+        // Stable blockId so per-block ephemeral UI state (sticky view
+        // tab, scroll position) survives editor reloads. The actual
+        // `databaseId` stays null until the user picks "Create new" /
+        // "Link existing" from the unbound placeholder UI.
+        const blockId =
+          typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : `block-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        editor
+          .chain()
+          .focus()
+          .deleteRange(range)
+          .insertContent({
+            type: 'database',
+            attrs: createDatabaseBlockAttrs(blockId),
+          })
+          .run();
+      },
     },
     {
       id: 'wikilink',

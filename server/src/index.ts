@@ -15,6 +15,7 @@ import { queryRoutes } from './routes/query.js';
 import { graphRoutes } from './routes/graph.js';
 import { uploadRoutes } from './routes/uploads.js';
 import { templateRoutes } from './routes/templates.js';
+import { databaseRoutes } from './routes/databases.js';
 import { ensureDatabaseSchema } from './db/schemaMaintenance.js';
 import { seedKinds } from './db/seed.js';
 import { waitForDatabase } from './db/readiness.js';
@@ -62,6 +63,7 @@ async function start() {
   await app.register(graphRoutes, { prefix: '/api' });
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
   await app.register(templateRoutes, { prefix: '/api' });
+  await app.register(databaseRoutes, { prefix: '/api/databases' });
 
   try {
     await waitForDatabase({ logger: app.log });
@@ -78,3 +80,4 @@ async function start() {
 }
 
 start();
+

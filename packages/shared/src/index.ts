@@ -46,6 +46,12 @@ export interface Note {
    * the note header.
    */
   locked: boolean;
+  /**
+   * Optional cover image URL (relative `/uploads/...` or absolute).
+   * Shown above the editor and consumed by Gallery views as the card
+   * header when present. `null` means "no cover".
+   */
+  coverImage?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -337,6 +343,9 @@ export * from './properties.js';
 
 // ===== Page Templates =====
 export * from './templates.js';
+
+// ===== Databases (Notion-like) =====
+export * from './databases.js';
 
 // ===== Query layer =====
 export * from './query/index.js';

@@ -2,6 +2,17 @@ import type {
   AiHealthResponse,
   AiSearchHit,
   ButtonAction,
+  Database,
+  DatabaseBundle,
+  DatabaseCreateInput,
+  DatabaseQueryRequest,
+  DatabaseQueryResponse,
+  DatabaseRow,
+  DatabaseRowCreateInput,
+  DatabaseUpdateInput,
+  DatabaseView,
+  DatabaseViewCreateInput,
+  DatabaseViewUpdateInput,
   FieldCatalog,
   FileRef,
   Folder,
@@ -390,6 +401,92 @@ export const api = {
       http<TemplateApplicationResult>(`/notes/${noteId}/apply-template`, {
         method: 'POST',
         body: JSON.stringify(data),
+      }),
+  },
+  /**
+   * Notion-like Databases. Rows are real notes — value mutations on a
+   * row still go through `api.properties.setValue(noteId, propId, …)`.
+   */
+  databases: {
+    list: () => http<Database[]>(`/databases`),
+    /** Create a fresh database (server also seeds a default Table view). */
+    create: (data: DatabaseCreateInput) =>
+      http<{ database: Database; views: DatabaseView[] }>(`/databases`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    /** Hot path for the editor: database + views + schema in one round-trip. */
+    bundle: (id: string) => http<DatabaseBundle>(`/databases/${id}`),
+    update: (id: string, data: DatabaseUpdateInput) =>
+      http<Database>(`/databases/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    remove: (id: string) =>
+      http<{ ok: true }>(`/databases/${id}`, { method: 'DELETE' }),
+    views: {
+      list: (databaseId: string) =>
+        http<DatabaseView[]>(`/databases/${databaseId}/views`),
+      create: (databaseId: string, data: DatabaseViewCreateInput) =>
+        http<DatabaseView>(`/databases/${databaseId}/views`, {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+      update: (databaseId: string, viewId: string, data: DatabaseViewUpdateInput) =>
+        http<DatabaseView>(`/databases/${databaseId}/views/${viewId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(data),
+        }),
+      remove: (databaseId: string, viewId: string) =>
+        http<{ ok: true }>(`/databases/${databaseId}/views/${viewId}`, { method: 'DELETE' }),
+    },
+    properties: {
+      list: (databaseId: string) =>
+        http<PropertyDefinition[]>(`/databases/${databaseId}/properties`),
+      create: (
+        databaseId: string,
+        data: {
+          label: string;
+          type: PropertyType;
+          key?: string;
+          icon?: string | null;
+          description?: string | null;
+          config?: PropertyConfig;
+          position?: string;
+        },
+      ) =>
+        http<PropertyDefinition>(`/databases/${databaseId}/properties`, {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+      reorder: (databaseId: string, ids: string[]) =>
+        http<PropertyDefinition[]>(`/databases/${databaseId}/properties/reorder`, {
+          method: 'POST',
+          body: JSON.stringify({ ids }),
+        }),
+    },
+    rows: {
+      create: (databaseId: string, data: DatabaseRowCreateInput = {}) =>
+        http<{ row: DatabaseRow; noteId: string }>(`/databases/${databaseId}/rows`, {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+      remove: (databaseId: string, rowId: string, options?: { deleteNote?: boolean }) =>
+        http<{ ok: true }>(
+          `/databases/${databaseId}/rows/${rowId}` +
+            (options?.deleteNote ? `?deleteNote=true` : ''),
+          { method: 'DELETE' },
+        ),
+      reorder: (databaseId: string, ids: string[]) =>
+        http<DatabaseRow[]>(`/databases/${databaseId}/rows/reorder`, {
+          method: 'POST',
+          body: JSON.stringify({ ids }),
+        }),
+    },
+    query: (databaseId: string, request: DatabaseQueryRequest = {}) =>
+      http<DatabaseQueryResponse>(`/databases/${databaseId}/query`, {
+        method: 'POST',
+        body: JSON.stringify(request),
       }),
   },
 };

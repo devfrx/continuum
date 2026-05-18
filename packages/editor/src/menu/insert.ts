@@ -3,6 +3,7 @@
  * task list, toggle, callout, table, chart, image, wikilink).
  */
 import type { ContextMenuItem } from '@continuum/shared';
+import { createDatabaseBlockAttrs } from '@continuum/shared';
 import type { MenuContext } from '../editorMenu';
 
 export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
@@ -80,6 +81,22 @@ export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
             options: { title: 'Untitled chart', showLegend: true, showGrid: true },
           },
         }).run(),
+      },
+      {
+        id: 'in-database',
+        label: 'Database',
+        icon: 'database',
+        onSelect: () => {
+          const blockId =
+            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+              ? crypto.randomUUID()
+              : `block-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          editor
+            .chain()
+            .focus()
+            .insertContent({ type: 'database', attrs: createDatabaseBlockAttrs(blockId) })
+            .run();
+        },
       },
       {
         id: 'in-image',

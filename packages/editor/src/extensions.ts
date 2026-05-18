@@ -31,6 +31,7 @@ import { all, createLowlight } from 'lowlight';
 import { Details, DetailsSummary, DetailsContent } from './nodes/Details';
 import { Callout } from './nodes/Callout';
 import { Chart } from './nodes/Chart';
+import { Database } from './nodes/Database';
 import { Footnote } from './nodes/Footnote';
 import { TrailingNode } from './extensions/TrailingNode';
 import {
@@ -59,6 +60,13 @@ interface BuildOptions {
   calloutView: Component;
   /** Vue NodeView component for the Chart block (provides editor + canvas). */
   chartView: Component;
+  /**
+   * Vue NodeView component for the Notion-like Database block. The host
+   * supplies the entire renderer (table/list/board UI, API calls). When
+   * omitted, the block falls back to a small "missing host" panel — the
+   * Tiptap node is still registered so existing documents keep parsing.
+   */
+  databaseView?: Component;
   /** Vue NodeView for the inline Footnote atom (marker + edit popover). */
   footnoteView: Component;
   /**
@@ -178,6 +186,15 @@ export function buildExtensions(opts: BuildOptions) {
         return VueNodeViewRenderer(opts.chartView);
       },
     }),
+    ...(opts.databaseView
+      ? [
+          Database.extend({
+            addNodeView() {
+              return VueNodeViewRenderer(opts.databaseView!);
+            },
+          }),
+        ]
+      : [Database]),
     Footnote.extend({
       addNodeView() {
         return VueNodeViewRenderer(opts.footnoteView);

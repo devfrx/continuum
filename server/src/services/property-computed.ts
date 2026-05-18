@@ -339,7 +339,13 @@ export async function resolveNoteProperties(noteId: string): Promise<NotePropert
  *   2. Pass 1 — materialise stored + auto-managed values.
  *   3. Pass 2 — resolve rollup/formula values that may read pass-1 output.
  */
-async function resolveFromPrefetched(
+/**
+ * Resolve a fully pre-fetched bundle into `NoteProperty[]`. Exported so
+ * database-row resolvers (see `services/databases.ts`) can reuse the
+ * same uniqueId / formula / rollup pipeline as the regular per-note
+ * path without re-implementing it.
+ */
+export async function resolveFromPrefetched(
   note: NoteRow,
   defs: PropertyDefinitionRow[],
   valueRows: PropertyValueRow[],

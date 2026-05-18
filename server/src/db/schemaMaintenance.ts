@@ -15,6 +15,13 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS "locked" boolean NOT NULL DEFAULT false
   `);
 
+  // Optional cover image URL on every note; rendered by the editor
+  // chrome and used as the Gallery card header when present.
+  await db.execute(sql`
+    ALTER TABLE "notes"
+      ADD COLUMN IF NOT EXISTS "cover_image" text
+  `);
+
   // GIN index over `value_json` so jsonb containment / `?|` lookups used
   // by the property-filter SQL stay fast as the property_values table
   // grows. `jsonb_path_ops` is the right opclass for `@>` containment,
@@ -183,5 +190,196 @@ export async function ensureDatabaseSchema(): Promise<void> {
   await db.execute(sql`
     CREATE INDEX IF NOT EXISTS page_template_applications_template_idx
       ON page_template_applications (template_id)
+  `);
+
+  // ── Notion-like Databases ───────────────────────────────────────────
+  // Persistent data sources rendered through Tiptap `database` blocks.
+  // Each row is a real `notes` entry tied to the database by a row in
+  // `database_rows`; the database owns its own property definitions via
+  // `property_definitions.database_id` (scope='database').
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "databases" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "title" text NOT NULL DEFAULT '',
+      "description" text,
+      "icon" text,
+      "locked" boolean NOT NULL DEFAULT false,
+      "archived" boolean NOT NULL DEFAULT false,
+      "created_at" timestamptz NOT NULL DEFAULT now(),
+      "updated_at" timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    ALTER TABLE "databases"
+      ADD COLUMN IF NOT EXISTS "id" uuid,
+      ADD COLUMN IF NOT EXISTS "title" text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS "description" text,
+      ADD COLUMN IF NOT EXISTS "icon" text,
+      ADD COLUMN IF NOT EXISTS "locked" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "archived" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "created_at" timestamptz NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS "updated_at" timestamptz NOT NULL DEFAULT now()
+  `);
+  await db.execute(sql`
+    UPDATE "databases" SET "id" = gen_random_uuid() WHERE "id" IS NULL
+  `);
+  await db.execute(sql`
+    ALTER TABLE "databases"
+      ALTER COLUMN "id" SET DEFAULT gen_random_uuid(),
+      ALTER COLUMN "id" SET NOT NULL
+  `);
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'databases'::regclass AND contype = 'p'
+      ) THEN
+        ALTER TABLE "databases" ADD CONSTRAINT "databases_pkey" PRIMARY KEY ("id");
+      END IF;
+    END $$;
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "database_views" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "database_id" uuid NOT NULL REFERENCES "databases"("id") ON DELETE CASCADE,
+      "name" text NOT NULL,
+      "type" text NOT NULL,
+      "position" text NOT NULL DEFAULT 'a0',
+      "config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+      "created_at" timestamptz NOT NULL DEFAULT now(),
+      "updated_at" timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    ALTER TABLE "database_views"
+      ADD COLUMN IF NOT EXISTS "id" uuid,
+      ADD COLUMN IF NOT EXISTS "database_id" uuid NOT NULL REFERENCES "databases"("id") ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS "name" text NOT NULL DEFAULT 'Table',
+      ADD COLUMN IF NOT EXISTS "type" text NOT NULL DEFAULT 'table',
+      ADD COLUMN IF NOT EXISTS "position" text NOT NULL DEFAULT 'a0',
+      ADD COLUMN IF NOT EXISTS "config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS "created_at" timestamptz NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS "updated_at" timestamptz NOT NULL DEFAULT now()
+  `);
+  await db.execute(sql`
+    UPDATE "database_views" SET "id" = gen_random_uuid() WHERE "id" IS NULL
+  `);
+  await db.execute(sql`
+    ALTER TABLE "database_views"
+      ALTER COLUMN "id" SET DEFAULT gen_random_uuid(),
+      ALTER COLUMN "id" SET NOT NULL
+  `);
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'database_views'::regclass AND contype = 'p'
+      ) THEN
+        ALTER TABLE "database_views" ADD CONSTRAINT "database_views_pkey" PRIMARY KEY ("id");
+      END IF;
+    END $$;
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS database_views_database_idx
+      ON database_views (database_id)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS database_views_position_idx
+      ON database_views (database_id, position)
+  `);
+
+  // Optional per-view datasource override. When set, the view resolves
+  // rows/schema against this database instead of the parent block's
+  // `databaseId`. Idempotent additive column for existing installs.
+  await db.execute(sql`
+    ALTER TABLE "database_views"
+      ADD COLUMN IF NOT EXISTS "data_source_database_id" uuid
+        REFERENCES "databases"("id") ON DELETE SET NULL
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "database_rows" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "database_id" uuid NOT NULL REFERENCES "databases"("id") ON DELETE CASCADE,
+      "note_id" uuid NOT NULL REFERENCES "notes"("id") ON DELETE CASCADE,
+      "position" text NOT NULL DEFAULT 'a0',
+      "created_at" timestamptz NOT NULL DEFAULT now(),
+      "updated_at" timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    ALTER TABLE "database_rows"
+      ADD COLUMN IF NOT EXISTS "id" uuid,
+      ADD COLUMN IF NOT EXISTS "database_id" uuid NOT NULL REFERENCES "databases"("id") ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS "note_id" uuid NOT NULL REFERENCES "notes"("id") ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS "position" text NOT NULL DEFAULT 'a0',
+      ADD COLUMN IF NOT EXISTS "created_at" timestamptz NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS "updated_at" timestamptz NOT NULL DEFAULT now()
+  `);
+  await db.execute(sql`
+    UPDATE "database_rows" SET "id" = gen_random_uuid() WHERE "id" IS NULL
+  `);
+  await db.execute(sql`
+    ALTER TABLE "database_rows"
+      ALTER COLUMN "id" SET DEFAULT gen_random_uuid(),
+      ALTER COLUMN "id" SET NOT NULL
+  `);
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'database_rows'::regclass AND contype = 'p'
+      ) THEN
+        ALTER TABLE "database_rows" ADD CONSTRAINT "database_rows_pkey" PRIMARY KEY ("id");
+      END IF;
+    END $$;
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS database_rows_database_idx
+      ON database_rows (database_id)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS database_rows_note_idx
+      ON database_rows (note_id)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS database_rows_position_idx
+      ON database_rows (database_id, position)
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS database_rows_database_note_uniq
+      ON database_rows (database_id, note_id)
+  `);
+
+  // ── Database-scoped property definitions ────────────────────────────
+  // Mirrors the per-note migration above: add the `database_id` column
+  // to `property_definitions`, replace the legacy unique index with one
+  // that accounts for the new scope, and surface position-based lookups.
+  await db.execute(sql`
+    ALTER TABLE "property_definitions"
+      ADD COLUMN IF NOT EXISTS "database_id" uuid REFERENCES "databases"("id") ON DELETE CASCADE
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS property_definitions_database_idx
+      ON property_definitions (database_id)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS property_definitions_database_position_idx
+      ON property_definitions (database_id, position)
+  `);
+  // Drop the previous version of the unique index (which only spanned
+  // scope/kind/note/key) and reinstall a four-owner variant that also
+  // constrains database-scoped rows. The replacement preserves the
+  // earlier guarantee because `database_id` is NULL on every legacy row.
+  await db.execute(sql`
+    DROP INDEX IF EXISTS property_definitions_scope_owner_key_uniq
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS property_definitions_scope_owner_key_uniq
+      ON property_definitions (scope, kind_id, note_id, database_id, key)
   `);
 }

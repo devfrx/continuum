@@ -15,6 +15,7 @@ import NoteDetailsFooter from '@/components/notes/NoteDetailsFooter.vue';
 import NoteFootnotesPanel from '@/components/notes/NoteFootnotesPanel.vue';
 import NoteTocPanel from '@/components/notes/NoteTocPanel.vue';
 import EmptyEditor from '@/components/notes/EmptyEditor.vue';
+import DatabaseBlockEmbed from '@/components/databases/DatabaseBlockEmbed.vue';
 import { FolderForm } from '@/components/folders';
 import { UiConfirmModal, UiContextMenu, UiSelect, Icon, type ContextMenuItem as UiContextMenuItem } from '@/components/ui';
 import { ICONS, type AppIconName } from '@/assets/icons';
@@ -23,6 +24,12 @@ import { useFolders } from '@/composables/useFolders';
 import { removeFolder } from '@/composables/foldersApi';
 import { useRecentNotes } from '@/composables/useRecentNotes';
 import { usePromptModal } from '@/composables/usePromptModal';
+import {
+  publishNoteCreated,
+  publishNoteDeleted,
+  publishNoteUpdated,
+  useRealtime,
+} from '@/lib/realtime';
 
 const route = useRoute();
 const router = useRouter();
@@ -67,6 +74,13 @@ const draftTags = ref<string[]>([]);
  * the API for stale clients.
  */
 const draftLocked = ref<boolean>(false);
+/**
+ * Mirror of the persisted `Note.coverImage` for the currently selected
+ * note. Wired through `NoteEditorHeader` so the cover slot edits the
+ * same field that Gallery views consume. Persisted via `api.notes.update`
+ * directly (no debounce) — cover changes are discrete user intents.
+ */
+const draftCoverImage = ref<string | null>(null);
 
 const search = ref('');
 const searchMode = ref<SearchMode>('filter');
@@ -344,6 +358,33 @@ async function load(): Promise<void> {
   notes.value = await api.notes.list();
 }
 
+// Cross-surface refresh: when any other surface (database row, second tab,
+// inline property edit) mutates a note, refetch just that note to keep
+// the in-memory list and folder tree in sync. We deliberately skip the
+// currently-edited note to avoid clobbering an in-flight draft.
+useRealtime(['note.updated', 'note.created', 'note.deleted'], async (event) => {
+  if (event.kind === 'note.deleted') {
+    notes.value = notes.value.filter((n) => n.id !== event.noteId);
+    return;
+  }
+  if (event.kind === 'note.created') {
+    try {
+      const created = await api.notes.get(event.noteId);
+      if (!notes.value.some((n) => n.id === created.id)) {
+        notes.value = [created, ...notes.value];
+      }
+    } catch { /* note may have been deleted in the meantime */ }
+    return;
+  }
+  // note.updated
+  if (event.noteId === selectedId.value) return; // active draft owns this
+  try {
+    const fresh = await api.notes.get(event.noteId);
+    const idx = notes.value.findIndex((n) => n.id === fresh.id);
+    if (idx >= 0) notes.value[idx] = fresh;
+  } catch { /* swallow: race with deletion */ }
+});
+
 function applyDraft(n: Note): void {
   selectedId.value = n.id;
   draftTitle.value = n.title;
@@ -356,12 +397,21 @@ function applyDraft(n: Note): void {
   tocAnchors.value = [];
   draftTags.value = Array.isArray(n.tags) ? [...n.tags] : [];
   draftLocked.value = !!n.locked;
+  draftCoverImage.value = n.coverImage ?? null;
   lastSavedAt.value = Date.parse(n.updatedAt) || Date.now();
   recentNotes.record(n.id);
 }
 
-function selectById(id: string): void {
-  const n = notes.value.find((x) => x.id === id);
+async function selectById(id: string): Promise<void> {
+  let n = notes.value.find((x) => x.id === id) ?? null;
+  if (!n) {
+    try {
+      n = await api.notes.get(id);
+      notes.value = [n, ...notes.value.filter((x) => x.id !== id)];
+    } catch {
+      return;
+    }
+  }
   if (n) {
     applyDraft(n);
     recentNotes.record(id);
@@ -379,7 +429,7 @@ function onWikilinkNavigate(payload: { target: string; alias: string | null }): 
   const target = payload.target.trim().toLowerCase();
   if (!target) return;
   const hit = notes.value.find((n) => n.title.trim().toLowerCase() === target);
-  if (hit) selectById(hit.id);
+  if (hit) void selectById(hit.id);
 }
 
 function openCreateNote(): void {
@@ -412,6 +462,7 @@ async function createNew(payload: {
     await load();
     void folders.refresh();
     applyDraft(created);
+    publishNoteCreated(created.id);
   } catch (err) {
     createNoteError.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -569,6 +620,7 @@ async function confirmDeleteNote(): Promise<void> {
   recentNotes.forget(id);
   if (selectedId.value === id) selectedId.value = null;
   await load();
+  publishNoteDeleted(id);
 }
 
 // --- Auto-save ---
@@ -593,6 +645,7 @@ const persist = useDebounceFn(async () => {
     const idx = notes.value.findIndex((n) => n.id === updated.id);
     if (idx >= 0) notes.value[idx] = updated;
     lastSavedAt.value = Date.now();
+    publishNoteUpdated(updated.id);
   } finally {
     saving.value = false;
     void refreshBacklinks();
@@ -626,6 +679,28 @@ async function onLockToggle(value: boolean): Promise<void> {
     lastSavedAt.value = Date.parse(updated.updatedAt) || Date.now();
   } catch (err) {
     draftLocked.value = previous;
+    throw err;
+  }
+}
+
+/**
+ * Apply a cover image change immediately to the server. Locked notes
+ * reject the patch via the 423 contract; we surface that by rolling
+ * back the optimistic mirror.
+ */
+async function onCoverImageChange(value: string | null): Promise<void> {
+  if (!selectedId.value) return;
+  const id = selectedId.value;
+  const previous = draftCoverImage.value;
+  draftCoverImage.value = value;
+  try {
+    const updated = await api.notes.update(id, { coverImage: value });
+    const idx = notes.value.findIndex((n) => n.id === id);
+    if (idx >= 0) notes.value[idx] = updated;
+    lastSavedAt.value = Date.parse(updated.updatedAt) || Date.now();
+    publishNoteUpdated(id);
+  } catch (err) {
+    draftCoverImage.value = previous;
     throw err;
   }
 }
@@ -736,7 +811,7 @@ onMounted(() => {
     const folderParam = route.query.folder;
     if (typeof folderParam === 'string' && folderParam) selectedFolderId.value = folderParam;
     const noteParam = route.query.note;
-    if (typeof noteParam === 'string' && noteParam) selectById(noteParam);
+    if (typeof noteParam === 'string' && noteParam) void selectById(noteParam);
   })();
   tickHandle = setInterval(() => { nowTick.value = Date.now(); }, 5000);
 });
@@ -744,7 +819,7 @@ onMounted(() => {
 watch(
   () => route.query.note,
   (id) => {
-    if (typeof id === 'string' && id && id !== selectedId.value) selectById(id);
+    if (typeof id === 'string' && id && id !== selectedId.value) void selectById(id);
   },
 );
 
@@ -772,11 +847,14 @@ onBeforeUnmount(() => {
         <div class="note-document" :class="{ 'is-full-width': noteFullWidth, 'has-toc': tocAnchors.length }">
           <NoteEditorHeader :title="draftTitle" :kind="draftKind" :tags="draftTags"
             :folder-id="selected.folderId ?? null"
-            :editor-mode="editorMode" :full-width="noteFullWidth" :locked="draftLocked" :saved-at="lastSavedAt"
+            :editor-mode="editorMode" :full-width="noteFullWidth" :locked="draftLocked"
+            :cover-image="draftCoverImage"
+            :saved-at="lastSavedAt"
             :saving="saving" :now-tick="nowTick"
             @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
             @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
             @update:full-width="setNoteFullWidth" @update:locked="onLockToggle"
+            @update:cover-image="onCoverImageChange"
             @navigate-folder="(id: string | null) => (selectedFolderId = id)"
             @apply-template="applyTemplateOpen = true"
             @save-as-template="saveAsTemplateOpen = true"
@@ -796,7 +874,9 @@ onBeforeUnmount(() => {
                 :editable="!draftLocked"
                 placeholder="Write lore, character notes, anything…" :icon-catalog="editorIconCatalog"
                 :icon-component="Icon"
-                :select-component="UiSelect" @request-context-menu="onEditorContextMenu"
+                :select-component="UiSelect"
+                :database-component="DatabaseBlockEmbed"
+                @request-context-menu="onEditorContextMenu"
                 @request-prompt="onEditorPrompt"
                 @wikilink-navigate="onWikilinkNavigate"
                 @update:toc="(a: TocAnchor[]) => (tocAnchors = a)" />

@@ -7,4 +7,5 @@ export {
   FOOTNOTE_NODE_NAME,
   type ExtractedFootnote,
 } from './nodes/Footnote';
+export { Database as DatabaseNode } from './nodes/Database';
 export const EDITOR_VERSION = '0.0.1';

@@ -216,6 +216,10 @@ export async function buildFieldCatalog(
 
   const byKey = new Map<string, KeyGroup>();
   for (const def of allDefs) {
+    // Database-scoped definitions belong to a single Database and must
+    // never leak into the global graph/note field picker — they get
+    // their own catalogue scoped to the owning database.
+    if (def.scope === 'database') continue;
     const cap = PROPERTY_TYPE_CAPABILITIES[def.type as PropertyType];
     if (!cap) continue;
     let group = byKey.get(def.key);

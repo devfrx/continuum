@@ -20,3 +20,17 @@ export interface IconCatalogEntry {
 export const ICON_CATALOG_KEY: InjectionKey<IconCatalogEntry[]> = Symbol('continuum.iconCatalog');
 export const ICON_COMPONENT_KEY: InjectionKey<Component> = Symbol('continuum.iconComponent');
 export const SELECT_COMPONENT_KEY: InjectionKey<Component> = Symbol('continuum.selectComponent');
+
+/**
+ * Injection key for the host-supplied Notion-like Database renderer.
+ *
+ * The editor package owns the `database` Tiptap node + its NodeView
+ * wrapper, but the actual table/list/board rendering and API calls live
+ * in the host application (so the editor stays free of `apps/web`
+ * dependencies). The host passes a single component through
+ * `ContinuumEditor`'s `database-component` prop; the wrapper resolves it
+ * via this key and forwards `attrs`, `updateAttributes` and `editable`.
+ */
+export const DATABASE_COMPONENT_KEY: InjectionKey<Component> = Symbol(
+  'continuum.databaseComponent',
+);

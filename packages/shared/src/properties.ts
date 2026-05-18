@@ -120,12 +120,15 @@ export const PROPERTY_TYPE_GROUPS: PropertyTypeGroup[] = [
 /**
  * Where a property definition is mounted.
  *
- * - `'note'`   — owned by a single note (each note has its own schema).
- * - `'kind'`   — reserved for the future Templates feature: a definition
- *                shared across notes of a kind. Not auto-applied.
- * - `'global'` — reserved for properties shared across every note.
+ * - `'note'`     — owned by a single note (each note has its own schema).
+ * - `'kind'`     — reserved for the future Templates feature: a definition
+ *                  shared across notes of a kind. Not auto-applied.
+ * - `'global'`   — reserved for properties shared across every note.
+ * - `'database'` — owned by a single Database (Notion-like data source);
+ *                  every row note in the database inherits the schema and
+ *                  stores values via `property_values` like any other note.
  */
-export type PropertyScope = 'kind' | 'global' | 'note';
+export type PropertyScope = 'kind' | 'global' | 'note' | 'database';
 
 /** A coloured option for select / multiSelect properties. */
 export interface PropertyOption {
@@ -431,6 +434,8 @@ export interface PropertyDefinition {
   kindId: EntityKind | null;
   /** Owning note id when `scope='note'`; `null` otherwise. */
   noteId: UUID | null;
+  /** Owning database id when `scope='database'`; `null` otherwise. */
+  databaseId: UUID | null;
   /** Stable identifier (slug). Immutable once created. */
   key: string;
   /** Display label. Rename-safe. */

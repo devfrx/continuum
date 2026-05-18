@@ -37,6 +37,7 @@ import CodeBlockNodeView from './CodeBlockNodeView.vue';
 import DetailsNodeView from './nodes/DetailsNodeView.vue';
 import CalloutNodeView from './nodes/CalloutNodeView.vue';
 import ChartNodeView from './nodes/ChartNodeView.vue';
+import DatabaseNodeView from './nodes/DatabaseNodeView.vue';
 import FootnoteNodeView from './nodes/FootnoteNodeView.vue';
 import EditorBubbleMenu from './components/EditorBubbleMenu.vue';
 import EditorDragHandle from './components/EditorDragHandle.vue';
@@ -44,6 +45,7 @@ import {
   ICON_CATALOG_KEY,
   ICON_COMPONENT_KEY,
   SELECT_COMPONENT_KEY,
+  DATABASE_COMPONENT_KEY,
   type IconCatalogEntry,
 } from './hostBridge';
 import {
@@ -87,6 +89,14 @@ const props = withDefaults(
      */
     selectComponent?: Component | null;
     /**
+     * Vue component used as the body of the Notion-like Database block.
+     * The host owns the full table/list/board UI and API calls; the
+     * editor just supplies the Tiptap NodeView wrapper that forwards
+     * `attrs`, `editable` and `update:attrs`. Omit to render a
+     * "missing host" placeholder for any embedded database block.
+     */
+    databaseComponent?: Component | null;
+    /**
      * Items shown in the slash-command popup. Defaults to the full
      * Continuum command set (`createDefaultSlashCommands()`); pass an
      * empty array to disable the slash menu entirely, or a custom list
@@ -108,6 +118,7 @@ const props = withDefaults(
     iconCatalog: () => [],
     iconComponent: null,
     selectComponent: null,
+    databaseComponent: null,
     slashCommandItems: () => createDefaultSlashCommands(),
     editable: true,
   },
@@ -189,6 +200,7 @@ const isMarkdown = computed(() => props.mode === 'markdown');
 provide(ICON_CATALOG_KEY, props.iconCatalog);
 if (props.iconComponent) provide(ICON_COMPONENT_KEY, markRaw(props.iconComponent));
 if (props.selectComponent) provide(SELECT_COMPONENT_KEY, markRaw(props.selectComponent));
+if (props.databaseComponent) provide(DATABASE_COMPONENT_KEY, markRaw(props.databaseComponent));
 
 // Collaboration is only valid in WYSIWYG mode.
 const collab = computed<CollaborationConfig | null>(() => {
@@ -291,6 +303,7 @@ const editor = useEditor({
       detailsView: markRaw(DetailsNodeView),
       calloutView: markRaw(CalloutNodeView),
       chartView: markRaw(ChartNodeView),
+      databaseView: markRaw(DatabaseNodeView),
       footnoteView: markRaw(FootnoteNodeView),
       mathematics: true,
       tableOfContents: { onUpdate: emitToc },

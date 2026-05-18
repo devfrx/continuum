@@ -16,6 +16,7 @@ const upsertSchema = z.object({
   tags: z.array(z.string()).default([]),
   folderId: z.string().uuid().nullable().optional(),
   locked: z.boolean().optional(),
+  coverImage: z.string().nullable().optional(),
 });
 
 /**
@@ -30,6 +31,7 @@ const partialUpdateSchema = z.object({
   tags: z.array(z.string()).optional(),
   folderId: z.string().uuid().nullable().optional(),
   locked: z.boolean().optional(),
+  coverImage: z.string().nullable().optional(),
 });
 
 /** Fields that mutate user content; rejected when the note is locked. */
@@ -40,6 +42,7 @@ const MUTATION_FIELDS = [
   'contentJson',
   'tags',
   'folderId',
+  'coverImage',
 ] as const;
 
 const searchSchema = z.object({

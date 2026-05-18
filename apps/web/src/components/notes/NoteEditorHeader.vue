@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { UiChip, UiSegmented, UiSelect, Icon } from '@/components/ui';
 import { FolderBreadcrumb } from '@/components/folders';
 import { useKinds } from '@/composables/useKinds';
+import { api } from '@/api';
 import type { EntityKind } from '@continuum/shared';
 
 type EditorMode = 'wysiwyg' | 'markdown';
@@ -17,6 +18,12 @@ const props = defineProps<{
     fullWidth: boolean;
     /** When true, the note is finalized: editing is disabled across the header. */
     locked: boolean;
+    /**
+     * Optional cover image (relative `/uploads/...` or absolute URL).
+     * `null` = no cover. Shown above the breadcrumb/title strip and
+     * mirrored by Gallery views.
+     */
+    coverImage: string | null;
     savedAt: number | null;
     saving: boolean;
     nowTick: number;
@@ -29,6 +36,7 @@ const emit = defineEmits<{
     (e: 'update:editorMode', value: EditorMode): void;
     (e: 'update:fullWidth', value: boolean): void;
     (e: 'update:locked', value: boolean): void;
+    (e: 'update:coverImage', value: string | null): void;
     (e: 'navigate-folder', folderId: string | null): void;
     (e: 'delete'): void;
     (e: 'apply-template'): void;
@@ -82,10 +90,68 @@ function removeTag(tag: string): void {
     if (props.locked) return;
     emit('update:tags', props.tags.filter((t) => t !== tag));
 }
+
+// ── Cover image ──────────────────────────────────────────────────────────
+// Universal per-note cover affordance. Stored on the note itself
+// (`notes.cover_image`) so every view that renders a note can pick it up
+// (editor header, Gallery cards, future page-link previews). Uploading
+// reuses `api.uploads.create` — same path as inline image insertion.
+const coverInputRef = ref<HTMLInputElement | null>(null);
+const coverBusy = ref(false);
+const coverError = ref<string | null>(null);
+
+function triggerCoverPick(): void {
+    if (props.locked || coverBusy.value) return;
+    coverInputRef.value?.click();
+}
+
+async function onCoverFileChosen(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ''; // allow re-uploading the same file
+    if (!file) return;
+    coverError.value = null;
+    coverBusy.value = true;
+    try {
+        const ref = await api.uploads.create(file);
+        emit('update:coverImage', ref.url ?? null);
+    } catch (err) {
+        coverError.value = err instanceof Error ? err.message : 'Upload failed';
+    } finally {
+        coverBusy.value = false;
+    }
+}
+
+function removeCover(): void {
+    if (props.locked) return;
+    emit('update:coverImage', null);
+}
 </script>
 
 <template>
-    <header class="editor-header" :class="{ 'is-locked': locked }">
+    <header class="editor-header" :class="{ 'is-locked': locked, 'has-cover': !!coverImage }">
+        <input ref="coverInputRef" type="file" accept="image/*" hidden @change="onCoverFileChosen" />
+
+        <div v-if="coverImage" class="cover" :style="{ backgroundImage: `url('${coverImage}')` }">
+            <div v-if="!locked" class="cover__actions">
+                <button type="button" class="cover__btn" :disabled="coverBusy" @click="triggerCoverPick">
+                    <Icon name="edit" :size="12" />
+                    <span>{{ coverBusy ? 'Uploading…' : 'Change cover' }}</span>
+                </button>
+                <button type="button" class="cover__btn cover__btn--danger" @click="removeCover">
+                    <Icon name="trash" :size="12" />
+                    <span>Remove</span>
+                </button>
+            </div>
+        </div>
+        <div v-else-if="!locked" class="cover-add">
+            <button type="button" class="cover-add__btn" :disabled="coverBusy" @click="triggerCoverPick">
+                <Icon name="plus" :size="12" />
+                <span>{{ coverBusy ? 'Uploading…' : 'Add cover' }}</span>
+            </button>
+            <span v-if="coverError" class="cover-add__error">{{ coverError }}</span>
+        </div>
+
         <FolderBreadcrumb :folder-id="folderId" class="header-breadcrumb"
             @select="(id) => emit('navigate-folder', id)" />
 
@@ -440,5 +506,90 @@ function removeTag(tag: string): void {
 
 .status.locked .status-dot {
     background: var(--accent);
+}
+
+/* ── Cover image ─────────────────────────────────────────────────────── */
+.cover {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 1;
+    max-height: 260px;
+    border-radius: var(--radius-md, 6px);
+    background-size: cover;
+    background-position: center;
+    background-color: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    margin-bottom: var(--space-3, 0.5rem);
+}
+
+.cover__actions {
+    position: absolute;
+    right: 0.6rem;
+    bottom: 0.6rem;
+    display: flex;
+    gap: 0.35rem;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.cover:hover .cover__actions {
+    opacity: 1;
+}
+
+.cover__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem;
+    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.12));
+    background: rgba(0, 0, 0, 0.55);
+    color: var(--fg, #ededed);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+}
+
+.cover__btn:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.75);
+}
+
+.cover__btn--danger:hover:not(:disabled) {
+    color: var(--danger, #b85c5c);
+}
+
+.cover-add {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: var(--space-2, 0.35rem);
+}
+
+.cover-add__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.5rem;
+    border: none;
+    background: transparent;
+    color: var(--fg-muted, #a09b90);
+    font-size: 0.75rem;
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.editor-header:hover .cover-add__btn {
+    opacity: 1;
+}
+
+.cover-add__btn:hover:not(:disabled) {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    color: var(--fg, #ededed);
+}
+
+.cover-add__error {
+    color: var(--danger, #b85c5c);
+    font-size: 0.7rem;
 }
 </style>

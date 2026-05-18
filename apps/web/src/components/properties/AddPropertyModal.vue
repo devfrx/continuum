@@ -48,11 +48,13 @@ import { useProperties } from '@/composables/useProperties';
 import { useNoteProperties } from '@/composables/useNoteProperties';
 import { useKinds } from '@/composables/useKinds';
 import { usePageTemplates } from '@/composables/usePageTemplates';
+import { api } from '@/api';
+import { publishDatabaseSchemaChanged, publishNoteUpdated } from '@/lib/realtime';
 
 const props = withDefaults(defineProps<{
     modelValue: boolean;
     noteId?: string | null;
-    owner?: 'note' | 'template';
+    owner?: 'note' | 'template' | 'database';
     templateId?: string | null;
     templateProperties?: TemplatePropertyDefinition[];
     /**
@@ -61,12 +63,27 @@ const props = withDefaults(defineProps<{
      * read from kind-scoped definitions.
      */
     kindId?: string | null;
+    /**
+     * Target database id when `owner === 'database'`. The created
+     * property definition is scoped to the database (visible to every
+     * row in it) instead of a specific note or template.
+     */
+    databaseId?: string | null;
+    /**
+     * Existing database schema, used as the "sibling properties" pool
+     * when the modal is opened in database scope (drives relation /
+     * formula / rollup / button targeting). Mirrors `templateProperties`
+     * for the template scope.
+     */
+    databaseProperties?: PropertyDefinition[];
 }>(), {
     noteId: null,
     owner: 'note',
     templateId: null,
     templateProperties: () => [],
     kindId: null,
+    databaseId: null,
+    databaseProperties: () => [],
 });
 
 const emit = defineEmits<{
@@ -129,11 +146,15 @@ type SelectableDefinition = Pick<
  * the same note. (Cross-note rollup target lookups walk kind templates,
  * which are populated separately through `useProperties`.)
  */
-const sameNoteDefs = computed<SelectableDefinition[]>(() =>
-    props.owner === 'template'
-        ? props.templateProperties.map((definition) => ({ ...definition, kindId: null }))
-        : noteProps.entries.value.map((entry) => entry.definition),
-);
+const sameNoteDefs = computed<SelectableDefinition[]>(() => {
+    if (props.owner === 'template') {
+        return props.templateProperties.map((definition) => ({ ...definition, kindId: null }));
+    }
+    if (props.owner === 'database') {
+        return props.databaseProperties.map((definition) => ({ ...definition, kindId: null }));
+    }
+    return noteProps.entries.value.map((entry) => entry.definition);
+});
 const relationOptions = computed(() => sameNoteDefs.value.filter((d) => d.type === 'relation'));
 const selectedRollupRelation = computed(
     () => relationOptions.value.find((r) => r.key === extra.rollup.relationKey) ?? null,
@@ -379,7 +400,9 @@ const needsOptions = computed(
 
 const modalTitle = computed(() => {
     if (step.value !== 'type') return `New ${PROPERTY_TYPE_LABELS[type.value]} property`;
-    return props.owner === 'template' ? 'Add template property' : 'Add property';
+    if (props.owner === 'template') return 'Add template property';
+    if (props.owner === 'database') return 'Add database property';
+    return 'Add property';
 });
 
 function pickType(t: PropertyType): void {
@@ -533,12 +556,21 @@ async function submit(): Promise<void> {
                 type: type.value,
                 config,
             });
+        } else if (props.owner === 'database') {
+            if (!props.databaseId) throw new Error('Cannot create a property without an active database');
+            await api.databases.properties.create(props.databaseId, {
+                label: label.value.trim(),
+                type: type.value,
+                config,
+            });
+            publishDatabaseSchemaChanged(props.databaseId);
         } else {
             await noteProps.createDefinition({
                 label: label.value.trim(),
                 type: type.value,
                 config,
             });
+            if (activeNoteId.value) publishNoteUpdated(activeNoteId.value);
         }
         emit('created');
         close();

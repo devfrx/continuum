@@ -60,6 +60,7 @@ function definitionFor(property: TemplatePropertyDefinition): PropertyDefinition
     scope: 'note',
     kindId: props.template.targetKind,
     noteId: null,
+    databaseId: null,
     key: property.key,
     label: property.label,
     type: property.type,

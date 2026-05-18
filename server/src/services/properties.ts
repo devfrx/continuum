@@ -48,6 +48,7 @@ export function definitionRowToDto(row: PropertyDefinitionRow): PropertyDefiniti
     scope: row.scope as PropertyDefinition['scope'],
     kindId: row.kindId,
     noteId: row.noteId,
+    databaseId: row.databaseId,
     key: row.key,
     label: row.label,
     type: row.type as PropertyType,
