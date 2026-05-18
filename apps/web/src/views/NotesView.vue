@@ -9,6 +9,8 @@ import NotesSidebar from '@/components/notes/NotesSidebar.vue';
 import NoteEditorHeader from '@/components/notes/NoteEditorHeader.vue';
 import NoteCreateModal from '@/components/notes/NoteCreateModal.vue';
 import NoteInlineProperties from '@/components/notes/NoteInlineProperties.vue';
+import ApplyTemplateModal from '@/components/templates/ApplyTemplateModal.vue';
+import SaveAsTemplateModal from '@/components/templates/SaveAsTemplateModal.vue';
 import NoteDetailsFooter from '@/components/notes/NoteDetailsFooter.vue';
 import NoteFootnotesPanel from '@/components/notes/NoteFootnotesPanel.vue';
 import NoteTocPanel from '@/components/notes/NoteTocPanel.vue';
@@ -73,6 +75,8 @@ const semanticBusy = ref(false);
 const createNoteOpen = ref(false);
 const createNoteBusy = ref(false);
 const createNoteError = ref('');
+const applyTemplateOpen = ref(false);
+const saveAsTemplateOpen = ref(false);
 const isDev = import.meta.env.DEV;
 const seedNotesBusy = ref(false);
 const seedNotesError = ref('');
@@ -388,11 +392,22 @@ async function createNew(payload: {
   kind: EntityKind;
   content: string;
   folderId: string | null;
+  templateId?: string | null;
 }): Promise<void> {
   createNoteBusy.value = true;
   createNoteError.value = '';
   try {
-    const created = await api.notes.create(payload);
+    let created: Note;
+    if (payload.templateId) {
+      const { note } = await api.templates.createNote(payload.templateId, {
+        title: payload.title,
+        kind: payload.kind,
+        folderId: payload.folderId,
+      });
+      created = note;
+    } else {
+      created = await api.notes.create(payload);
+    }
     createNoteOpen.value = false;
     await load();
     void folders.refresh();
@@ -402,6 +417,18 @@ async function createNew(payload: {
   } finally {
     createNoteBusy.value = false;
   }
+}
+
+async function onTemplateApplied(): Promise<void> {
+  if (!selected.value) return;
+  const noteId = selected.value.id;
+  await load();
+  const refreshed = notes.value.find((n: Note) => n.id === noteId);
+  if (refreshed) applyDraft(refreshed);
+}
+
+function onTemplateSaved(templateId: string): void {
+  void router.push({ name: 'template-edit', params: { id: templateId } });
 }
 
 async function seedSemanticTestNotes(): Promise<void> {
@@ -750,7 +777,10 @@ onBeforeUnmount(() => {
             @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
             @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
             @update:full-width="setNoteFullWidth" @update:locked="onLockToggle"
-            @navigate-folder="(id: string | null) => (selectedFolderId = id)" @delete="remove(selected!.id)" />
+            @navigate-folder="(id: string | null) => (selectedFolderId = id)"
+            @apply-template="applyTemplateOpen = true"
+            @save-as-template="saveAsTemplateOpen = true"
+            @delete="remove(selected!.id)" />
 
           <NoteInlineProperties :note-id="selected.id" :kind-id="selected.kind" :readonly="draftLocked"
             @select="selectById" />
@@ -794,6 +824,22 @@ onBeforeUnmount(() => {
 
     <NoteCreateModal v-model="createNoteOpen" :default-folder-id="selectedFolderId" :busy="createNoteBusy"
       :error="createNoteError" context="notes" @submit="createNew" />
+
+    <ApplyTemplateModal
+      v-if="selected"
+      v-model="applyTemplateOpen"
+      :note-id="selected.id"
+      :note-locked="draftLocked"
+      @applied="onTemplateApplied"
+    />
+
+    <SaveAsTemplateModal
+      v-if="selected"
+      v-model="saveAsTemplateOpen"
+      :note-id="selected.id"
+      :default-name="draftTitle"
+      @saved="onTemplateSaved"
+    />
 
     <FolderForm v-model="folderFormOpen" :mode="folderFormMode" :parent-id="folderFormParentId"
       :folder="folderFormTarget" @saved="() => { void folders.refresh(); }" />

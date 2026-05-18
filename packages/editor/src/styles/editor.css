@@ -54,6 +54,7 @@
   /* The pane already provides the surface + radius; the editor becomes a
      calmer, frameless writing area. */
   padding: var(--space-6) var(--space-2);
+  position: relative;
   background: transparent;
   color: var(--fg);
   flex: 1 1 0;
@@ -61,6 +62,13 @@
   overflow: auto;
   font-size: var(--text-md);
   line-height: var(--leading-relaxed);
+}
+
+.continuum-editor:not(:hover):not(:focus-within) .continuum-drag-handle,
+.continuum-editor:not(:hover):not(:focus-within) .continuum-drag-handle[data-state='visible'],
+.continuum-editor:not(:hover):not(:focus-within) .continuum-drag-handle[data-state='hidden'] {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .continuum-editor:not(.is-markdown) .content {

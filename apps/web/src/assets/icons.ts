@@ -40,6 +40,7 @@ const _ICONS = {
   'graph': { icon: 'solar:branching-paths-up-bold' },
   'search': { icon: 'solar:magnifer-bold' },
   'settings': { icon: 'solar:settings-bold' },
+  'templates': { icon: 'solar:document-add-bold' },
   'sidebar': { icon: 'solar:sidebar-minimalistic-bold' },
   'sidebar-collapse': { icon: 'solar:round-double-alt-arrow-left-bold' },
   'sidebar-expand': { icon: 'solar:round-double-alt-arrow-right-bold' },

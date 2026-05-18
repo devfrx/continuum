@@ -12,12 +12,19 @@ import type { EntityKind } from '@continuum/shared';
 import { Icon, UiButton, UiInput, UiModal, UiSelect, UiTextarea } from '@/components/ui';
 import { useFolders } from '@/composables/useFolders';
 import { useKinds } from '@/composables/useKinds';
+import { usePageTemplates } from '@/composables/usePageTemplates';
 
 interface CreateNotePayload {
     title: string;
     kind: EntityKind;
     content: string;
     folderId: string | null;
+    /**
+     * When set, the parent view should create the note from this template
+     * instead of issuing a plain `POST /notes`. Empty string / null means
+     * "no template, regular blank note".
+     */
+    templateId: string | null;
 }
 
 const props = withDefaults(defineProps<{
@@ -40,11 +47,13 @@ const emit = defineEmits<{
 
 const folders = useFolders();
 const kinds = useKinds();
+const templates = usePageTemplates();
 
 const title = ref('');
 const kind = ref<EntityKind>('note');
 const folderId = ref('');
 const content = ref('');
+const templateId = ref<string>('');
 
 const kindOptions = computed(() => kinds.sorted.value.map((k) => ({ value: k.id, label: k.label })));
 const folderOptions = computed(() => [
@@ -54,6 +63,15 @@ const folderOptions = computed(() => [
         label: folders.breadcrumb(folder.id).map((part) => part.name).join(' / '),
     })),
 ]);
+
+const templateOptions = computed(() => [
+    { value: '', label: 'Blank note (no template)' },
+    ...templates.sorted.value.map((t) => ({ value: t.id, label: t.name })),
+]);
+
+const selectedTemplate = computed(() =>
+    templateId.value ? templates.byId(templateId.value) : null,
+);
 
 const destinationLabel = computed(() =>
     folderId.value ? folders.breadcrumb(folderId.value).map((part) => part.name).join(' / ') || 'Inbox' : 'Inbox',
@@ -69,16 +87,26 @@ function reset(): void {
     kind.value = effective.defaultKind as EntityKind;
     title.value = '';
     content.value = '';
+    templateId.value = '';
 }
 
 watch(
     () => props.modelValue,
     async (open) => {
         if (!open) return;
-        await Promise.all([folders.load(), kinds.load()]);
+        await Promise.all([folders.load(), kinds.load(), templates.load()]);
         reset();
     },
 );
+
+// When the user picks a template, prefill kind from the template's hint
+// (only if they haven't customised the kind picker yet — we treat the
+// initial effective kind as the baseline).
+watch(templateId, (next) => {
+    if (!next) return;
+    const tpl = templates.byId(next);
+    if (tpl?.targetKind) kind.value = tpl.targetKind as EntityKind;
+});
 
 watch(folderId, (next) => {
     kind.value = folders.effectiveFor(next || null).defaultKind as EntityKind;
@@ -96,6 +124,7 @@ function submit(): void {
         kind: kind.value,
         content: content.value.trim(),
         folderId: folderId.value || null,
+        templateId: templateId.value || null,
     });
 }
 </script>
@@ -131,6 +160,14 @@ function submit(): void {
             </div>
 
             <label class="field">
+                <span>Template</span>
+                <UiSelect v-model="templateId" :options="templateOptions" />
+                <small v-if="selectedTemplate?.description" class="field-hint">
+                    {{ selectedTemplate.description }}
+                </small>
+            </label>
+
+            <label v-if="!templateId" class="field">
                 <span>Opening text</span>
                 <UiTextarea v-model="content" placeholder="Optional first thought…" :rows="4" />
             </label>

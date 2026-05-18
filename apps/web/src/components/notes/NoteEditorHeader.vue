@@ -31,6 +31,8 @@ const emit = defineEmits<{
     (e: 'update:locked', value: boolean): void;
     (e: 'navigate-folder', folderId: string | null): void;
     (e: 'delete'): void;
+    (e: 'apply-template'): void;
+    (e: 'save-as-template'): void;
 }>();
 
 const kindStore = useKinds();
@@ -130,6 +132,16 @@ function removeTag(tag: string): void {
                     :aria-label="lockToggleLabel" :aria-pressed="locked"
                     @click="emit('update:locked', !locked)">
                     <Icon :name="lockIcon" :size="15" />
+                </button>
+
+                <button type="button" class="width-btn" title="Apply template" aria-label="Apply template"
+                    :disabled="locked" @click="emit('apply-template')">
+                    <Icon name="templates" :size="15" />
+                </button>
+
+                <button type="button" class="width-btn" title="Save as template" aria-label="Save as template"
+                    @click="emit('save-as-template')">
+                    <Icon name="save" :size="15" />
                 </button>
 
                 <button type="button" class="delete-btn" :title="locked ? 'Unlock note to delete' : 'Delete note'"

@@ -272,6 +272,111 @@ export const propertyValues = pgTable(
   }),
 );
 
+/**
+ * Reusable page template. Bundles editor body + property schema +
+ * optional default values that can be applied to new or existing notes.
+ *
+ * Templates are intentionally NOT scoped by kind in a unique way: any
+ * number of templates can target the same kind. The `targetKind` column
+ * is a soft hint used to pre-select the kind picker; SET NULL on kind
+ * delete keeps the template intact (the hint is simply forgotten).
+ *
+ * `version` is bumped server-side on every meaningful update (body or
+ * properties) so `page_template_applications` rows can record which
+ * revision was applied to which note.
+ */
+export const pageTemplates = pgTable(
+  'page_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    description: text('description'),
+    /** Soft hint — SET NULL when the referenced kind is deleted. */
+    targetKind: text('target_kind').references(() => kinds.id, {
+      onDelete: 'set null',
+      onUpdate: 'cascade',
+    }),
+    content: text('content').notNull().default(''),
+    contentJson: jsonb('content_json'),
+    tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    /** Monotonic revision number; bumped on body / property mutations. */
+    version: doublePrecision('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    nameIdx: index('page_templates_name_idx').on(t.name),
+    targetKindIdx: index('page_templates_target_kind_idx').on(t.targetKind),
+  }),
+);
+
+/**
+ * Property definition carried by a {@link pageTemplates} row. Mirrors a
+ * subset of `property_definitions` (label / type / icon / description /
+ * config / position) plus an optional `default_value` JSON applied when
+ * the template materialises this property onto a target note.
+ *
+ * `(template_id, key)` is unique so the slug remains a stable identifier
+ * inside a template.
+ */
+export const templateProperties = pgTable(
+  'template_properties',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    templateId: uuid('template_id')
+      .references(() => pageTemplates.id, { onDelete: 'cascade' })
+      .notNull(),
+    key: text('key').notNull(),
+    label: text('label').notNull(),
+    type: text('type').notNull(),
+    icon: text('icon'),
+    description: text('description'),
+    config: jsonb('config').notNull().default({}),
+    /** Pre-filled value materialised onto the target note (nullable). */
+    defaultValue: jsonb('default_value'),
+    position: text('position').notNull().default('a0'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    templateIdx: index('template_properties_template_idx').on(t.templateId),
+    positionIdx: index('template_properties_position_idx').on(t.templateId, t.position),
+    uniqKey: uniqueIndex('template_properties_template_key_uniq').on(t.templateId, t.key),
+  }),
+);
+
+/**
+ * Audit / provenance trail: one row per (note, template) apply. Records
+ * which template revision was applied, what was actually merged, and any
+ * non-fatal conflicts surfaced at the time. The `template_id` FK uses
+ * SET NULL so deleting a template leaves the historical record intact.
+ */
+export const pageTemplateApplications = pgTable(
+  'page_template_applications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    noteId: uuid('note_id')
+      .references(() => notes.id, { onDelete: 'cascade' })
+      .notNull(),
+    templateId: uuid('template_id').references(() => pageTemplates.id, {
+      onDelete: 'set null',
+    }),
+    /** Revision pinned at apply time (preserved even when template is later edited). */
+    templateVersion: doublePrecision('template_version').notNull().default(1),
+    /** Snapshot of how the note body was merged: 'append' | 'prepend' | 'replace' | 'none'. */
+    appliedContent: text('applied_content').notNull().default('none'),
+    /** Keys of properties materialised on the note by this apply. */
+    appliedPropertyKeys: jsonb('applied_property_keys').$type<string[]>().notNull().default([]),
+    /** Non-fatal warnings surfaced at apply time. Mirror of the API response. */
+    conflicts: jsonb('conflicts').notNull().default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    noteIdx: index('page_template_applications_note_idx').on(t.noteId),
+    templateIdx: index('page_template_applications_template_idx').on(t.templateId),
+  }),
+);
+
 export type NoteRow = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 export type KindRow = typeof kinds.$inferSelect;
@@ -282,3 +387,9 @@ export type PropertyDefinitionRow = typeof propertyDefinitions.$inferSelect;
 export type NewPropertyDefinition = typeof propertyDefinitions.$inferInsert;
 export type PropertyValueRow = typeof propertyValues.$inferSelect;
 export type NewPropertyValue = typeof propertyValues.$inferInsert;
+export type PageTemplateRow = typeof pageTemplates.$inferSelect;
+export type NewPageTemplate = typeof pageTemplates.$inferInsert;
+export type TemplatePropertyRow = typeof templateProperties.$inferSelect;
+export type NewTemplateProperty = typeof templateProperties.$inferInsert;
+export type PageTemplateApplicationRow = typeof pageTemplateApplications.$inferSelect;
+export type NewPageTemplateApplication = typeof pageTemplateApplications.$inferInsert;

@@ -14,10 +14,18 @@ import type {
   KindDefinition,
   Note,
   NoteProperty,
+  PageTemplate,
   PropertyConfig,
   PropertyDefinition,
   PropertyType,
   PropertyValue,
+  TemplateApplicationOptions,
+  TemplateApplicationPreview,
+  TemplateApplicationResult,
+  TemplateCreateInput,
+  TemplatePropertyCreateInput,
+  TemplatePropertyUpdateInput,
+  TemplateUpdateInput,
 } from '@continuum/shared';
 
 export interface BacklinkEntry {
@@ -291,6 +299,97 @@ export const api = {
       http<GraphQueryResponse>(`/graph/query`, {
         method: 'POST',
         body: JSON.stringify(req),
+      }),
+  },
+  /**
+   * Reusable page templates. Templates are standalone first-class entities
+   * surfaced via the dedicated `/templates` view; they can be applied to
+   * existing notes non-destructively or used as the seed for a new note.
+   */
+  templates: {
+    list: () => http<PageTemplate[]>('/templates'),
+    get: (id: string) => http<PageTemplate>(`/templates/${id}`),
+    create: (data: TemplateCreateInput) =>
+      http<PageTemplate>('/templates', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: TemplateUpdateInput) =>
+      http<PageTemplate>(`/templates/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    remove: (id: string) =>
+      http<{ ok: true }>(`/templates/${id}`, { method: 'DELETE' }),
+    /** Snapshot an existing note into a new template. */
+    fromNote: (data: {
+      noteId: string;
+      name: string;
+      description?: string | null;
+      includeProperties?: boolean;
+      captureDefaults?: boolean;
+    }) =>
+      http<PageTemplate>(`/templates/from-note`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    properties: {
+      create: (templateId: string, data: TemplatePropertyCreateInput) =>
+        http<PageTemplate>(`/templates/${templateId}/properties`, {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+      update: (
+        templateId: string,
+        propertyId: string,
+        data: TemplatePropertyUpdateInput,
+      ) =>
+        http<PageTemplate>(
+          `/templates/${templateId}/properties/${propertyId}`,
+          { method: 'PATCH', body: JSON.stringify(data) },
+        ),
+      remove: (templateId: string, propertyId: string) =>
+        http<PageTemplate>(
+          `/templates/${templateId}/properties/${propertyId}`,
+          { method: 'DELETE' },
+        ),
+      reorder: (templateId: string, ids: string[]) =>
+        http<PageTemplate>(`/templates/${templateId}/properties/reorder`, {
+          method: 'POST',
+          body: JSON.stringify({ ids }),
+        }),
+    },
+    /** Create a brand-new note seeded from this template. */
+    createNote: (
+      templateId: string,
+      data: {
+        title: string;
+        kind?: string;
+        folderId?: string | null;
+        options?: TemplateApplicationOptions;
+      },
+    ) =>
+      http<{ note: Note; application: TemplateApplicationResult }>(
+        `/templates/${templateId}/notes`,
+        { method: 'POST', body: JSON.stringify(data) },
+      ),
+    /** Preview the merge that applying a template to an existing note would perform. */
+    preview: (
+      noteId: string,
+      data: { templateId: string; options?: TemplateApplicationOptions },
+    ) =>
+      http<TemplateApplicationPreview>(
+        `/notes/${noteId}/template-preview`,
+        { method: 'POST', body: JSON.stringify(data) },
+      ),
+    /** Apply a template to an existing note. Returns 423 when the note is locked. */
+    apply: (
+      noteId: string,
+      data: { templateId: string; options?: TemplateApplicationOptions },
+    ) =>
+      http<TemplateApplicationResult>(`/notes/${noteId}/apply-template`, {
+        method: 'POST',
+        body: JSON.stringify(data),
       }),
   },
 };

@@ -108,4 +108,80 @@ export async function ensureDatabaseSchema(): Promise<void> {
       END LOOP;
     END $$;
   `);
+
+  // ── Page templates ───────────────────────────────────────────────────
+  // First-class reusable templates: bundle of editor body + property
+  // definitions (with optional default values) that can be applied to
+  // new or existing notes. See `routes/templates.ts`.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "page_templates" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "name" text NOT NULL,
+      "description" text,
+      "target_kind" text REFERENCES "kinds"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+      "content" text NOT NULL DEFAULT '',
+      "content_json" jsonb,
+      "tags" jsonb NOT NULL DEFAULT '[]'::jsonb,
+      "version" double precision NOT NULL DEFAULT 1,
+      "created_at" timestamptz NOT NULL DEFAULT now(),
+      "updated_at" timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS page_templates_name_idx ON page_templates (name)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS page_templates_target_kind_idx
+      ON page_templates (target_kind)
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "template_properties" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "template_id" uuid NOT NULL REFERENCES "page_templates"("id") ON DELETE CASCADE,
+      "key" text NOT NULL,
+      "label" text NOT NULL,
+      "type" text NOT NULL,
+      "icon" text,
+      "description" text,
+      "config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+      "default_value" jsonb,
+      "position" text NOT NULL DEFAULT 'a0',
+      "created_at" timestamptz NOT NULL DEFAULT now(),
+      "updated_at" timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS template_properties_template_idx
+      ON template_properties (template_id)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS template_properties_position_idx
+      ON template_properties (template_id, position)
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS template_properties_template_key_uniq
+      ON template_properties (template_id, key)
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "page_template_applications" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "note_id" uuid NOT NULL REFERENCES "notes"("id") ON DELETE CASCADE,
+      "template_id" uuid REFERENCES "page_templates"("id") ON DELETE SET NULL,
+      "template_version" double precision NOT NULL DEFAULT 1,
+      "applied_content" text NOT NULL DEFAULT 'none',
+      "applied_property_keys" jsonb NOT NULL DEFAULT '[]'::jsonb,
+      "conflicts" jsonb NOT NULL DEFAULT '[]'::jsonb,
+      "created_at" timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS page_template_applications_note_idx
+      ON page_template_applications (note_id)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS page_template_applications_template_idx
+      ON page_template_applications (template_id)
+  `);
 }

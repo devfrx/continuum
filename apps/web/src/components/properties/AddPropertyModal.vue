@@ -14,7 +14,7 @@
  * the new property only appears on the active note (kind-wide template
  * propagation is reserved for the future Templates feature).
  */
-import { computed, reactive, ref, toRef, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { UiModal, UiButton, UiInput, UiSelect } from '@/components/ui';
 import Icon from '@/components/ui/Icon.vue';
 import {
@@ -40,23 +40,34 @@ import {
     type StatusConfig,
     type StatusGroupId,
     type StatusOption,
+    type TemplatePropertyDefinition,
     type UniqueIdConfig,
     type VerificationConfig,
 } from '@continuum/shared';
 import { useProperties } from '@/composables/useProperties';
 import { useNoteProperties } from '@/composables/useNoteProperties';
 import { useKinds } from '@/composables/useKinds';
+import { usePageTemplates } from '@/composables/usePageTemplates';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
     modelValue: boolean;
-    noteId: string;
+    noteId?: string | null;
+    owner?: 'note' | 'template';
+    templateId?: string | null;
+    templateProperties?: TemplatePropertyDefinition[];
     /**
      * Owning kind of the note. Optional and informational only — used
      * by future template-aware behaviours; per-note creation does not
      * read from kind-scoped definitions.
      */
     kindId?: string | null;
-}>();
+}>(), {
+    noteId: null,
+    owner: 'note',
+    templateId: null,
+    templateProperties: () => [],
+    kindId: null,
+});
 
 const emit = defineEmits<{
     'update:modelValue': [v: boolean];
@@ -64,8 +75,10 @@ const emit = defineEmits<{
 }>();
 
 const properties = useProperties();
-const noteProps = useNoteProperties(toRef(props, 'noteId'));
+const activeNoteId = ref<string | null>(props.owner === 'note' ? props.noteId ?? null : null);
+const noteProps = useNoteProperties(activeNoteId);
 const kinds = useKinds();
+const templates = usePageTemplates();
 
 const step = ref<'type' | 'details'>('type');
 const type = ref<PropertyType>('text');
@@ -97,14 +110,29 @@ const extra = reactive({
     },
 });
 
+watch(
+    [() => props.owner, () => props.noteId],
+    ([owner, noteId]) => {
+        activeNoteId.value = owner === 'note' ? noteId ?? null : null;
+    },
+    { immediate: true },
+);
+
+type SelectableDefinition = Pick<
+    PropertyDefinition,
+    'key' | 'label' | 'type' | 'config' | 'kindId'
+>;
+
 /**
  * Definitions already attached to this note. Drives relation / rollup
  * / formula / button selectors that need to point at sibling props on
  * the same note. (Cross-note rollup target lookups walk kind templates,
  * which are populated separately through `useProperties`.)
  */
-const sameNoteDefs = computed<PropertyDefinition[]>(() =>
-    noteProps.entries.value.map((entry) => entry.definition),
+const sameNoteDefs = computed<SelectableDefinition[]>(() =>
+    props.owner === 'template'
+        ? props.templateProperties.map((definition) => ({ ...definition, kindId: null }))
+        : noteProps.entries.value.map((entry) => entry.definition),
 );
 const relationOptions = computed(() => sameNoteDefs.value.filter((d) => d.type === 'relation'));
 const selectedRollupRelation = computed(
@@ -168,7 +196,7 @@ interface SelectOption {
 }
 
 function propertyOptionsFromDefinitions(
-    defs: PropertyDefinition[],
+    defs: SelectableDefinition[],
     includeKindLabel: boolean,
 ): SelectOption[] {
     const labelsByKey = new Map<string, string[]>();
@@ -188,15 +216,15 @@ function propertyOptionsFromDefinitions(
         .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function isStoredValueDefinition(def: PropertyDefinition): boolean {
+function isStoredValueDefinition(def: SelectableDefinition): boolean {
     return def.type !== 'button' && !isComputedPropertyType(def.type);
 }
 
-function isFormulaReadableDefinition(def: PropertyDefinition): boolean {
+function isFormulaReadableDefinition(def: SelectableDefinition): boolean {
     return def.type !== 'button' && def.type !== 'formula' && def.type !== 'rollup';
 }
 
-function isNumericDefinition(def: PropertyDefinition): boolean {
+function isNumericDefinition(def: SelectableDefinition): boolean {
     return def.type === 'number' || def.type === 'progress';
 }
 
@@ -216,7 +244,7 @@ const rollupTargetKindIds = computed(() => rollupTargetKindIdsForSelectedRelatio
 
 const rollupTargetDefinitions = computed(() => {
     const ids = new Set(rollupTargetKindIds.value);
-    const defs: PropertyDefinition[] = [];
+    const defs: SelectableDefinition[] = [];
     for (const kindId of ids) defs.push(...(properties.byKind.value.get(kindId) ?? []));
     const numericOnly = ['sum', 'avg', 'min', 'max'].includes(extra.rollup.aggregation);
     return defs.filter((def) => isStoredValueDefinition(def) && (!numericOnly || isNumericDefinition(def)));
@@ -238,7 +266,7 @@ const buttonTargetOptions = computed(() => {
 async function ensureSelectableDefinitionsLoaded(): Promise<void> {
     // Make sure the active note's definitions are loaded so the
     // relation / formula / button selectors above see fresh data.
-    if (!noteProps.loaded.value) await noteProps.reload();
+    if (props.owner === 'note' && !noteProps.loaded.value) await noteProps.reload();
     if (type.value !== 'rollup') return;
     await kinds.load();
     const targetKindIds = [...new Set(rollupTargetKindIdsForSelectedRelation())];
@@ -348,6 +376,11 @@ watch(buttonTargetOptions, (next) => {
 const needsOptions = computed(
     () => type.value === 'select' || type.value === 'multiSelect' || type.value === 'status',
 );
+
+const modalTitle = computed(() => {
+    if (step.value !== 'type') return `New ${PROPERTY_TYPE_LABELS[type.value]} property`;
+    return props.owner === 'template' ? 'Add template property' : 'Add property';
+});
 
 function pickType(t: PropertyType): void {
     type.value = t;
@@ -493,11 +526,20 @@ async function submit(): Promise<void> {
     error.value = null;
     try {
         const config = buildConfig();
-        await noteProps.createDefinition({
-            label: label.value.trim(),
-            type: type.value,
-            config,
-        });
+        if (props.owner === 'template') {
+            if (!props.templateId) throw new Error('Cannot create a property without an active template');
+            await templates.addProperty(props.templateId, {
+                label: label.value.trim(),
+                type: type.value,
+                config,
+            });
+        } else {
+            await noteProps.createDefinition({
+                label: label.value.trim(),
+                type: type.value,
+                config,
+            });
+        }
         emit('created');
         close();
     } catch (e) {
@@ -509,7 +551,7 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-    <UiModal :modelValue="modelValue" :title="step === 'type' ? 'Add property' : `New ${PROPERTY_TYPE_LABELS[type]} property`"
+    <UiModal :modelValue="modelValue" :title="modalTitle"
         size="md" @update:modelValue="emit('update:modelValue', $event)">
         <div v-if="step === 'type'" class="ap-groups">
             <div v-for="group in PROPERTY_TYPE_GROUPS" :key="group.id" class="ap-group">

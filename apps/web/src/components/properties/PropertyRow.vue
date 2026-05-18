@@ -20,6 +20,7 @@ const props = defineProps<{
     entry: NoteProperty;
     noteId?: string | null;
     readonly?: boolean;
+    valueReadonly?: boolean;
     reorderable?: boolean;
     dragActive?: boolean;
     dropTarget?: boolean;
@@ -37,6 +38,7 @@ const emit = defineEmits<{
 }>();
 
 const editor = computed(() => propertyEditorRegistry[props.entry.definition.type]);
+const valueReadonly = computed(() => props.readonly || props.valueReadonly === true);
 const icon = computed(
     () =>
         props.entry.definition.icon ||
@@ -222,7 +224,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             <span class="prop-row__name">{{ entry.definition.label }}</span>
         </div>
         <div class="prop-row__editor">
-            <div v-if="readonly" class="prop-row__readonly" :class="`prop-row__readonly--${entry.definition.type}`">
+            <div v-if="valueReadonly" class="prop-row__readonly" :class="`prop-row__readonly--${entry.definition.type}`">
                 <span v-if="readonlyDisplay.kind === 'empty'" class="prop-row__readonly-empty">
                     {{ readonlyDisplay.text }}
                 </span>

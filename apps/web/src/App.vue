@@ -34,6 +34,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { to: '/', label: 'Notes', icon: 'notes' },
   { to: '/graph', label: 'Graph', icon: 'graph' },
+  { to: '/templates', label: 'Templates', icon: 'templates' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
 

@@ -335,6 +335,9 @@ export function colorForKind(kind: string): string {
 // ===== Custom Properties =====
 export * from './properties.js';
 
+// ===== Page Templates =====
+export * from './templates.js';
+
 // ===== Query layer =====
 export * from './query/index.js';
 
