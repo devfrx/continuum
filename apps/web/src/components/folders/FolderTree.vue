@@ -140,7 +140,8 @@ function onRootDrop(ev: DragEvent): void {
 
                     <li v-if="!folders.loading.value && folders.tree.value.length === 0 && rootNotes.length === 0"
                         class="empty">
-                        <span class="empty__hint">No notes yet.</span>
+                        <Icon name="folder" :size="22" class="empty__icon" />
+                        <span class="empty__hint">Nothing here yet.</span>
                         <button type="button" class="empty__link" @click="emit('create-folder', null)">
                             Create a folder
                         </button>
@@ -329,31 +330,40 @@ function onRootDrop(ev: DragEvent): void {
 
 .empty {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-5) var(--space-3) var(--space-4);
     color: var(--fg-subtle);
     font-size: var(--text-xs);
     list-style: none;
+    text-align: center;
+}
+
+.empty__icon {
+    color: color-mix(in srgb, var(--fg-subtle) 60%, transparent);
+    margin-bottom: var(--space-1);
 }
 
 .empty__link {
     appearance: none;
-    background: transparent;
-    border: none;
-    padding: 0;
+    background: color-mix(in srgb, var(--bg-soft) 80%, transparent);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-3);
     color: var(--fg-muted);
     font: inherit;
     font-size: var(--text-xs);
     cursor: pointer;
-    text-decoration: underline;
-    text-decoration-color: var(--border);
-    text-underline-offset: 2px;
-    transition: color var(--duration-fast) var(--ease-standard);
+    transition:
+        background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
 }
 
 .empty__link:hover {
-    color: var(--accent);
-    text-decoration-color: var(--accent);
+    background: color-mix(in srgb, var(--bg-soft) 96%, transparent);
+    border-color: var(--border-strong);
+    color: var(--fg);
 }
 </style>

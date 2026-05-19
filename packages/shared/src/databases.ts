@@ -113,6 +113,68 @@ export interface GroupRule {
   field: FieldRef;
 }
 
+// ────────────────────────── Conditional color ─────────────────────────
+
+/**
+ * Identifier of a semantic colour token used by conditional-color rules.
+ * Tokens are resolved client-side to a `{ background, text }` pair via
+ * `DATABASE_COLOR_TOKENS` (see `databases/conditionalColor/palette.ts`)
+ * so the persisted payload stays small, theme-aware and renamer-safe.
+ */
+export type DatabaseColorTokenId =
+  | 'default'
+  | 'gray'
+  | 'brown'
+  | 'orange'
+  | 'yellow'
+  | 'green'
+  | 'blue'
+  | 'purple'
+  | 'pink'
+  | 'red';
+
+/** Where the rule's colour should be painted when the condition matches. */
+export type ConditionalColorTarget =
+  /** Recolour every cell of the row (Notion: "Whole row"). */
+  | 'row'
+  /** Recolour only the cell belonging to `propertyKey` (Notion: "This property"). */
+  | 'property';
+
+/** Which surface of the target receives the colour. */
+export type ConditionalColorScope =
+  /** Tint the cell/row background. */
+  | 'background'
+  /** Recolour the text only (background stays). */
+  | 'text';
+
+/**
+ * One conditional-color rule. Mirrors the Notion "Conditional color"
+ * UX: a single filter condition + a colour to apply + a scope picker.
+ *
+ * The condition reuses {@link FilterNode} so future iterations can grow
+ * compound expressions without breaking persisted payloads — the
+ * matcher in `databases/filtering/evaluate.ts` already handles both
+ * leaf conditions and nested groups.
+ */
+export interface ConditionalColorRule {
+  /** Stable client-generated id (UI keying, patch addressing). */
+  id: string;
+  /** Filter expression evaluated against each row. */
+  condition: FilterNode;
+  /** Colour token id resolved through `DATABASE_COLOR_TOKENS`. */
+  color: DatabaseColorTokenId;
+  /** Which surface receives the colour. */
+  scope: ConditionalColorScope;
+  /** Where the colour is painted (whole row vs. a single property). */
+  target: ConditionalColorTarget;
+  /**
+   * Property key recoloured when `target === 'property'`. Ignored for
+   * row-scope rules. Stored as a property *key* (not id) so the rule
+   * survives schema id rotations the way visible/hidden lists do.
+   */
+  propertyKey?: string | null;
+}
+
 /**
  * Configuration payload persisted on each view. The wire shape is
  * intentionally open-ended for view-specific knobs (`layout`) so the
@@ -138,6 +200,12 @@ export interface DatabaseViewConfig {
    */
   hiddenProperties: string[];
   /**
+   * Ordered list of conditional-color rules. Evaluated top-to-bottom
+   * per row, first matching rule wins per (target, propertyKey) scope.
+   * Empty list = no conditional colouring.
+   */
+  conditionalColors: ConditionalColorRule[];
+  /**
    * View-specific layout knobs. Shape depends on the view `type` and is
    * validated by view-specific code; kept as `unknown` here so the
    * shared package stays decoupled from any single view's renderer.
@@ -152,6 +220,7 @@ export const EMPTY_DATABASE_VIEW_CONFIG: DatabaseViewConfig = {
   group: null,
   visibleProperties: null,
   hiddenProperties: [],
+  conditionalColors: [],
   layout: null,
 };
 

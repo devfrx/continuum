@@ -19,14 +19,43 @@
  */
 import { computed, ref } from 'vue';
 import { useDatabaseBundle, useDatabaseQuery } from '@/composables/useDatabase';
+import { api } from '@/api';
+import {
+    publishDatabaseSchemaChanged,
+    publishPropertyValueChanged,
+} from '@/lib/realtime';
 import type {
     DatabaseRowSnapshot,
     DatabaseView,
     DatabaseViewConfig,
     DatabaseViewType,
+    PropertyDefinition,
 } from '@continuum/shared';
 import DatabaseToolbar from './DatabaseToolbar.vue';
-import { viewRegistry } from './views/registry';
+import DatabaseViewSettings from './DatabaseViewSettings.vue';
+import DatabaseLayoutRequirementModal from './DatabaseLayoutRequirementModal.vue';
+import DatabaseRowDraftBar from './DatabaseRowDraftBar.vue';
+import LinkExistingNoteModal from './LinkExistingNoteModal.vue';
+import { DatabaseViewSummaryBar } from './summary';
+import { filterWithoutCondition, sortWithoutRule } from './summary/summarize';
+import type { AnchorRect } from './summary';
+import type { SectionId } from './viewSettings/sections';
+import { viewEntryFor, viewRegistry } from './views/registry';
+import type {
+    AddRowPlan,
+    AddRowSeed,
+    LayoutPropertyRequirement,
+} from './views/types';
+import {
+    buildViewLayoutContext,
+    createPayloadForRequirement,
+    layoutPatchFromResolutions,
+    missingPropertyRequirements,
+    resolveLayoutRequirements,
+    viewWithTypeAndLayout,
+    type LayoutRequirementResolution,
+    type RequiredPropertyCreateInput,
+} from './views/layoutRequirements';
 import { useDatabaseViewQuery } from './useDatabaseViewQuery';
 
 const props = defineProps<{
@@ -42,8 +71,18 @@ const emit = defineEmits<{
     'rename-view': [viewId: string, name: string];
     'delete-view': [viewId: string];
     'change-view-source': [viewId: string, dataSourceDatabaseId: string];
-    'change-view-type': [viewId: string, type: DatabaseViewType];
+    'change-view-type': [
+        viewId: string,
+        type: DatabaseViewType,
+        config?: Partial<DatabaseViewConfig>,
+    ];
     'patch-view-config': [viewId: string, patch: Partial<DatabaseViewConfig>];
+    /**
+     * Persist the current view's filter+sort as a brand-new view.
+     * The embed handles the actual `addView` call so the body stays
+     * declarative.
+     */
+    'save-as-new-view': [payload: { sourceViewId: string; name: string }];
     delete: [];
 }>();
 
@@ -101,11 +140,15 @@ const safeActiveView = computed<DatabaseView>(() => {
     } as unknown as DatabaseView;
 });
 
-const { finalRows } = useDatabaseViewQuery({
+const { finalRows, hasFilter, hasSort } = useDatabaseViewQuery({
     rows: rawRows,
     activeView: safeActiveView,
     schema: activeSchema,
 });
+
+const showSummaryBar = computed(() =>
+    !!activeView.value && activeSchema.value.length > 0 && (hasFilter.value || hasSort.value),
+);
 
 const isLoadingActive = computed(() => sourceBundleState.loading.value
     || (queryState.loading.value && !queryState.response.value));
@@ -114,18 +157,234 @@ const activeNotFound = computed(() => sourceBundleState.notFound.value);
 const actionError = ref<string | null>(null);
 const draftRequest = ref(0);
 
+interface BodyDraftState {
+    viewId: string;
+    title: string;
+    creating: boolean;
+    error: string | null;
+    placeholder: string;
+    focusToken: number;
+    seeds: AddRowSeed[];
+}
+
+const bodyDraft = ref<BodyDraftState | null>(null);
+
+interface LayoutRequirementPromptState {
+    viewLabel: string;
+    requirements: LayoutPropertyRequirement[];
+}
+
+const layoutRequirementPrompt = ref<LayoutRequirementPromptState | null>(null);
+let layoutRequirementResolver: ((items: RequiredPropertyCreateInput[] | null) => void) | null = null;
+
 function messageFromUnknownError(err: unknown): string {
     return err instanceof Error ? err.message : 'Database operation failed';
+}
+
+function requestMissingLayoutProperties(
+    viewLabel: string,
+    requirements: LayoutPropertyRequirement[],
+): Promise<RequiredPropertyCreateInput[] | null> {
+    layoutRequirementPrompt.value = { viewLabel, requirements };
+    return new Promise((resolve) => {
+        layoutRequirementResolver = resolve;
+    });
+}
+
+function onLayoutRequirementSubmit(items: RequiredPropertyCreateInput[]): void {
+    layoutRequirementPrompt.value = null;
+    layoutRequirementResolver?.(items);
+    layoutRequirementResolver = null;
+}
+
+function onLayoutRequirementCancel(): void {
+    layoutRequirementPrompt.value = null;
+    layoutRequirementResolver?.(null);
+    layoutRequirementResolver = null;
+}
+
+async function createMissingLayoutProperties(
+    databaseId: string,
+    missing: LayoutRequirementResolution[],
+    inputs: RequiredPropertyCreateInput[],
+): Promise<{ schema: PropertyDefinition[]; layoutPatch: Record<string, unknown> }> {
+    const byKey = new Map(inputs.map((input) => [input.requirementKey, input] as const));
+    const created: PropertyDefinition[] = [];
+    const layoutPatch: Record<string, unknown> = {};
+    for (const resolution of missing) {
+        const input = byKey.get(resolution.requirement.key);
+        if (!input) continue;
+        const property = await api.databases.properties.create(
+            databaseId,
+            createPayloadForRequirement(resolution.requirement, input),
+        );
+        created.push(property);
+        layoutPatch[resolution.requirement.layoutKey] = property.id;
+    }
+    if (created.length > 0) {
+        publishDatabaseSchemaChanged(databaseId);
+        await sourceBundleState.reload();
+        await queryState.reload();
+    }
+    const reloadedSchema = sourceBundleState.bundle.value?.schema ?? [];
+    return {
+        schema: reloadedSchema.length > 0 ? reloadedSchema : [...activeSchema.value, ...created],
+        layoutPatch,
+    };
+}
+
+async function ensureLayoutRequirements(
+    view: DatabaseView,
+    nextType: DatabaseViewType,
+    layoutPatch: Record<string, unknown> = {},
+): Promise<{ view: DatabaseView; schema: PropertyDefinition[]; layoutPatch: Record<string, unknown> } | null> {
+    const database = activeDatabase.value;
+    if (!database) {
+        actionError.value = 'Datasource is still loading — try again in a moment.';
+        return null;
+    }
+    const entry = viewEntryFor(nextType);
+    const base = { database, schema: activeSchema.value, activeView: view };
+    const ctx = buildViewLayoutContext(base, nextType, layoutPatch);
+    const resolutions = resolveLayoutRequirements(entry.layoutRequirements, ctx);
+    const missing = missingPropertyRequirements(resolutions);
+    let schema = activeSchema.value;
+    let requirementPatch = layoutPatchFromResolutions(resolutions);
+
+    if (missing.length > 0) {
+        const inputs = await requestMissingLayoutProperties(
+            entry.label,
+            missing.map((resolution) => resolution.requirement),
+        );
+        if (!inputs) return null;
+        try {
+            const created = await createMissingLayoutProperties(database.id, missing, inputs);
+            schema = created.schema;
+            requirementPatch = { ...requirementPatch, ...created.layoutPatch };
+        } catch (err) {
+            actionError.value = messageFromUnknownError(err);
+            return null;
+        }
+    }
+
+    const finalLayoutPatch = { ...layoutPatch, ...requirementPatch };
+    return {
+        schema,
+        layoutPatch: finalLayoutPatch,
+        view: viewWithTypeAndLayout(view, nextType, finalLayoutPatch),
+    };
+}
+
+function startBodyDraft(view: DatabaseView, plan: Extract<AddRowPlan, { mode: 'draft' }>): void {
+    bodyDraft.value = {
+        viewId: view.id,
+        title: '',
+        creating: false,
+        error: null,
+        placeholder: plan.placeholder ?? 'New row',
+        focusToken: Date.now(),
+        seeds: plan.seeds ?? [],
+    };
+}
+
+function cancelBodyDraft(): void {
+    if (bodyDraft.value?.creating) return;
+    bodyDraft.value = null;
+}
+
+async function commitBodyDraft(): Promise<void> {
+    const draft = bodyDraft.value;
+    if (!draft || draft.creating) return;
+    const title = draft.title.trim();
+    if (!title) {
+        cancelBodyDraft();
+        return;
+    }
+    draft.creating = true;
+    draft.error = null;
+    try {
+        const created = await queryState.createRow({ title });
+        if (!created) {
+            draft.error = queryState.error.value ?? 'Failed to create row.';
+            return;
+        }
+        for (const seed of draft.seeds) {
+            await api.properties.setValue(created.noteId, seed.propertyId, seed.value);
+            publishPropertyValueChanged(created.noteId, seed.propertyId);
+        }
+        if (draft.seeds.length > 0) await queryState.reload();
+        bodyDraft.value = null;
+    } catch (err) {
+        draft.error = messageFromUnknownError(err);
+    } finally {
+        if (bodyDraft.value) bodyDraft.value.creating = false;
+    }
 }
 
 async function onAddRow(): Promise<void> {
     if (!props.editable) return;
     actionError.value = null;
-    if (activeView.value?.type === 'table') {
+    const view = activeView.value;
+    if (!view) return;
+    const database = activeDatabase.value;
+    if (!database) {
+        actionError.value = 'Datasource is still loading — try again in a moment.';
+        return;
+    }
+    const entry = viewEntryFor(view.type);
+    const initialPlanner = entry.planAddRow ?? ((): AddRowPlan => ({ mode: 'draft' }));
+    const initialPlan = initialPlanner({ database, schema: activeSchema.value, activeView: view });
+    if (initialPlan.mode === 'unsupported') {
+        actionError.value = initialPlan.reason;
+        return;
+    }
+    const prepared = await ensureLayoutRequirements(view, view.type);
+    if (!prepared) return;
+    if (Object.keys(prepared.layoutPatch).length > 0) {
+        emit('patch-view-config', view.id, { layout: prepared.layoutPatch } as Partial<DatabaseViewConfig>);
+    }
+    const planner = entry.planAddRow ?? ((): AddRowPlan => ({ mode: 'draft' }));
+    const plan: AddRowPlan = planner({
+        database,
+        schema: prepared.schema,
+        activeView: prepared.view,
+    });
+
+    if (plan.mode === 'inline-draft') {
         draftRequest.value += 1;
         return;
     }
-    actionError.value = 'Switch to a Table view to draft a new row inline.';
+    if (plan.mode === 'unsupported') {
+        actionError.value = plan.reason;
+        return;
+    }
+    startBodyDraft(prepared.view, plan);
+}
+
+// ── Link-existing-note flow ────────────────────────────────────────────
+// Open the picker → preview → MergeSchemaModal flow scoped to the
+// active datasource. The modal owns its own preview/resolve lifecycle;
+// here we only gate access (need a loaded database) and refresh the
+// query when a row is committed.
+const linkExistingOpen = ref(false);
+const linkedNoteIds = computed(() => rawRows.value.map((r) => r.noteId));
+
+function onLinkExisting(): void {
+    if (!props.editable) return;
+    if (!activeDatabase.value) {
+        actionError.value = 'Datasource is still loading — try again in a moment.';
+        return;
+    }
+    actionError.value = null;
+    linkExistingOpen.value = true;
+}
+
+async function onLinkExistingDone(): Promise<void> {
+    try {
+        await queryState.reload();
+    } catch (err) {
+        actionError.value = messageFromUnknownError(err);
+    }
 }
 
 async function onRemoveRow(rowId: string): Promise<void> {
@@ -161,13 +420,89 @@ function onViewConfigChanged(patch: Partial<DatabaseViewConfig>): void {
     emit('patch-view-config', view.id, merged);
 }
 
-/**
- * Toolbar-bridged `patch-view-config` (filter / sort / future root
- * keys). Re-emits as a typed `Partial<DatabaseViewConfig>` so the
- * template stays free of inline type casts.
- */
-function onPatchConfigFromToolbar(viewId: string, patch: Record<string, unknown>): void {
-    emit('patch-view-config', viewId, patch as Partial<DatabaseViewConfig>);
+// ── View options popover (owned here so the gear & summary chips
+// share one source of truth) ─────────────────────────────────────────
+interface SettingsRequest {
+    viewId: string;
+    anchorRect: AnchorRect | null;
+    section: SectionId | null;
+}
+const settingsRequest = ref<SettingsRequest | null>(null);
+
+const settingsView = computed<DatabaseView | null>(() => {
+    const req = settingsRequest.value;
+    if (!req) return null;
+    return props.views.find((v) => v.id === req.viewId) ?? null;
+});
+
+function onToolbarOpenSettings(viewId: string, anchorRect: AnchorRect): void {
+    settingsRequest.value = { viewId, anchorRect, section: null };
+}
+
+function onSummaryOpenSettings(section: 'filter' | 'sort', anchorRect: AnchorRect): void {
+    const view = activeView.value;
+    if (!view) return;
+    settingsRequest.value = { viewId: view.id, anchorRect, section };
+}
+
+function onSettingsModelValue(value: boolean): void {
+    if (!value) settingsRequest.value = null;
+}
+
+function onSettingsChangeSource(databaseId: string): void {
+    const req = settingsRequest.value;
+    if (!req) return;
+    settingsRequest.value = null;
+    emit('change-view-source', req.viewId, databaseId);
+}
+
+async function onSettingsChangeType(type: DatabaseViewType): Promise<void> {
+    const req = settingsRequest.value;
+    if (!req) return;
+    const view = props.views.find((candidate) => candidate.id === req.viewId);
+    if (!view) return;
+    actionError.value = null;
+    const prepared = await ensureLayoutRequirements(view, type);
+    if (!prepared) return;
+    emit('change-view-type', req.viewId, type, { layout: prepared.layoutPatch });
+}
+
+async function onSettingsPatchLayout(patch: Record<string, unknown>): Promise<void> {
+    const req = settingsRequest.value;
+    if (!req) return;
+    const view = props.views.find((candidate) => candidate.id === req.viewId);
+    if (!view) return;
+    actionError.value = null;
+    const prepared = await ensureLayoutRequirements(view, view.type, patch);
+    if (!prepared) return;
+    emit('patch-view-config', req.viewId, { layout: prepared.layoutPatch } as Partial<DatabaseViewConfig>);
+}
+
+function onSettingsPatchConfig(patch: Partial<DatabaseViewConfig>): void {
+    const req = settingsRequest.value;
+    if (!req) return;
+    emit('patch-view-config', req.viewId, patch);
+}
+
+// ── Summary chip actions ───────────────────────────────────────────────────
+function onRemoveFilterChip(conditionId: string): void {
+    const view = activeView.value;
+    if (!view) return;
+    const nextFilter = filterWithoutCondition(view.config.filter, conditionId);
+    emit('patch-view-config', view.id, { filter: nextFilter } as Partial<DatabaseViewConfig>);
+}
+
+function onRemoveSortChip(ruleId: string): void {
+    const view = activeView.value;
+    if (!view) return;
+    const nextSort = sortWithoutRule(view.config.sort, ruleId);
+    emit('patch-view-config', view.id, { sort: nextSort } as Partial<DatabaseViewConfig>);
+}
+
+function onSaveAsNewView(name: string): void {
+    const view = activeView.value;
+    if (!view) return;
+    emit('save-as-new-view', { sourceViewId: view.id, name });
 }
 </script>
 
@@ -183,11 +518,30 @@ function onPatchConfigFromToolbar(viewId: string, patch: Record<string, unknown>
             @delete-view="(id) => emit('delete-view', id)"
             @add-view="(payload) => emit('add-view', payload)"
             @add-row="onAddRow"
-            @change-view-source="(viewId, dbId) => emit('change-view-source', viewId, dbId)"
-            @change-view-type="(viewId, type) => emit('change-view-type', viewId, type)"
-            @patch-view-layout="(viewId, patch) => emit('patch-view-config', viewId, { layout: patch })"
-            @patch-view-config="(viewId, patch) => onPatchConfigFromToolbar(viewId, patch)"
+            @link-existing="onLinkExisting"
+            @open-settings="onToolbarOpenSettings"
             @delete="emit('delete')" />
+
+        <DatabaseViewSummaryBar
+            v-if="showSummaryBar && activeView"
+            :view="activeView"
+            :schema="activeSchema"
+            :editable="editable"
+            :row-count="finalRows.length"
+            @open-settings="onSummaryOpenSettings"
+            @remove-filter="onRemoveFilterChip"
+            @remove-sort="onRemoveSortChip"
+            @save-as-new-view="onSaveAsNewView" />
+
+        <DatabaseRowDraftBar
+            v-if="bodyDraft"
+            v-model="bodyDraft.title"
+            :creating="bodyDraft.creating"
+            :error="bodyDraft.error"
+            :placeholder="bodyDraft.placeholder"
+            :focus-token="bodyDraft.focusToken"
+            @commit="commitBodyDraft"
+            @cancel="cancelBodyDraft" />
 
         <div class="db-body__view">
             <div v-if="actionError || queryState.error.value" class="db-body__error">
@@ -214,6 +568,33 @@ function onPatchConfigFromToolbar(viewId: string, patch: Record<string, unknown>
                 @cell-saved="queryState.reload"
                 @view-config-changed="onViewConfigChanged" />
         </div>
+
+        <DatabaseViewSettings
+            v-if="settingsView"
+            :model-value="true"
+            :view="settingsView"
+            :anchor-rect="settingsRequest?.anchorRect ?? null"
+            :initial-section="settingsRequest?.section ?? null"
+            @update:model-value="onSettingsModelValue"
+            @change-source="onSettingsChangeSource"
+            @change-type="onSettingsChangeType"
+            @patch-layout="onSettingsPatchLayout"
+            @patch-config="onSettingsPatchConfig" />
+        <LinkExistingNoteModal
+            v-if="activeDatabase"
+            v-model="linkExistingOpen"
+            :database-id="activeDatabase.id"
+            :database-name="activeDatabase.title || 'Untitled database'"
+            :exclude-note-ids="linkedNoteIds"
+            @done="onLinkExistingDone" />
+        <DatabaseLayoutRequirementModal
+            v-if="layoutRequirementPrompt"
+            :model-value="true"
+            :view-label="layoutRequirementPrompt.viewLabel"
+            :requirements="layoutRequirementPrompt.requirements"
+            @update:model-value="(value) => { if (!value) onLayoutRequirementCancel(); }"
+            @submit="onLayoutRequirementSubmit"
+            @cancel="onLayoutRequirementCancel" />
     </div>
 </template>
 

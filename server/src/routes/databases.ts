@@ -62,11 +62,16 @@ import {
   deleteRow,
   loadDatabaseBundle,
   membershipRowToDto,
+  previewLinkMerge,
   queryDatabaseRows,
   reorderRows,
+  resolveLinkMerge,
   updateDatabase,
 } from '../services/databases.js';
-import type { DatabaseQueryRequest } from '@continuum/shared';
+import type {
+  DatabaseQueryRequest,
+  PropertyMergeAction,
+} from '@continuum/shared';
 
 // ───────────────────────────── Schemas ─────────────────────────────────
 
@@ -131,10 +136,60 @@ const deleteRowQuerySchema = z.object({
     .transform((v) => v === 'true'),
 });
 
+const mergeActionSchema = z.enum(['merge', 'rename', 'keepPrivate']) satisfies z.ZodType<PropertyMergeAction>;
+
+const previewLinkSchema = z.object({
+  noteId: z.string().uuid(),
+});
+
+const resolveLinkSchema = z.object({
+  noteId: z.string().uuid(),
+  position: z.string().max(120).optional(),
+  resolutions: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(60),
+        action: mergeActionSchema,
+        renameTo: z
+          .object({
+            key: z.string().min(1).max(60),
+            label: z.string().min(1).max(60),
+          })
+          .optional(),
+      }),
+    )
+    .max(500),
+});
+
 // ───────────────────────────── Helpers ─────────────────────────────────
 
 function positionForIndex(index: number): string {
   return `p${String((index + 1) * 1000).padStart(8, '0')}`;
+}
+
+/**
+ * Load a database row and gate it on `locked`. Mirrors the note-level
+ * lock guard (notes.ts / properties.ts) — when the database is locked,
+ * any data-or-schema mutation is rejected with HTTP 423 + a stable
+ * machine-readable `error: 'database-locked'` payload that the client
+ * surfaces verbatim. View configuration (presentation only) and the
+ * PATCH that toggles `locked` itself are intentionally exempt so the
+ * user can always rearrange views and unlock the database.
+ */
+async function loadDatabaseOrLockGuard(
+  id: string,
+  reply: import('fastify').FastifyReply,
+): Promise<typeof databases.$inferSelect | null> {
+  const [row] = await db.select().from(databases).where(eq(databases.id, id)).limit(1);
+  if (!row) {
+    reply.notFound('Database not found');
+    return null;
+  }
+  if (row.locked) {
+    reply.code(423).send({ error: 'database-locked' });
+    return null;
+  }
+  return row;
 }
 
 // ─────────────────────────── Plugin export ─────────────────────────────
@@ -190,8 +245,8 @@ export const databaseRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/properties', async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     const body = createPropertySchema.parse(req.body);
-    const [database] = await db.select().from(databases).where(eq(databases.id, id)).limit(1);
-    if (!database) return reply.notFound('Database not found');
+    const database = await loadDatabaseOrLockGuard(id, reply);
+    if (!database) return;
 
     const key = body.key?.trim() ? slugify(body.key, 60) : slugify(body.label, 60);
     if (!key) return reply.badRequest('Could not derive a valid key from the label');
@@ -228,6 +283,7 @@ export const databaseRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/properties/reorder', async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     const body = reorderPropertiesSchema.parse(req.body);
+    if (!(await loadDatabaseOrLockGuard(id, reply))) return;
     const uniqueIds = new Set(body.ids);
     if (uniqueIds.size !== body.ids.length) {
       return reply.badRequest('Duplicate property ids in reorder payload');
@@ -266,14 +322,64 @@ export const databaseRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/rows', async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     const body = createRowSchema.parse(req.body);
-    const [database] = await db.select().from(databases).where(eq(databases.id, id)).limit(1);
-    if (!database) return reply.notFound('Database not found');
+    const database = await loadDatabaseOrLockGuard(id, reply);
+    if (!database) return;
     return createRow(id, body);
   });
 
-  app.delete('/:id/rows/:rowId', async (req) => {
+  // Two-step "link existing note" flow. The UI calls preview first, the
+  // user picks one action per collision, then we POST resolve to commit
+  // both the schema merge and the membership row in a single tx.
+  app.post('/:id/rows/preview-link', async (req, reply) => {
+    const { id } = idParamSchema.parse(req.params);
+    const body = previewLinkSchema.parse(req.body);
+    const [database] = await db.select().from(databases).where(eq(databases.id, id)).limit(1);
+    if (!database) return reply.notFound('Database not found');
+    // Reject when the note is already a row — the merge engine assumes
+    // a clean slate. Callers should fall back to the existing edit
+    // flows for already-linked rows.
+    const [existing] = await db
+      .select()
+      .from(databaseRows)
+      .where(
+        and(
+          eq(databaseRows.databaseId, id),
+          eq(databaseRows.noteId, body.noteId),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      return reply.conflict('Note is already a row of this database');
+    }
+    return previewLinkMerge(id, body.noteId);
+  });
+
+  app.post('/:id/rows/resolve-link', async (req, reply) => {
+    const { id } = idParamSchema.parse(req.params);
+    const body = resolveLinkSchema.parse(req.body);
+    const database = await loadDatabaseOrLockGuard(id, reply);
+    if (!database) return;
+    try {
+      return await resolveLinkMerge(id, body);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        message.startsWith('merge-resolution-missing:') ||
+        message.startsWith('merge-incompatible-types:') ||
+        message.startsWith('merge-rename-payload-missing:') ||
+        message.startsWith('merge-rename-key-conflict:') ||
+        message.startsWith('merge-unknown-action:')
+      ) {
+        return reply.badRequest(message);
+      }
+      throw err;
+    }
+  });
+
+  app.delete('/:id/rows/:rowId', async (req, reply) => {
     const { id, rowId } = rowParamSchema.parse(req.params);
     const { deleteNote } = deleteRowQuerySchema.parse(req.query ?? {});
+    if (!(await loadDatabaseOrLockGuard(id, reply))) return;
     await deleteRow(id, rowId, { deleteNote: Boolean(deleteNote) });
     return { ok: true } as const;
   });
@@ -281,6 +387,7 @@ export const databaseRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/rows/reorder', async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     const body = reorderRowsSchema.parse(req.body);
+    if (!(await loadDatabaseOrLockGuard(id, reply))) return;
     const uniqueIds = new Set(body.ids);
     if (uniqueIds.size !== body.ids.length) {
       return reply.badRequest('Duplicate row ids in reorder payload');
@@ -290,12 +397,9 @@ export const databaseRoutes: FastifyPluginAsync = async (app) => {
       .from(databaseRows)
       .where(eq(databaseRows.databaseId, id));
     const existingIds = new Set(existing.map((r) => r.id));
-    const matches =
-      body.ids.length === existing.length && body.ids.every((rid) => existingIds.has(rid));
-    if (!matches) {
-      return reply.badRequest(
-        'Reorder payload must include every row for this database exactly once',
-      );
+    const allKnown = body.ids.every((rid) => existingIds.has(rid));
+    if (!allKnown) {
+      return reply.badRequest('Reorder payload contains rows outside this database');
     }
     await reorderRows(id, body.ids);
     const refreshed = await db

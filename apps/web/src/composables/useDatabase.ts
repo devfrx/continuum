@@ -309,10 +309,10 @@ export interface UseDatabaseQueryReturn {
   error: Ref<string | null>;
   reload: () => Promise<void>;
   /** Create a row (new note by default) and refresh the snapshot. */
-  createRow: (data?: DatabaseRowCreateInput) => Promise<string | null>;
+  createRow: (data?: DatabaseRowCreateInput) => Promise<{ rowId: string; noteId: string } | null>;
   /** Remove a row by membership id; optionally also delete the underlying note. */
   removeRow: (rowId: string, options?: { deleteNote?: boolean }) => Promise<void>;
-  /** Persist a manual row order (full-list payload). */
+  /** Persist a manual row order (full-list or visible-subset payload). */
   reorderRows: (ids: string[]) => Promise<void>;
 }
 
@@ -388,7 +388,9 @@ export function useDatabaseQuery(
     },
   );
 
-  async function createRow(data: DatabaseRowCreateInput = {}): Promise<string | null> {
+  async function createRow(
+    data: DatabaseRowCreateInput = {},
+  ): Promise<{ rowId: string; noteId: string } | null> {
     const id = databaseIdRef.value;
     if (!id) return null;
     error.value = null;
@@ -397,7 +399,7 @@ export function useDatabaseQuery(
       await reload();
       publishNoteCreated(row.noteId);
       publishDatabaseRowsChanged(id, { rowNoteId: row.noteId });
-      return row.id;
+      return { rowId: row.id, noteId: row.noteId };
     } catch (err) {
       error.value = messageFromUnknownError(err);
       return null;

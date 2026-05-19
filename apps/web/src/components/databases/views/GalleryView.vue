@@ -3,10 +3,11 @@
  * GalleryView.vue — card grid renderer.
  *
  * Each row becomes a card laid out in a responsive CSS grid. An
- * optional cover image is taken from a `files` property (first file
- * with an image MIME) or a `url` property if `coverPropertyId` points
- * at one. Cards display the title and the first few non-cover property
- * values; clicking a card opens the underlying note.
+ * optional cover image is taken from the note cover (enabled by
+ * default), then from a `files` property (first file with an image MIME)
+ * or a `url` property if `coverPropertyId` points at one. Cards display
+ * the title and the first few non-cover property values; clicking a
+ * card opens the underlying note.
  *
  * The cover property is configurable via `activeView.config.layout.coverPropertyId`.
  * When unset, the renderer auto-picks the first `files` property and
@@ -18,14 +19,38 @@ import { Icon } from '@/components/ui';
 import type {
     DatabaseRowSnapshot,
     PropertyDefinition,
-    PropertyOption,
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
+import { useConditionalColors } from '../conditionalColor';
+import { resolveCardProperties } from './cardProperties';
+import DatabaseCardProperty from './DatabaseCardProperty.vue';
+import { useDatabaseRowReorder } from './useDatabaseRowReorder';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
+const { rowStyleFor, cellStyleFor } = useConditionalColors({
+    activeView: computed(() => props.activeView),
+    schema: computed(() => props.schema),
+});
+
+const {
+    orderedRows,
+    isDraggingRow,
+    isDropTargetRow,
+    onRowDragStart,
+    onRowDragOver,
+    onRowDrop,
+    onListDragOver,
+    onListDropEnd,
+    clearDragState,
+} = useDatabaseRowReorder({
+    databaseId: computed(() => props.database.id),
+    rows: computed(() => props.rows),
+    editable: computed(() => props.editable),
+    onReordered: () => emit('cell-saved'),
+});
 
 const layout = computed<Record<string, unknown>>(
     () => (props.activeView.config.layout ?? {}) as Record<string, unknown>,
@@ -34,6 +59,8 @@ const layout = computed<Record<string, unknown>>(
 const hasExplicitCoverProperty = computed(() =>
     Object.prototype.hasOwnProperty.call(layout.value, 'coverPropertyId'),
 );
+
+const showNoteCover = computed<boolean>(() => layout.value.showNoteCover !== false);
 
 const coverPropertyId = computed<string | null>(() => {
     if (hasExplicitCoverProperty.value) {
@@ -66,12 +93,10 @@ const coverProperty = computed<PropertyDefinition | null>(
 );
 
 function coverUrlFor(row: DatabaseRowSnapshot): string | null {
-    // Universal per-note cover always wins — it's the field the user
-    // explicitly set from the editor header and the most predictable
-    // source. Fall back to the configured property heuristic only when
-    // the note has no cover image set.
-    const universal = row.note?.coverImage;
-    if (universal) return universal;
+    if (showNoteCover.value) {
+        const universal = row.note?.coverImage;
+        if (universal) return universal;
+    }
     const def = coverProperty.value;
     if (!def) return null;
     const entry = row.properties.find((p) => p.definition.id === def.id);
@@ -85,31 +110,27 @@ function coverUrlFor(row: DatabaseRowSnapshot): string | null {
     return null;
 }
 
-function detailLines(row: DatabaseRowSnapshot): string[] {
+const hasCoverFrame = computed<boolean>(() =>
+    orderedRows.value.some((row) => coverUrlFor(row) !== null),
+);
+
+function detailProperties(): PropertyDefinition[] {
     const skip = new Set<string>();
-    if (coverProperty.value) skip.add(coverProperty.value.id);
-    const out: string[] = [];
-    for (const entry of row.properties) {
-        if (skip.has(entry.definition.id)) continue;
-        const value = entry.value;
-        if (!value) continue;
-        if (value.type === 'text' || value.type === 'longText') out.push(value.value);
-        else if (value.type === 'number') out.push(String(value.value));
-        else if (value.type === 'checkbox') out.push(value.value ? '✓' : '✗');
-        else if (value.type === 'date') out.push(value.value);
-        else if (value.type === 'select' || value.type === 'status') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            const opt = cfg.options?.find((o) => o.id === value.value);
-            out.push(opt?.label ?? value.value);
-        }
-        else if (value.type === 'multiSelect') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            out.push(value.value.map((id) => cfg.options?.find((o) => o.id === id)?.label ?? id).join(', '));
-        }
-        else if (value.type === 'url' || value.type === 'email' || value.type === 'phone') out.push(value.value);
-        if (out.length >= 3) break;
-    }
-    return out;
+    if (coverProperty.value) skip.add(coverProperty.value.key);
+    return resolveCardProperties({
+        schema: props.schema,
+        view: props.activeView,
+        skipKeys: skip,
+        limit: 4,
+    });
+}
+
+function hasEntry(row: DatabaseRowSnapshot, def: PropertyDefinition): boolean {
+    const v = row.properties.find((p) => p.definition.id === def.id)?.value;
+    if (!v) return false;
+    if (v.type === 'multiSelect' && v.value.length === 0) return false;
+    if ((v.type === 'text' || v.type === 'longText' || v.type === 'url' || v.type === 'email' || v.type === 'phone') && !v.value) return false;
+    return true;
 }
 
 function openRow(row: DatabaseRowSnapshot): void {
@@ -119,21 +140,33 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 <template>
     <div class="db-gallery" :class="{ 'db-gallery--wrap': common.wrapContent }">
-        <div v-if="!rows.length" class="db-gallery__empty">
+        <div v-if="!orderedRows.length" class="db-gallery__empty">
             <Icon name="view-gallery" :size="22" />
             <p>No rows yet — switch to Table or use the toolbar to add the first one.</p>
         </div>
-        <div v-else class="db-gallery__grid">
+        <div v-else class="db-gallery__grid" @dragover="onListDragOver" @drop="onListDropEnd">
             <article
-                v-for="row in rows"
+                v-for="row in orderedRows"
                 :key="row.rowId"
+                data-row-drop-target="true"
                 class="db-gallery__card"
+                :class="{
+                    'db-gallery__card--coverless': !hasCoverFrame,
+                    'is-dragging': isDraggingRow(row.rowId),
+                    'is-drop-target': isDropTargetRow(row.rowId),
+                }"
+                :draggable="editable"
+                :style="rowStyleFor(row)"
+                @dragstart.stop="(event) => onRowDragStart(event, row)"
+                @dragover="(event) => onRowDragOver(event, row)"
+                @drop="(event) => onRowDrop(event, row)"
+                @dragend="clearDragState"
                 @click="openRow(row)">
                 <div
                     v-if="coverUrlFor(row)"
                     class="db-gallery__cover"
                     :style="{ backgroundImage: `url('${coverUrlFor(row)}')` }" />
-                <div v-else class="db-gallery__cover db-gallery__cover--placeholder">
+                <div v-else-if="hasCoverFrame" class="db-gallery__cover db-gallery__cover--placeholder">
                     <Icon name="image" :size="22" />
                 </div>
                 <div class="db-gallery__body">
@@ -146,9 +179,16 @@ function openRow(row: DatabaseRowSnapshot): void {
                             :style="{ color: colorOf(row.note.kind) }" />
                         <strong class="db-gallery__title">{{ row.note.title || 'Untitled' }}</strong>
                     </div>
-                    <p v-for="(line, i) in detailLines(row)" :key="i" class="db-gallery__line">
-                        {{ line }}
-                    </p>
+                    <div v-if="detailProperties().length" class="db-gallery__props">
+                        <DatabaseCardProperty
+                            v-for="def in detailProperties()"
+                            v-show="hasEntry(row, def)"
+                            :key="def.id"
+                            :row="row"
+                            :property="def"
+                            variant="stacked"
+                            :cell-style="cellStyleFor(row, def.key)" />
+                    </div>
                 </div>
             </article>
         </div>
@@ -162,7 +202,7 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 .db-gallery__grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: var(--space-3);
 }
 
@@ -174,16 +214,39 @@ function openRow(row: DatabaseRowSnapshot): void {
     cursor: pointer;
     display: flex;
     flex-direction: column;
+    color: var(--text-primary);
     transition:
         border-color var(--duration-fast) var(--ease-standard),
         background-color var(--duration-fast) var(--ease-standard),
-        transform var(--duration-fast) var(--ease-standard);
+        transform var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .db-gallery__card:hover {
     border-color: var(--border-strong);
-    background: var(--surface-hover);
     transform: translateY(-1px);
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.15));
+}
+
+.db-gallery__card[draggable='true'] {
+    cursor: grab;
+}
+
+.db-gallery__card[draggable='true']:active {
+    cursor: grabbing;
+}
+
+.db-gallery__card.is-dragging {
+    opacity: 0.55;
+}
+
+.db-gallery__card.is-drop-target {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.db-gallery__card--coverless {
+    min-height: 142px;
 }
 
 .db-gallery__cover {
@@ -201,11 +264,15 @@ function openRow(row: DatabaseRowSnapshot): void {
 }
 
 .db-gallery__body {
-    padding: var(--space-2) var(--space-3) var(--space-3);
+    padding: var(--space-3);
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
     min-width: 0;
+}
+
+.db-gallery__card--coverless .db-gallery__body {
+    min-height: 100%;
 }
 
 .db-gallery__title-row {
@@ -222,8 +289,8 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 .db-gallery__title {
     font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+    color: inherit;
     line-height: var(--leading-tight);
     min-width: 0;
     overflow: hidden;
@@ -231,17 +298,15 @@ function openRow(row: DatabaseRowSnapshot): void {
     white-space: nowrap;
 }
 
-.db-gallery__line {
-    margin: 0;
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.db-gallery__props {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: var(--space-1);
+    border-top: var(--border-width-1) dashed var(--border);
 }
 
-.db-gallery--wrap .db-gallery__title,
-.db-gallery--wrap .db-gallery__line {
+.db-gallery--wrap .db-gallery__title {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;

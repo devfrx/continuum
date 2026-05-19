@@ -129,7 +129,7 @@ const _ICONS = {
   'view-gallery': { icon: 'solar:gallery-wide-bold' },
   'view-list': { icon: 'solar:list-bold' },
   'view-calendar': { icon: 'solar:calendar-bold' },
-  'view-timeline': { icon: 'solar:bedside-table-3-bold' },
+  'view-timeline': { icon: 'solar:sort-by-time-bold' },
   'view-chart': { icon: 'solar:chart-square-bold' },
   'view-dashboard': { icon: 'solar:widget-2-bold' },
   'view-feed': { icon: 'solar:posts-carousel-horizontal-bold' },

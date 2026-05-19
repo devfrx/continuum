@@ -20,7 +20,7 @@
  * stays valid.
  */
 import { computed } from 'vue';
-import { Icon, UiSelect, UiSegmented, UiButton, UiEmpty } from '@/components/ui';
+import { Icon, UiSelect, UiButton, UiEmpty } from '@/components/ui';
 import type {
     DatabaseView,
     DatabaseViewConfig,
@@ -215,49 +215,47 @@ function onOperatorChange(condition: FilterCondition, operator: string): void {
 
 <template>
     <div class="filter-panel">
-        <header v-if="conditions.length > 1" class="filter-panel__header">
-            <span class="filter-panel__label">Match</span>
-            <UiSegmented
-                :model-value="rootGroup.combinator"
-                :options="[...combinatorOptions]"
-                @update:model-value="(v) => setCombinator(String(v))" />
-            <span class="filter-panel__label">conditions</span>
-            <button
-                type="button"
-                class="filter-panel__link"
-                @click="clearAll">
-                Clear all
-            </button>
-        </header>
-
         <ol v-if="conditions.length > 0" class="filter-panel__list">
             <li
-                v-for="condition in conditions"
+                v-for="(condition, index) in conditions"
                 :key="condition.id"
                 class="filter-panel__row">
+                <div class="filter-panel__row-head">
+                    <span v-if="index === 0" class="filter-panel__where">Where</span>
+                    <UiSelect
+                        v-else
+                        :model-value="rootGroup.combinator"
+                        :options="[...combinatorOptions]"
+                        class="filter-panel__combinator"
+                        aria-label="Combinator"
+                        @update:model-value="(v) => setCombinator(String(v))" />
+                    <button
+                        type="button"
+                        class="filter-panel__remove"
+                        aria-label="Remove filter"
+                        title="Remove this filter"
+                        @click="removeCondition(condition.id)">
+                        <Icon name="close" :size="12" />
+                    </button>
+                </div>
                 <UiSelect
                     :model-value="descriptorOfRef(condition.field)?.id ?? ''"
                     :options="fieldOptions"
-                    class="filter-panel__field"
+                    class="filter-panel__control"
+                    aria-label="Field"
                     @update:model-value="(v) => onFieldChange(condition, String(v))" />
                 <UiSelect
                     :model-value="condition.operator"
                     :options="operatorOptionsFor(descriptorOfRef(condition.field))"
-                    class="filter-panel__op"
+                    class="filter-panel__control"
+                    aria-label="Operator"
                     @update:model-value="(v) => onOperatorChange(condition, String(v))" />
                 <FilterValueEditor
                     v-if="descriptorOfRef(condition.field)"
                     :model-value="condition.value"
                     :descriptor="descriptorOfRefSafe(condition.field)"
-                    class="filter-panel__value"
+                    class="filter-panel__control"
                     @update:model-value="(v) => patchCondition(condition.id, { value: v })" />
-                <button
-                    type="button"
-                    class="filter-panel__remove"
-                    aria-label="Remove filter"
-                    @click="removeCondition(condition.id)">
-                    <Icon name="close" :size="14" />
-                </button>
             </li>
         </ol>
 
@@ -271,59 +269,37 @@ function onOperatorChange(condition: FilterCondition, operator: string): void {
             </template>
         </UiEmpty>
 
-        <UiButton
-            variant="ghost"
-            size="sm"
-            :disabled="fields.length === 0"
-            @click="addCondition">
-            <Icon name="plus" :size="14" />
-            <span>Add filter</span>
-        </UiButton>
+        <footer class="filter-panel__footer">
+            <UiButton
+                variant="ghost"
+                size="sm"
+                :disabled="fields.length === 0"
+                @click="addCondition">
+                <Icon name="plus" :size="14" />
+                <span>Add filter</span>
+            </UiButton>
+            <button
+                v-if="conditions.length > 0"
+                type="button"
+                class="filter-panel__link"
+                @click="clearAll">
+                Clear all
+            </button>
+        </footer>
     </div>
 </template>
 
 <style scoped>
+/**
+ * Notion-style condition cards. Each condition stacks its controls
+ * vertically so labels stay legible even inside a 360px popover, and
+ * the combinator (Where / And / Or) lives on top — explicit but
+ * unobtrusive.
+ */
 .filter-panel {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-}
-
-.filter-panel__header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-}
-
-.filter-panel__label {
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: var(--font-weight-semibold);
-}
-
-.filter-panel__link {
-    margin-left: auto;
-    background: none;
-    border: 0;
-    color: var(--text-secondary);
-    font: inherit;
-    font-size: var(--text-xs);
-    text-transform: none;
-    letter-spacing: 0;
-    font-weight: var(--font-weight-medium);
-    cursor: pointer;
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
-    transition:
-        background-color var(--duration-fast) var(--ease-standard),
-        color var(--duration-fast) var(--ease-standard);
-}
-
-.filter-panel__link:hover {
-    color: var(--text-primary);
-    background: var(--surface-hover);
 }
 
 .filter-panel__list {
@@ -336,11 +312,10 @@ function onOperatorChange(condition: FilterCondition, operator: string): void {
 }
 
 .filter-panel__row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto;
-    align-items: center;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-2);
+    padding: var(--space-2) var(--space-3);
     background: var(--surface-1);
     border: var(--border-width-1) solid var(--border);
     border-radius: var(--radius-sm);
@@ -351,18 +326,39 @@ function onOperatorChange(condition: FilterCondition, operator: string): void {
     border-color: var(--border-strong);
 }
 
-.filter-panel__field,
-.filter-panel__op,
-.filter-panel__value {
+.filter-panel__row-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 22px;
+}
+
+.filter-panel__where {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-muted);
+    padding: 0 var(--space-1);
+}
+
+.filter-panel__combinator {
+    width: 80px;
+    flex: 0 0 auto;
+}
+
+.filter-panel__control {
+    width: 100%;
     min-width: 0;
 }
 
 .filter-panel__remove {
+    margin-left: auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     background: transparent;
     border: 0;
     color: var(--text-muted);
@@ -376,5 +372,32 @@ function onOperatorChange(condition: FilterCondition, operator: string): void {
 .filter-panel__remove:hover {
     color: var(--danger);
     background: var(--danger-faint);
+}
+
+.filter-panel__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.filter-panel__link {
+    background: none;
+    border: 0;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--text-xs);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+}
+
+.filter-panel__link:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
 }
 </style>

@@ -28,7 +28,7 @@
  *   - `ContextMenuPanel` — recursive presentational panel rendering one
  *     level + its open child.
  */
-import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, toRef, watch, type Component } from 'vue';
 import type { ContextMenuItem as SharedContextMenuItem } from '@continuum/shared';
 import type { AppIconName as IconName } from '@/assets/icons';
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition';
@@ -38,10 +38,17 @@ import ContextMenuPanel from './ContextMenuPanel.vue';
 /**
  * Local re-typing that narrows `icon` to the apps/web `IconName` union
  * while staying structurally compatible with `@continuum/shared`.
+ *
+ * `panel` opens a custom Vue component (e.g. a settings form) as the
+ * submenu instead of a list of items — positioning still flows through
+ * the normal nested-submenu machinery so the panel attaches to the
+ * parent row exactly like a regular `children`-based submenu.
  */
 export type ContextMenuItem = Omit<SharedContextMenuItem, 'icon' | 'children'> & {
     icon?: IconName;
     children?: ContextMenuItem[];
+    panel?: Component;
+    panelProps?: Record<string, unknown>;
 };
 
 interface Props {
@@ -93,9 +100,13 @@ function close(): void {
     emit('update:modelValue', false);
 }
 
+function isOpenable(item: ContextMenuItem): boolean {
+    return Boolean(item.children?.length || item.panel);
+}
+
 function onActivate(item: ContextMenuItem): void {
     if (item.disabled || item.divider || item.header) return;
-    if (item.children?.length) return; // submenu trigger only
+    if (isOpenable(item)) return; // submenu trigger only
     item.onSelect?.();
     emit('select', item);
     close();
@@ -104,7 +115,7 @@ function onActivate(item: ContextMenuItem): void {
 function onHover(depth: number, item: ContextMenuItem, idx: number): void {
     const focus = focusIndex.value.slice(0, depth + 1);
     focus[depth] = idx;
-    if (item.children?.length) {
+    if (isOpenable(item)) {
         openPath.value = [...openPath.value.slice(0, depth), item.id];
         focus[depth + 1] = 0;
     } else {

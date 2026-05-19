@@ -21,7 +21,10 @@ import type {
   DatabaseView,
   DatabaseViewConfig,
   DatabaseViewType,
+  PropertyConfig,
   PropertyDefinition,
+  PropertyType,
+  PropertyValue,
 } from '@continuum/shared';
 import type { Component } from 'vue';
 import type { AppIconName } from '@/assets/icons';
@@ -34,9 +37,10 @@ export interface DatabaseViewSurfaceProps {
   activeView: DatabaseView;
   editable: boolean;
   /**
-   * Counter incremented by the toolbar's primary action. Renderers that
-   * support inline row creation (currently only `table`) watch this and
-   * open their draft state when it changes.
+  * Counter incremented by the toolbar's primary action. Renderers that
+  * support an inline row draft (currently `table`) watch this and open
+  * their draft state when it changes. Other renderers receive draft
+  * creation through `DatabaseBody`'s shared draft bar.
    */
   draftRequest?: number;
 }
@@ -80,4 +84,74 @@ export interface DatabaseViewRegistryEntry {
    * config explicit and stable across refreshes.
    */
   readonly defaultLayout?: Record<string, unknown>;
+  /**
+   * Declarative list of layout prerequisites consumed by the renderer.
+   * `DatabaseBody` uses it to auto-bind existing properties and prompt
+   * for missing database-scoped properties before a layout change or a
+   * row draft can proceed.
+   */
+  readonly layoutRequirements?: readonly LayoutPropertyRequirement[];
+  /**
+   * Per-renderer strategy for the toolbar's primary "Add row" action.
+   * Defaults to `{ mode: 'draft' }` when omitted — the parent opens the
+   * shared draft bar and only creates the note when the title is
+   * committed. Renderers that have their own inline-draft UX (e.g.
+   * `table`) return `{ mode: 'inline-draft' }` so `DatabaseBody` knows
+   * to bump the `draftRequest` counter instead. Renderers that
+   * semantically can't own row creation (e.g. `chart`, which aggregates
+   * existing rows) return `{ mode: 'unsupported', reason }` and the
+   * parent surfaces `reason` as a one-shot toast.
+   *
+   * Implementations may also seed property values for the new row —
+   * Calendar/Timeline use this to drop the row on "today" so it shows
+   * up immediately in the active view.
+   */
+  readonly planAddRow?: (ctx: AddRowContext) => AddRowPlan;
 }
+
+/** A property value to seed on the freshly created row. */
+export interface AddRowSeed {
+  propertyId: string;
+  value: PropertyValue;
+}
+
+/** Context handed to requirement and add-row planners. */
+export interface ViewLayoutContext {
+  database: Database;
+  schema: PropertyDefinition[];
+  activeView: DatabaseView;
+}
+
+export type AddRowContext = ViewLayoutContext;
+
+/** One property-backed layout prerequisite. */
+export interface LayoutPropertyRequirement {
+  /** Stable id used by prompts and tests. */
+  key: string;
+  /** Layout key where the selected property id is stored. */
+  layoutKey: string;
+  /** Short label rendered in prompts. */
+  label: string;
+  /** One-line explanation rendered in prompts and empty states. */
+  description: string;
+  /** Property types that can satisfy this requirement. */
+  propertyTypes: readonly PropertyType[];
+  /** Suggested property label when no compatible property exists. */
+  defaultLabel: string;
+  /** Type preselected in the create-required-property prompt. */
+  defaultType: PropertyType;
+  /** Optional curated subset of types the prompt should offer. */
+  createTypes?: readonly PropertyType[];
+  /** Config to send when creating the property. Defaults to `defaultConfigFor(type)`. */
+  defaultConfig?: (type: PropertyType) => PropertyConfig;
+  /** Optional feature gate for conditional requirements (e.g. chart sum/avg). */
+  requiredWhen?: (ctx: ViewLayoutContext) => boolean;
+  /** Optional picker override for domain-specific preference order. */
+  pickProperty?: (schema: readonly PropertyDefinition[], ctx: ViewLayoutContext) => PropertyDefinition | null;
+}
+
+/** Strategy returned by `planAddRow`. */
+export type AddRowPlan =
+  | { mode: 'inline-draft' }
+  | { mode: 'draft'; placeholder?: string; seeds?: AddRowSeed[] }
+  | { mode: 'unsupported'; reason: string };

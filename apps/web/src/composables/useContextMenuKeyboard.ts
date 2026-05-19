@@ -11,6 +11,12 @@ export interface KeyboardMenuItem {
     divider?: boolean;
     header?: boolean;
     children?: KeyboardMenuItem[];
+    /** Custom-panel submenu trigger (treated like `children` for navigation). */
+    panel?: unknown;
+}
+
+function isOpenable(item: KeyboardMenuItem | undefined): boolean {
+    return Boolean(item?.children?.length || item?.panel);
 }
 
 export interface UseContextMenuKeyboardOptions<T extends KeyboardMenuItem> {
@@ -108,7 +114,7 @@ export function useContextMenuKeyboard<T extends KeyboardMenuItem>(
         if (e.key === 'ArrowRight') {
             const items = getVisible(level);
             const cur = items[opts.focusIndex.value[level] ?? 0];
-            if (cur?.children?.length) {
+            if (cur && isOpenable(cur)) {
                 e.preventDefault();
                 openSubmenu(level, cur);
             }
@@ -126,7 +132,7 @@ export function useContextMenuKeyboard<T extends KeyboardMenuItem>(
             const cur = items[opts.focusIndex.value[level] ?? 0];
             if (!cur) return;
             e.preventDefault();
-            if (cur.children?.length) openSubmenu(level, cur);
+            if (isOpenable(cur)) openSubmenu(level, cur);
             else opts.onActivate(cur);
         }
     }

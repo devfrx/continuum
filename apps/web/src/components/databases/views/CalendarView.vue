@@ -30,10 +30,16 @@ import type {
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
+import { useConditionalColors } from '../conditionalColor';
+import { isCalendarDateProperty, rangeForRow } from './dateRows';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
+const { rowStyleFor } = useConditionalColors({
+    activeView: computed(() => props.activeView),
+    schema: computed(() => props.schema),
+});
 
 // ── Configuration: date property ─────────────────────────────────────────
 
@@ -45,13 +51,17 @@ const explicitDatePropertyId = computed<string | null>(() =>
     typeof layout.value.datePropertyId === 'string' ? layout.value.datePropertyId : null,
 );
 
+const dateProperties = computed<PropertyDefinition[]>(() =>
+    props.schema.filter(isCalendarDateProperty),
+);
+
 const dateProperty = computed<PropertyDefinition | null>(() => {
     const explicit = explicitDatePropertyId.value;
     if (explicit) {
         const def = props.schema.find((p) => p.id === explicit);
-        if (def && (def.type === 'date' || def.type === 'dateRange')) return def;
+        if (def && isCalendarDateProperty(def)) return def;
     }
-    return props.schema.find((p) => p.type === 'date' || p.type === 'dateRange') ?? null;
+    return dateProperties.value[0] ?? null;
 });
 
 watch(
@@ -112,37 +122,24 @@ function isSameDay(a: Date, b: Date): boolean {
 
 const rowsByDay = computed<Map<string, DatabaseRowSnapshot[]>>(() => {
     const map = new Map<string, DatabaseRowSnapshot[]>();
-    const def = dateProperty.value;
-    if (!def) return map;
+    const preferred = dateProperty.value;
+    const candidates = dateProperties.value;
+    if (!candidates.length) return map;
     for (const row of props.rows) {
-        const entry = row.properties.find((p) => p.definition.id === def.id);
-        const value = entry?.value;
-        if (!value) continue;
-        if (value.type === 'date') {
-            // ISO 8601 — slice the `YYYY-MM-DD` head; safe for both date
-            // and datetime granularities.
-            const iso = value.value.slice(0, 10);
+        const range = rangeForRow(row, candidates, preferred);
+        if (!range) continue;
+        const from = new Date(range.from);
+        const to = new Date(range.to);
+        const day = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+        const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+        let guard = 0;
+        while (day.getTime() <= end.getTime() && guard < 366) {
+            const iso = toIso(day);
             const bucket = map.get(iso) ?? [];
             bucket.push(row);
             map.set(iso, bucket);
-        } else if (value.type === 'dateRange') {
-            // Place the row on every day inside the range. The range is
-            // typically short (event windows) so the expansion stays cheap.
-            const from = new Date(value.value.from);
-            const to = new Date(value.value.to);
-            const day = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-            const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
-            // Safety bound — capping at 60 days prevents pathological
-            // ranges from blowing up the map. Real events stay well below.
-            let guard = 0;
-            while (day.getTime() <= end.getTime() && guard < 60) {
-                const iso = toIso(day);
-                const bucket = map.get(iso) ?? [];
-                bucket.push(row);
-                map.set(iso, bucket);
-                day.setDate(day.getDate() + 1);
-                guard += 1;
-            }
+            day.setDate(day.getDate() + 1);
+            guard += 1;
         }
     }
     return map;
@@ -211,6 +208,7 @@ function openRow(row: DatabaseRowSnapshot): void {
                         v-for="row in cell.rows"
                         :key="`${cell.iso}-${row.rowId}`"
                         class="db-cal__event"
+                        :style="rowStyleFor(row)"
                         @click="openRow(row)">
                         <Icon
                             v-if="common.showPageIcon"

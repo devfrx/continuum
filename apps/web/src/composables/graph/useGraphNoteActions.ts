@@ -6,6 +6,11 @@
 import { reactive, ref, type Ref } from 'vue';
 import { type Graph } from '@continuum/graph';
 import { api } from '@/api';
+import {
+  publishNoteCreated,
+  publishNoteDeleted,
+  publishNoteUpdated,
+} from '@/lib/realtime/publishers';
 import type { EntityKind } from '@continuum/shared';
 import type { UseGraphSelectionReturn } from './useGraphSelection';
 import type { UseGraphPreferencesReturn } from './useGraphPreferences';
@@ -109,6 +114,7 @@ export function useGraphNoteActions(opts: UseGraphNoteActionsOptions): UseGraphN
         opts.selection.selected.value.label = next;
       }
       opts.refresh();
+      publishNoteUpdated(id);
     } catch (err) {
       opts.onError('Rename failed', err);
     }
@@ -138,6 +144,7 @@ export function useGraphNoteActions(opts: UseGraphNoteActionsOptions): UseGraphN
       opts.prefs.saveHighlights();
       opts.syncStats();
       opts.refresh();
+      publishNoteDeleted(id);
     } catch (err) {
       opts.onError('Delete failed', err);
     }
@@ -200,6 +207,7 @@ export function useGraphNoteActions(opts: UseGraphNoteActionsOptions): UseGraphN
       const separator = existing.length > 0 ? '\n\n' : '';
       const nextContent = `${existing}${separator}<p>${wikilinks}</p>`;
       await api.notes.update(sourceId, { content: nextContent });
+      publishNoteUpdated(sourceId);
       // syncWikilinks runs server-side; reload to pick up the new edges.
       await opts.reload();
     } catch (err) {
@@ -220,6 +228,7 @@ export function useGraphNoteActions(opts: UseGraphNoteActionsOptions): UseGraphN
     try {
       const created = await api.notes.create(payload);
       graphCreateOpen.value = false;
+      publishNoteCreated(created.id);
       await opts.reload();
       opts.openNote(created.id);
     } catch (err) {

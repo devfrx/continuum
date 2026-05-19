@@ -7,25 +7,23 @@
  * inline checklist of relation properties (gathered across every
  * loaded kind) is exposed so the user can pin a focused subset.
  *
- * Self-loading — calls `useKinds().load()` and `useProperties().load()`
- * for every kind on mount because the relation list is derived from
- * cached property definitions.
+ * Self-loading — reads the server-backed graph field catalogue so private,
+ * kind/global and database-shared relation definitions all appear through
+ * one source of truth.
  */
-import { computed, inject, onMounted, watch } from 'vue';
-import type { GraphEdgeSourceSelection, PropertyDefinition } from '@continuum/shared';
+import { computed, inject, onMounted } from 'vue';
+import type { FieldDescriptor, GraphEdgeSourceSelection } from '@continuum/shared';
 import Icon from '@/components/ui/Icon.vue';
 import UiSwitch from '@/components/ui/UiSwitch.vue';
 import { GRAPH_QUERY_KEY } from '@/components/query/graphQueryInjection';
-import { useKinds } from '@/composables/useKinds';
-import { useProperties } from '@/composables/useProperties';
+import { useFieldCatalog } from '@/composables/query/useFieldCatalog';
 
 const injectedQuery = inject(GRAPH_QUERY_KEY);
 if (!injectedQuery) {
     throw new Error('GraphEdgeSourcesPanel: GRAPH_QUERY_KEY not provided. Wrap inside <GraphView>.');
 }
 const query: NonNullable<typeof injectedQuery> = injectedQuery;
-const kinds = useKinds();
-const properties = useProperties();
+const fieldCatalog = useFieldCatalog();
 
 const edgeSources = computed<GraphEdgeSourceSelection>(() => query.edgeSources.value);
 
@@ -56,24 +54,15 @@ function setAllRelationProperties(value: boolean): void {
 interface RelationEntry {
     key: string;
     label: string;
-    kindLabels: string[];
+    hint: string;
 }
 
 const relationProperties = computed<RelationEntry[]>(() => {
-    const byKey = new Map<string, RelationEntry>();
-    for (const k of kinds.kinds.value) {
-        const defs = properties.byKind.value.get(k.id) ?? [];
-        for (const d of defs) {
-            if (d.type !== 'relation') continue;
-            const existing = byKey.get(d.key);
-            if (existing) {
-                if (!existing.kindLabels.includes(k.label)) existing.kindLabels.push(k.label);
-            } else {
-                byKey.set(d.key, { key: d.key, label: d.label, kindLabels: [k.label] });
-            }
-        }
-    }
-    const out = Array.from(byKey.values());
+    const out = fieldCatalog.fields('graph')
+        .filter((field): field is FieldDescriptor & { ref: { kind: 'property'; key: string } } => (
+            field.ref.kind === 'property' && field.dataType === 'relation'
+        ))
+        .map((field) => ({ key: field.ref.key, label: field.label, hint: field.hint ?? 'Property' }));
     out.sort((a, b) => a.label.localeCompare(b.label));
     return out;
 });
@@ -89,22 +78,9 @@ function togglePropertyKey(key: string): void {
 
 // ───────── Lazy-load every kind's properties on mount ─────────
 
-onMounted(async () => {
-    await kinds.load();
-    await Promise.all(kinds.kinds.value.map((k) => properties.load(k.id)));
+onMounted(() => {
+    void fieldCatalog.load('graph');
 });
-
-// Track newly-loaded kinds (e.g. user creates one while panel is open).
-watch(
-    () => kinds.kinds.value.map((k) => k.id).join(','),
-    async () => {
-        await Promise.all(
-            kinds.kinds.value.map((k) =>
-                properties.loaded.value.has(k.id) ? Promise.resolve([] as PropertyDefinition[]) : properties.load(k.id),
-            ),
-        );
-    },
-);
 </script>
 
 <template>
@@ -145,7 +121,7 @@ watch(
                     class="edge-sources__pill-icon"
                 />
                 <span class="edge-sources__pill-label">{{ rel.label }}</span>
-                <span class="edge-sources__pill-kind">{{ rel.kindLabels.join(', ') }}</span>
+                <span class="edge-sources__pill-kind">{{ rel.hint }}</span>
             </button>
         </div>
     </div>

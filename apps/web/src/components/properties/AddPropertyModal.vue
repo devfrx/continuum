@@ -46,6 +46,7 @@ import {
 } from '@continuum/shared';
 import { useProperties } from '@/composables/useProperties';
 import { useNoteProperties } from '@/composables/useNoteProperties';
+import { useDatabaseDirectory } from '@/composables/useDatabaseDirectory';
 import { useKinds } from '@/composables/useKinds';
 import { usePageTemplates } from '@/composables/usePageTemplates';
 import { api } from '@/api';
@@ -70,6 +71,12 @@ const props = withDefaults(defineProps<{
      */
     databaseId?: string | null;
     /**
+     * Existing property definition to replace. When supplied, the modal
+     * opens on the details step with the current definition prefilled;
+     * the user can still go back to the type picker to change its type.
+     */
+    replaceProperty?: PropertyDefinition | null;
+    /**
      * Existing database schema, used as the "sibling properties" pool
      * when the modal is opened in database scope (drives relation /
      * formula / rollup / button targeting). Mirrors `templateProperties`
@@ -83,12 +90,14 @@ const props = withDefaults(defineProps<{
     templateProperties: () => [],
     kindId: null,
     databaseId: null,
+    replaceProperty: null,
     databaseProperties: () => [],
 });
 
 const emit = defineEmits<{
     'update:modelValue': [v: boolean];
     created: [];
+    updated: [property: PropertyDefinition];
 }>();
 
 const properties = useProperties();
@@ -104,6 +113,46 @@ const formulaInsertKey = ref('');
 const options = reactive<(PropertyOption & { group?: StatusGroupId })[]>([]);
 const submitting = ref(false);
 const error = ref<string | null>(null);
+
+// ── Note-owner schema routing ─────────────────────────────────────────
+// When the active note belongs to one or more databases, the user picks
+// whether the new property lives on the note (private) or on a shared
+// database schema. The selection drives the backend routing in
+// `createForNote`.
+const databaseDirectory = useDatabaseDirectory();
+const noteMembershipIds = computed(() =>
+    props.owner === 'note' ? noteProps.databaseIds.value : [],
+);
+const noteScopeOptions = computed<{ label: string; value: string }[]>(() => {
+    if (noteMembershipIds.value.length === 0) return [];
+    const opts = noteMembershipIds.value.map((id) => ({
+        label: `Database · ${databaseDirectory.displayName(id)}`,
+        value: id,
+    }));
+    opts.push({ label: 'Only this note (private)', value: '__private__' });
+    return opts;
+});
+/**
+ * Selected destination for the new property. Defaults to the first
+ * database the note belongs to (most common case); falls back to
+ * `'__private__'` for standalone notes. Reactive to membership changes.
+ */
+const noteScope = ref<string>('__private__');
+watch(
+    noteMembershipIds,
+    (ids) => {
+        if (ids.length > 0) {
+            if (!ids.includes(noteScope.value) && noteScope.value !== '__private__') {
+                noteScope.value = ids[0]!;
+            } else if (noteScope.value === '__private__') {
+                noteScope.value = ids[0]!;
+            }
+        } else {
+            noteScope.value = '__private__';
+        }
+    },
+    { immediate: true },
+);
 
 /** Per-type configuration scratchpad (only the active type's fields are read). */
 const extra = reactive({
@@ -137,7 +186,7 @@ watch(
 
 type SelectableDefinition = Pick<
     PropertyDefinition,
-    'key' | 'label' | 'type' | 'config' | 'kindId'
+    'id' | 'key' | 'label' | 'type' | 'config' | 'kindId'
 >;
 
 /**
@@ -147,13 +196,20 @@ type SelectableDefinition = Pick<
  * which are populated separately through `useProperties`.)
  */
 const sameNoteDefs = computed<SelectableDefinition[]>(() => {
+    const replacementId = props.replaceProperty?.id ?? null;
     if (props.owner === 'template') {
-        return props.templateProperties.map((definition) => ({ ...definition, kindId: null }));
+        return props.templateProperties
+            .filter((definition) => definition.id !== replacementId)
+            .map((definition) => ({ ...definition, kindId: null }));
     }
     if (props.owner === 'database') {
-        return props.databaseProperties.map((definition) => ({ ...definition, kindId: null }));
+        return props.databaseProperties
+            .filter((definition) => definition.id !== replacementId)
+            .map((definition) => ({ ...definition, kindId: null }));
     }
-    return noteProps.entries.value.map((entry) => entry.definition);
+    return noteProps.entries.value
+        .map((entry) => entry.definition)
+        .filter((definition) => definition.id !== replacementId);
 });
 const relationOptions = computed(() => sameNoteDefs.value.filter((d) => d.type === 'relation'));
 const selectedRollupRelation = computed(
@@ -327,14 +383,11 @@ function setButtonActionType(actionType: string): void {
     extra.button.actionType = actionType as ButtonAction['type'];
 }
 
-function reset(): void {
-    step.value = 'type';
-    type.value = 'text';
-    label.value = '';
+const isReplacing = computed(() => props.replaceProperty !== null);
+
+function resetConfigInputs(): void {
     formulaInsertKey.value = '';
     options.splice(0, options.length);
-    submitting.value = false;
-    error.value = null;
     extra.phone.region = '';
     extra.progress.min = 0;
     extra.progress.max = 100;
@@ -356,6 +409,78 @@ function reset(): void {
     extra.button.delta = 1;
 }
 
+function seedDefaultOptions(propertyType: PropertyType): void {
+    if (propertyType !== 'status') return;
+    for (const statusOption of defaultStatusOptions()) options.push({ ...statusOption });
+}
+
+function hydrateConfig(config: PropertyConfig): void {
+    resetConfigInputs();
+    switch (config.type) {
+        case 'select':
+        case 'multiSelect':
+            options.push(...config.options.map((option) => ({ ...option })));
+            break;
+        case 'status':
+            options.push(...config.options.map((option) => ({ ...option })));
+            break;
+        case 'phone':
+            extra.phone.region = config.region ?? '';
+            break;
+        case 'progress':
+            extra.progress.min = config.min ?? 0;
+            extra.progress.max = config.max ?? 100;
+            extra.progress.showPercent = config.showPercent ?? true;
+            break;
+        case 'verification':
+            extra.verification.ttlAmount = config.ttl?.amount ?? 0;
+            extra.verification.ttlUnit = config.ttl?.unit ?? 'days';
+            break;
+        case 'uniqueId':
+            extra.uniqueId.prefix = config.prefix ?? '';
+            break;
+        case 'formula':
+            extra.formula.expression = config.expression;
+            extra.formula.output = config.output ?? 'string';
+            extra.formula.precision = config.precision ?? 0;
+            break;
+        case 'rollup':
+            extra.rollup.relationKey = config.relationKey;
+            extra.rollup.targetKey = config.targetKey ?? '';
+            extra.rollup.aggregation = config.aggregation;
+            break;
+        case 'button':
+            extra.button.label = config.label ?? '';
+            extra.button.variant = config.variant ?? 'ghost';
+            extra.button.actionType = config.action.type;
+            if (config.action.type === 'open-url') {
+                extra.button.url = config.action.url ?? '';
+            } else {
+                extra.button.targetKey = config.action.targetKey ?? '';
+                if (config.action.type === 'increment-property') {
+                    extra.button.delta = config.action.delta ?? 1;
+                }
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+function reset(): void {
+    const replacement = props.replaceProperty;
+    step.value = replacement ? 'details' : 'type';
+    type.value = replacement?.type ?? 'text';
+    label.value = replacement?.label ?? '';
+    submitting.value = false;
+    error.value = null;
+    if (replacement) {
+        hydrateConfig(replacement.config);
+    } else {
+        resetConfigInputs();
+    }
+}
+
 watch(
     () => props.modelValue,
     (open) => {
@@ -363,6 +488,13 @@ watch(
             reset();
             void ensureSelectableDefinitionsLoaded();
         }
+    },
+);
+
+watch(
+    () => props.replaceProperty,
+    () => {
+        if (props.modelValue) reset();
     },
 );
 
@@ -399,17 +531,31 @@ const needsOptions = computed(
 );
 
 const modalTitle = computed(() => {
+    if (isReplacing.value) {
+        if (step.value === 'type') {
+            return props.owner === 'database' ? 'Replace database property' : 'Replace property';
+        }
+        return `Replace ${PROPERTY_TYPE_LABELS[type.value]} property`;
+    }
     if (step.value !== 'type') return `New ${PROPERTY_TYPE_LABELS[type.value]} property`;
     if (props.owner === 'template') return 'Add template property';
     if (props.owner === 'database') return 'Add database property';
     return 'Add property';
 });
 
-function pickType(t: PropertyType): void {
-    type.value = t;
-    options.splice(0, options.length);
-    if (t === 'status') {
-        for (const o of defaultStatusOptions()) options.push({ ...o });
+const submitLabel = computed(() => {
+    if (submitting.value) return isReplacing.value ? 'Replacing…' : 'Creating…';
+    return isReplacing.value ? 'Replace property' : 'Create property';
+});
+
+function pickType(propertyType: PropertyType): void {
+    type.value = propertyType;
+    const replacement = props.replaceProperty;
+    if (replacement && replacement.type === propertyType) {
+        hydrateConfig(replacement.config);
+    } else {
+        resetConfigInputs();
+        seedDefaultOptions(propertyType);
     }
     step.value = 'details';
 }
@@ -549,7 +695,19 @@ async function submit(): Promise<void> {
     error.value = null;
     try {
         const config = buildConfig();
-        if (props.owner === 'template') {
+        if (props.replaceProperty) {
+            const updated = await api.properties.update(props.replaceProperty.id, {
+                label: label.value.trim(),
+                type: type.value,
+                config,
+            });
+            if (props.owner === 'database' && props.databaseId) {
+                publishDatabaseSchemaChanged(props.databaseId);
+            } else if (props.owner === 'note' && activeNoteId.value) {
+                publishNoteUpdated(activeNoteId.value);
+            }
+            emit('updated', updated);
+        } else if (props.owner === 'template') {
             if (!props.templateId) throw new Error('Cannot create a property without an active template');
             await templates.addProperty(props.templateId, {
                 label: label.value.trim(),
@@ -565,17 +723,29 @@ async function submit(): Promise<void> {
             });
             publishDatabaseSchemaChanged(props.databaseId);
         } else {
+            const isPrivate = noteScope.value === '__private__'
+                || noteMembershipIds.value.length === 0;
+            const targetDatabaseId = !isPrivate ? noteScope.value : undefined;
             await noteProps.createDefinition({
                 label: label.value.trim(),
                 type: type.value,
                 config,
+                ...(isPrivate ? { private: true } : {}),
+                ...(targetDatabaseId ? { databaseId: targetDatabaseId } : {}),
             });
-            if (activeNoteId.value) publishNoteUpdated(activeNoteId.value);
+            // Fan out the right event so sibling surfaces refetch.
+            if (targetDatabaseId) {
+                publishDatabaseSchemaChanged(targetDatabaseId);
+            } else if (activeNoteId.value) {
+                publishNoteUpdated(activeNoteId.value);
+            }
         }
-        emit('created');
+        if (!props.replaceProperty) emit('created');
         close();
-    } catch (e) {
-        error.value = e instanceof Error ? e.message : 'Failed to create property';
+    } catch (err) {
+        error.value = err instanceof Error
+            ? err.message
+            : (props.replaceProperty ? 'Failed to replace property' : 'Failed to create property');
     } finally {
         submitting.value = false;
     }
@@ -600,6 +770,18 @@ async function submit(): Promise<void> {
         </div>
 
         <div v-else class="ap-form">
+            <!-- Scope picker (note owner only, when the note belongs to ≥1 database). -->
+            <label v-if="owner === 'note' && noteScopeOptions.length > 0 && !replaceProperty"
+                class="ap-field">
+                <span class="ap-field__label">Add to</span>
+                <UiSelect v-model="noteScope" :options="noteScopeOptions" />
+                <span class="ap-hint">
+                    Picking a database makes this property visible on every row in
+                    it. Picking "Only this note" keeps the property private even
+                    when the note participates in databases.
+                </span>
+            </label>
+
             <label class="ap-field">
                 <span class="ap-field__label">Label</span>
                 <UiInput v-model="label" placeholder="e.g. Status, Author, Due date" size="md" />
@@ -945,12 +1127,12 @@ async function submit(): Promise<void> {
         <template #footer>
             <UiButton v-if="step === 'details'" variant="ghost" size="sm" @click="step = 'type'">
                 <Icon name="chevron-left" :size="12" />
-                <span>Back</span>
+                <span>{{ isReplacing ? 'Change type' : 'Back' }}</span>
             </UiButton>
             <UiButton variant="ghost" size="sm" @click="close">Cancel</UiButton>
             <UiButton v-if="step === 'details'" variant="primary" size="sm" :disabled="submitting || !label.trim()"
                 @click="submit">
-                {{ submitting ? 'Creating…' : 'Create property' }}
+                {{ submitLabel }}
             </UiButton>
         </template>
     </UiModal>

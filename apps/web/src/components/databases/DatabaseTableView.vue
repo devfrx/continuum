@@ -18,7 +18,8 @@
  *     the underlying note) followed by one `<DatabaseCell>` per
  *     property.
  *   – Hover reveals a per-row "🗑" action that removes the row, and a
- *     per-column menu (click on the column header) with rename / delete.
+ *     per-column menu (right-click on the column header) with rename,
+ *     replace, filter, sort, and delete actions.
  *   – The active view's `visibleProperties` / `hiddenProperties`
  *     decides which columns to show; the saved order in
  *     `visibleProperties` wins over the schema's natural order.
@@ -42,13 +43,28 @@ import type {
     PropertyDefinition,
 } from '@continuum/shared';
 import DatabaseCell from './DatabaseCell.vue';
+import {
+    canSortProperty,
+    withoutPropertyFilter,
+    withoutPropertySort,
+} from './propertyHeaderActions';
+import DatabasePropertyHeaderMenu from './contextMenus/DatabasePropertyHeaderMenu.vue';
+import DatabaseRowMenu from './contextMenus/DatabaseRowMenu.vue';
+import PropertyIconPicker from '@/components/properties/iconPicker/PropertyIconPicker.vue';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './views/types';
 import { useDatabaseRowDisplay } from './useDatabaseRowDisplay';
+import { useConditionalColors } from './conditionalColor';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 
 const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
+const activeViewRef = computed(() => props.activeView);
+const schemaRef = computed(() => props.schema);
+const { rowStyleFor, cellStyleFor } = useConditionalColors({
+    activeView: activeViewRef,
+    schema: schemaRef,
+});
 
 // ── Layout knobs persisted from the view-settings popover ─────────────────
 // Reads `view.config.layout.showVerticalLines` (table-only) plus the
@@ -103,9 +119,107 @@ const visibleSchema = computed<PropertyDefinition[]>(() => {
     return props.schema.filter((p) => !hidden.has(p.key));
 });
 
+// ── Column widths (table-only layout state) ──────────────────────────────
+// Widths are view-scoped, not datasource-scoped: a property name/icon/config
+// belongs to the datasource, while table column geometry belongs to this
+// saved view. Keys mirror the view config property-key convention.
+const TITLE_COLUMN_KEY = '__title';
+const TITLE_COLUMN_MIN = 180;
+const PROPERTY_COLUMN_MIN = 96;
+
+const tableLayout = computed<Record<string, unknown>>(
+    () => (props.activeView.config.layout ?? {}) as Record<string, unknown>,
+);
+
+const liveColumnWidths = ref<Record<string, number>>({});
+
+function persistedColumnWidths(): Record<string, number> {
+    const raw = tableLayout.value.columnWidths;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out: Record<string, number> = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+            out[key] = value;
+        }
+    }
+    return out;
+}
+
+function columnWidth(key: string): number | null {
+    return liveColumnWidths.value[key] ?? persistedColumnWidths()[key] ?? null;
+}
+
+function columnTrack(key: string, fallback: string): string {
+    const width = columnWidth(key);
+    return width ? `${Math.round(width)}px` : fallback;
+}
+
 const gridTemplate = computed(() => {
-    const columns = visibleSchema.value.map(() => 'minmax(160px, 1fr)').join(' ');
-    return `minmax(220px, 1.8fr) ${columns} minmax(104px, 112px)`;
+    const columns = visibleSchema.value
+        .map((property) => columnTrack(property.key, 'minmax(160px, 1fr)'))
+        .join(' ');
+    return `${columnTrack(TITLE_COLUMN_KEY, 'minmax(220px, 1.8fr)')} ${columns} minmax(104px, 112px)`;
+});
+
+watch(
+    () => props.activeView.id,
+    () => { liveColumnWidths.value = {}; },
+);
+
+interface ColumnResizeState {
+    key: string;
+    startX: number;
+    startWidth: number;
+    minWidth: number;
+}
+
+const columnResize = ref<ColumnResizeState | null>(null);
+
+function startColumnResize(key: string, event: PointerEvent, minWidth: number): void {
+    if (!props.editable) return;
+    const handle = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    const header = handle?.closest('.db-table__cell');
+    const startWidth = header instanceof HTMLElement
+        ? header.getBoundingClientRect().width
+        : columnWidth(key) ?? minWidth;
+    columnResize.value = {
+        key,
+        startX: event.clientX,
+        startWidth,
+        minWidth,
+    };
+    event.preventDefault();
+    event.stopPropagation();
+    handle?.setPointerCapture?.(event.pointerId);
+    window.addEventListener('pointermove', onColumnResizeMove);
+    window.addEventListener('pointerup', onColumnResizeEnd, { once: true });
+}
+
+function onColumnResizeMove(event: PointerEvent): void {
+    const state = columnResize.value;
+    if (!state) return;
+    const nextWidth = Math.max(state.minWidth, state.startWidth + event.clientX - state.startX);
+    liveColumnWidths.value = {
+        ...liveColumnWidths.value,
+        [state.key]: nextWidth,
+    };
+}
+
+function onColumnResizeEnd(): void {
+    const state = columnResize.value;
+    window.removeEventListener('pointermove', onColumnResizeMove);
+    columnResize.value = null;
+    if (!state) return;
+    const next = {
+        ...persistedColumnWidths(),
+        ...liveColumnWidths.value,
+    };
+    emit('view-config-changed', { layout: { columnWidths: next } });
+}
+
+onBeforeUnmount(() => {
+    window.removeEventListener('pointermove', onColumnResizeMove);
+    window.removeEventListener('pointerup', onColumnResizeEnd);
 });
 
 function entryFor(row: DatabaseRowSnapshot, definitionId: string): NoteProperty | null {
@@ -178,10 +292,62 @@ watch(
 // rename / delete. We deliberately stop the contextmenu event from
 // bubbling so the surrounding editor's block-insert context menu does
 // NOT fire when interacting with a database column or row.
-const headerMenuFor = ref<string | null>(null);
+interface HeaderMenuState {
+    definitionId: string;
+    x: number;
+    y: number;
+    triggerEl: HTMLElement | null;
+}
+
+const headerMenu = ref<HeaderMenuState | null>(null);
 const renameDraftId = ref<string | null>(null);
 const renameDraftValue = ref('');
+const replacePropertyTarget = ref<PropertyDefinition | null>(null);
 const deletePropertyTarget = ref<PropertyDefinition | null>(null);
+
+// ── Per-column header element refs (anchors for popovers) ─────────────────
+// Vue's template `:ref` callback gives us the DOM node for each header
+// cell. We key the map by `PropertyDefinition.id` so popovers can look
+// up their trigger element by id alone, even when the schema reorders.
+const headerRefs = ref<Record<string, HTMLElement>>({});
+
+function setHeaderRef(propertyId: string, el: unknown): void {
+    if (el instanceof HTMLElement) {
+        headerRefs.value[propertyId] = el;
+    } else {
+        delete headerRefs.value[propertyId];
+    }
+}
+
+// ── Icon picker + settings popovers ───────────────────────────────────────
+// Both popovers share the same shape: a target `definitionId` plus the
+// header element to anchor against. Storing the element ref directly
+// keeps `useFloatingPosition` honest even if the schema briefly drops
+// the property mid-edit (the popover closes naturally on next render).
+interface PropertyPopoverTarget {
+    definitionId: string;
+    triggerEl: HTMLElement | null;
+}
+
+const iconPickerTarget = ref<PropertyPopoverTarget | null>(null);
+
+const iconPickerProperty = computed<PropertyDefinition | null>(() => {
+    const target = iconPickerTarget.value;
+    if (!target) return null;
+    return props.schema.find((p) => p.id === target.definitionId) ?? null;
+});
+
+const iconPickerAnchor = computed<HTMLElement | null>(() => {
+    const target = iconPickerTarget.value;
+    if (!target) return null;
+    return target.triggerEl ?? headerRefs.value[target.definitionId] ?? null;
+});
+
+const headerMenuProperty = computed<PropertyDefinition | null>(() => {
+    const state = headerMenu.value;
+    if (!state) return null;
+    return props.schema.find((property) => property.id === state.definitionId) ?? null;
+});
 
 const deletePropertyMessage = computed(() => {
     const def = deletePropertyTarget.value;
@@ -193,11 +359,19 @@ const deletePropertyMessage = computed(() => {
 function openHeaderMenu(definitionId: string, event: MouseEvent): void {
     if (!props.editable) return;
     event.preventDefault();
-    headerMenuFor.value = definitionId;
+    const triggerEl = event.currentTarget instanceof HTMLElement
+        ? event.currentTarget
+        : headerRefs.value[definitionId] ?? null;
+    headerMenu.value = {
+        definitionId,
+        x: event.clientX,
+        y: event.clientY,
+        triggerEl,
+    };
 }
 
 function closeHeaderMenu(): void {
-    headerMenuFor.value = null;
+    headerMenu.value = null;
 }
 
 function startRename(def: PropertyDefinition): void {
@@ -226,6 +400,48 @@ function requestDeleteProperty(def: PropertyDefinition): void {
     deletePropertyTarget.value = def;
 }
 
+function requestReplaceProperty(def: PropertyDefinition): void {
+    if (!props.editable) return;
+    closeHeaderMenu();
+    replacePropertyTarget.value = def;
+}
+
+function requestChangeIcon(def: PropertyDefinition): void {
+    if (!props.editable) return;
+    const triggerEl = headerMenu.value?.triggerEl ?? headerRefs.value[def.id] ?? null;
+    closeHeaderMenu();
+    iconPickerTarget.value = { definitionId: def.id, triggerEl };
+}
+
+async function onIconPicked(icon: string | null): Promise<void> {
+    const def = iconPickerProperty.value;
+    if (!def) return;
+    iconPickerTarget.value = null;
+    if ((def.icon ?? null) === icon) return;
+    await api.properties.update(def.id, { icon });
+    publishDatabaseSchemaChanged(props.database.id);
+    emit('schema-changed');
+}
+
+function onReplacePropertyModelValue(open: boolean): void {
+    if (!open) replacePropertyTarget.value = null;
+}
+
+function onPropertyReplaced(updatedProperty: PropertyDefinition): void {
+    const previousProperty = replacePropertyTarget.value;
+    replacePropertyTarget.value = null;
+    publishDatabaseSchemaChanged(props.database.id);
+    if (previousProperty && previousProperty.type !== updatedProperty.type) {
+        emit('view-config-changed', {
+            filter: withoutPropertyFilter(props.activeView.config.filter, previousProperty),
+            sort: canSortProperty(updatedProperty)
+                ? props.activeView.config.sort
+                : withoutPropertySort(props.activeView.config.sort, previousProperty),
+        });
+    }
+    emit('schema-changed');
+}
+
 async function confirmDeleteProperty(): Promise<void> {
     const def = deletePropertyTarget.value;
     deletePropertyTarget.value = null;
@@ -233,20 +449,6 @@ async function confirmDeleteProperty(): Promise<void> {
     await api.properties.remove(def.id);
     publishDatabaseSchemaChanged(props.database.id);
     emit('schema-changed');
-}
-
-function onDocClick(event: MouseEvent): void {
-    const target = event.target as HTMLElement;
-    if (headerMenuFor.value
-        && !target.closest('.db-table__col-menu')
-        && !target.closest('.db-table__col-trigger')) {
-        closeHeaderMenu();
-    }
-    if (rowMenu.value
-        && !target.closest('.db-table__row-menu')
-        && !target.closest('.db-table__row')) {
-        closeRowMenu();
-    }
 }
 
 // ── Row context menu (right-click) ───────────────────────────────────────
@@ -313,8 +515,6 @@ function onRootContextMenu(event: MouseEvent): void {
     event.stopPropagation();
 }
 
-document.addEventListener('mousedown', onDocClick);
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 </script>
 
 <template>
@@ -325,15 +525,24 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             'db-table--wrap': common.wrapContent,
         }"
         role="table"
+        :style="{ gridTemplateColumns: gridTemplate }"
         @contextmenu="onRootContextMenu">
-        <div class="db-table__head" role="row" :style="{ gridTemplateColumns: gridTemplate }">
+        <div class="db-table__head" role="row">
             <div class="db-table__cell db-table__cell--title db-table__cell--header" role="columnheader">
                 <Icon name="prop-text" :size="12" />
                 <span>Name</span>
+                <button
+                    v-if="editable"
+                    type="button"
+                    class="db-table__resize-handle"
+                    title="Resize column"
+                    aria-label="Resize Name column"
+                    @pointerdown="startColumnResize(TITLE_COLUMN_KEY, $event, TITLE_COLUMN_MIN)" />
             </div>
             <div
                 v-for="property in visibleSchema"
                 :key="property.id"
+                :ref="(el) => setHeaderRef(property.id, el)"
                 class="db-table__cell db-table__cell--header"
                 role="columnheader">
                 <template v-if="renameDraftId === property.id">
@@ -355,17 +564,14 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                         @contextmenu.stop="openHeaderMenu(property.id, $event)">
                         {{ property.label }}
                     </button>
-                    <div v-if="headerMenuFor === property.id && editable" class="db-table__col-menu" role="menu">
-                        <button type="button" class="db-table__col-menu-item" @click="startRename(property)">
-                            <Icon name="edit" :size="12" />
-                            <span>Rename</span>
-                        </button>
-                        <button type="button" class="db-table__col-menu-item db-table__col-menu-item--danger" @click="requestDeleteProperty(property)">
-                            <Icon name="trash" :size="12" />
-                            <span>Delete property</span>
-                        </button>
-                    </div>
                 </template>
+                <button
+                    v-if="editable"
+                    type="button"
+                    class="db-table__resize-handle"
+                    title="Resize column"
+                    :aria-label="`Resize ${property.label} column`"
+                    @pointerdown="startColumnResize(property.key, $event, PROPERTY_COLUMN_MIN)" />
             </div>
             <div class="db-table__cell db-table__cell--header db-table__cell--add">
                 <button v-if="editable" type="button" class="db-table__add-btn" @click="openAddProperty" title="Add a configurable property">
@@ -379,7 +585,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             No rows yet — use <strong>+ New row</strong> to start the first row.
         </div>
 
-        <div v-for="row in rows" :key="row.rowId" class="db-table__row" role="row" :style="{ gridTemplateColumns: gridTemplate }" @contextmenu.stop="openRowMenu(row, $event)">
+        <div v-for="row in rows" :key="row.rowId" class="db-table__row" role="row" :style="rowStyleFor(row)" @contextmenu.stop="openRowMenu(row, $event)">
             <div class="db-table__cell db-table__cell--title" role="cell">
                 <Icon
                     v-if="common.showPageIcon"
@@ -405,7 +611,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                 v-for="property in visibleSchema"
                 :key="property.id"
                 class="db-table__cell"
-                role="cell">
+                role="cell"
+                :style="cellStyleFor(row, property.key)">
                 <DatabaseCell
                     :note-id="row.noteId"
                     :entry="entryFor(row, property.id)"
@@ -424,7 +631,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             </div>
         </div>
 
-        <div v-if="draftRowVisible" class="db-table__row db-table__row--draft" role="row" :style="{ gridTemplateColumns: gridTemplate }">
+        <div v-if="draftRowVisible" class="db-table__row db-table__row--draft" role="row">
             <div class="db-table__cell db-table__cell--title" role="cell">
                 <input
                     ref="draftRowInput"
@@ -458,7 +665,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             {{ draftRowError }}
         </div>
 
-        <div v-if="editable" class="db-table__footer" role="row" :style="{ gridTemplateColumns: gridTemplate }">
+        <div v-if="editable" class="db-table__footer" role="row">
             <div class="db-table__cell db-table__cell--title db-table__footer-cell" role="cell">
                 <button type="button" class="db-table__footer-btn" @click="startDraftRow">
                     <Icon name="plus" :size="12" />
@@ -481,20 +688,46 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             :database-properties="schema"
             @created="onPropertyCreated" />
 
-        <div
-            v-if="rowMenu"
-            class="db-table__row-menu"
-            role="menu"
-            :style="{ top: `${rowMenu.y}px`, left: `${rowMenu.x}px` }">
-            <button type="button" class="db-table__col-menu-item" @click="openRowFromMenu">
-                <Icon name="chevron-right" :size="12" />
-                <span>Open page</span>
-            </button>
-            <button type="button" class="db-table__col-menu-item db-table__col-menu-item--danger" @click="requestDeleteRow">
-                <Icon name="trash" :size="12" />
-                <span>Delete row</span>
-            </button>
-        </div>
+        <AddPropertyModal
+            v-if="editable && replacePropertyTarget"
+            :model-value="!!replacePropertyTarget"
+            owner="database"
+            :database-id="database.id"
+            :database-properties="schema"
+            :replace-property="replacePropertyTarget"
+            @update:model-value="onReplacePropertyModelValue"
+            @updated="onPropertyReplaced" />
+
+        <DatabasePropertyHeaderMenu
+            v-if="editable && activeView"
+            :model-value="headerMenu !== null"
+            :x="headerMenu?.x ?? 0"
+            :y="headerMenu?.y ?? 0"
+            :property="headerMenuProperty"
+            :view="activeView"
+            @update:model-value="(value) => { if (!value) closeHeaderMenu(); }"
+            @rename="startRename"
+            @replace="requestReplaceProperty"
+            @change-icon="requestChangeIcon"
+            @delete="requestDeleteProperty"
+            @patch-config="(patch) => emit('view-config-changed', patch)" />
+
+        <PropertyIconPicker
+            v-if="editable && iconPickerProperty && iconPickerAnchor"
+            :model-value="iconPickerTarget !== null"
+            :trigger-el="iconPickerAnchor"
+            :type="iconPickerProperty.type"
+            :icon="iconPickerProperty.icon ?? null"
+            @update:model-value="(value) => { if (!value) iconPickerTarget = null; }"
+            @pick="onIconPicked" />
+
+        <DatabaseRowMenu
+            :model-value="rowMenu !== null"
+            :x="rowMenu?.x ?? 0"
+            :y="rowMenu?.y ?? 0"
+            @update:model-value="(value) => { if (!value) closeRowMenu(); }"
+            @open="openRowFromMenu"
+            @delete="requestDeleteRow" />
     </div>
 
     <UiConfirmModal
@@ -521,8 +754,18 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
  * header, hover-revealed actions, and consistent token-driven sizing.
  */
 .db-table {
-    display: flex;
-    flex-direction: column;
+    /*
+     * One grid for the whole spreadsheet so header, body rows and
+     * footer share the SAME column track sizing. Each row sets
+     * `grid-template-columns: subgrid` and spans the full row
+     * (`grid-column: 1 / -1`) so its cells inherit the parent's
+     * column widths instead of being sized independently — that
+     * was misaligning headers from cells when row content (progress
+     * bars, file chips, multi-select tags) was wider than the header
+     * label and expanded `1fr` tracks only inside the row.
+     */
+    display: grid;
+    grid-auto-rows: min-content;
     font-size: var(--text-sm);
     overflow-x: auto;
     scrollbar-gutter: stable;
@@ -534,6 +777,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 .db-table__row,
 .db-table__footer {
     display: grid;
+    grid-template-columns: subgrid;
+    grid-column: 1 / -1;
     align-items: stretch;
     border-bottom: var(--border-width-1) solid var(--border);
 }
@@ -578,9 +823,39 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
     letter-spacing: 0.06em;
 }
 
+.db-table__resize-handle {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    bottom: 0;
+    width: 8px;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    cursor: col-resize;
+    z-index: 3;
+}
+
+.db-table__resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 20%;
+    bottom: 20%;
+    left: 3px;
+    width: 2px;
+    border-radius: 999px;
+    background: transparent;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.db-table__resize-handle:hover::after,
+.db-table__resize-handle:focus-visible::after {
+    background: var(--accent);
+}
+
 .db-table__cell--title {
     font-weight: var(--font-weight-medium);
-    color: var(--text-primary);
+    color: inherit;
 }
 
 .db-table__row .db-table__cell--title {
@@ -678,60 +953,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
     outline: none;
-}
-
-.db-table__col-menu,
-.db-table__row-menu {
-    min-width: 180px;
-    background: var(--surface-2);
-    border: var(--border-width-1) solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-dropdown);
-    display: flex;
-    flex-direction: column;
-    padding: var(--space-1);
-}
-
-.db-table__col-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: var(--space-1);
-    z-index: 10;
-}
-
-.db-table__row-menu {
-    position: fixed;
-    z-index: var(--z-overlay);
-}
-
-.db-table__col-menu-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-2) var(--space-3);
-    border: 0;
-    background: transparent;
-    color: var(--text-primary);
-    font-size: var(--text-sm);
-    text-transform: none;
-    letter-spacing: normal;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    text-align: left;
-    transition: background-color var(--duration-fast) var(--ease-standard);
-}
-
-.db-table__col-menu-item:hover {
-    background: var(--surface-hover);
-}
-
-.db-table__col-menu-item--danger {
-    color: var(--danger);
-}
-
-.db-table__col-menu-item--danger:hover {
-    background: var(--danger-faint);
 }
 
 .db-table__cell--actions,

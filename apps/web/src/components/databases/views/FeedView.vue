@@ -21,15 +21,22 @@ import { Icon } from '@/components/ui';
 import type {
     DatabaseRowSnapshot,
     PropertyDefinition,
-    PropertyOption,
     PropertyValue,
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
+import { useConditionalColors } from '../conditionalColor';
+import { resolveCardProperties } from './cardProperties';
+import DatabaseCardProperty from './DatabaseCardProperty.vue';
+import { useDatabaseRowReorder } from './useDatabaseRowReorder';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
+const { rowStyleFor, cellStyleFor } = useConditionalColors({
+    activeView: computed(() => props.activeView),
+    schema: computed(() => props.schema),
+});
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -66,6 +73,8 @@ const direction = computed<'asc' | 'desc'>(() =>
     layout.value.direction === 'asc' ? 'asc' : 'desc',
 );
 
+const manualOrder = computed(() => layout.value.manualOrder === true);
+
 watch(
     dateProperty,
     (property) => {
@@ -94,6 +103,7 @@ function timestampOf(value: PropertyValue | undefined | null): number {
 }
 
 const sortedRows = computed<DatabaseRowSnapshot[]>(() => {
+    if (manualOrder.value) return [...props.rows];
     const def = dateProperty.value;
     if (!def) return [...props.rows];
     const sign = direction.value === 'asc' ? 1 : -1;
@@ -102,6 +112,26 @@ const sortedRows = computed<DatabaseRowSnapshot[]>(() => {
         const bv = b.properties.find((p) => p.definition.id === def.id)?.value;
         return sign * (timestampOf(av) - timestampOf(bv));
     });
+});
+
+const {
+    orderedRows,
+    isDraggingRow,
+    isDropTargetRow,
+    onRowDragStart,
+    onRowDragOver,
+    onRowDrop,
+    onListDragOver,
+    onListDropEnd,
+    clearDragState,
+} = useDatabaseRowReorder({
+    databaseId: computed(() => props.database.id),
+    rows: sortedRows,
+    editable: computed(() => props.editable),
+    onReordered: () => {
+        emit('view-config-changed', { layout: { manualOrder: true } });
+        emit('cell-saved');
+    },
 });
 
 // ── Card rendering helpers ──────────────────────────────────────────────
@@ -121,30 +151,23 @@ function timestampFor(row: DatabaseRowSnapshot): string {
     return formatTimestamp(row.properties.find((p) => p.definition.id === def.id)?.value);
 }
 
-function detailLines(row: DatabaseRowSnapshot): string[] {
+function detailProperties(): PropertyDefinition[] {
     const skip = new Set<string>();
-    if (dateProperty.value) skip.add(dateProperty.value.id);
-    const out: string[] = [];
-    for (const entry of row.properties) {
-        if (skip.has(entry.definition.id)) continue;
-        const value = entry.value;
-        if (!value) continue;
-        if (value.type === 'text' || value.type === 'longText') out.push(value.value);
-        else if (value.type === 'number') out.push(String(value.value));
-        else if (value.type === 'checkbox') out.push(value.value ? '✓' : '✗');
-        else if (value.type === 'select' || value.type === 'status') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            const opt = cfg.options?.find((o) => o.id === value.value);
-            out.push(opt?.label ?? value.value);
-        }
-        else if (value.type === 'multiSelect') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            out.push(value.value.map((id) => cfg.options?.find((o) => o.id === id)?.label ?? id).join(', '));
-        }
-        else if (value.type === 'url' || value.type === 'email' || value.type === 'phone') out.push(value.value);
-        if (out.length >= 3) break;
-    }
-    return out;
+    if (dateProperty.value) skip.add(dateProperty.value.key);
+    return resolveCardProperties({
+        schema: props.schema,
+        view: props.activeView,
+        skipKeys: skip,
+        limit: 4,
+    });
+}
+
+function hasEntry(row: DatabaseRowSnapshot, def: PropertyDefinition): boolean {
+    const v = row.properties.find((p) => p.definition.id === def.id)?.value;
+    if (!v) return false;
+    if (v.type === 'multiSelect' && v.value.length === 0) return false;
+    if ((v.type === 'text' || v.type === 'longText' || v.type === 'url' || v.type === 'email' || v.type === 'phone') && !v.value) return false;
+    return true;
 }
 
 function openRow(row: DatabaseRowSnapshot): void {
@@ -154,15 +177,26 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 <template>
     <div class="db-feed" :class="{ 'db-feed--wrap': common.wrapContent }">
-        <div v-if="!sortedRows.length" class="db-feed__empty">
+        <div v-if="!orderedRows.length" class="db-feed__empty">
             <Icon name="view-feed" :size="22" />
             <p>No rows yet — add the first one from the toolbar to see it appear here.</p>
         </div>
-        <ol v-else class="db-feed__list">
+        <ol v-else class="db-feed__list" @dragover="onListDragOver" @drop="onListDropEnd">
             <li
-                v-for="row in sortedRows"
+                v-for="row in orderedRows"
                 :key="row.rowId"
+                data-row-drop-target="true"
                 class="db-feed__entry"
+                :class="{
+                    'is-dragging': isDraggingRow(row.rowId),
+                    'is-drop-target': isDropTargetRow(row.rowId),
+                }"
+                :draggable="editable"
+                :style="rowStyleFor(row)"
+                @dragstart.stop="(event) => onRowDragStart(event, row)"
+                @dragover="(event) => onRowDragOver(event, row)"
+                @drop="(event) => onRowDrop(event, row)"
+                @dragend="clearDragState"
                 @click="openRow(row)">
                 <div class="db-feed__head">
                     <Icon
@@ -174,7 +208,15 @@ function openRow(row: DatabaseRowSnapshot): void {
                     <strong class="db-feed__title">{{ row.note.title || 'Untitled' }}</strong>
                     <span v-if="timestampFor(row)" class="db-feed__time">{{ timestampFor(row) }}</span>
                 </div>
-                <p v-for="(line, i) in detailLines(row)" :key="i" class="db-feed__line">{{ line }}</p>
+                <div v-if="detailProperties().length" class="db-feed__props">
+                    <DatabaseCardProperty
+                        v-for="def in detailProperties()"
+                        v-show="hasEntry(row, def)"
+                        :key="def.id"
+                        :row="row"
+                        :property="def"
+                        :cell-style="cellStyleFor(row, def.key)" />
+                </div>
             </li>
         </ol>
     </div>
@@ -187,12 +229,12 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 .db-feed__list {
     list-style: none;
-    margin: 0;
+    margin: 0 auto;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-    max-width: 780px;
+    gap: var(--space-2);
+    width: min(100%, 960px);
 }
 
 .db-feed__entry {
@@ -201,14 +243,36 @@ function openRow(row: DatabaseRowSnapshot): void {
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
     cursor: pointer;
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
     transition:
         border-color var(--duration-fast) var(--ease-standard),
-        background-color var(--duration-fast) var(--ease-standard);
+        background-color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .db-feed__entry:hover {
     border-color: var(--border-strong);
-    background: var(--surface-hover);
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.15));
+}
+
+.db-feed__entry[draggable='true'] {
+    cursor: grab;
+}
+
+.db-feed__entry[draggable='true']:active {
+    cursor: grabbing;
+}
+
+.db-feed__entry.is-dragging {
+    opacity: 0.55;
+}
+
+.db-feed__entry.is-drop-target {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .db-feed__head {
@@ -225,9 +289,9 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 .db-feed__title {
     flex: 1;
-    color: var(--text-primary);
+    color: inherit;
     font-size: var(--text-md);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-semibold);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -241,17 +305,15 @@ function openRow(row: DatabaseRowSnapshot): void {
     font-variant-numeric: tabular-nums;
 }
 
-.db-feed__line {
-    margin: var(--space-1) 0 0;
-    font-size: var(--text-xs);
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.db-feed__props {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: var(--space-1);
+    border-top: var(--border-width-1) dashed var(--border);
 }
 
-.db-feed--wrap .db-feed__title,
-.db-feed--wrap .db-feed__line {
+.db-feed--wrap .db-feed__title {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;
@@ -263,6 +325,8 @@ function openRow(row: DatabaseRowSnapshot): void {
     flex-direction: column;
     align-items: center;
     gap: var(--space-2);
+    max-width: 960px;
+    margin: 0 auto;
     color: var(--text-muted);
     padding: var(--space-10, 40px) var(--space-5);
     text-align: center;

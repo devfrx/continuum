@@ -27,6 +27,7 @@ import LayoutPanel from './viewSettings/LayoutPanel.vue';
 import DataSourcePanel from './viewSettings/DataSourcePanel.vue';
 import FilterPanel from './viewSettings/FilterPanel.vue';
 import SortPanel from './viewSettings/SortPanel.vue';
+import ConditionalColorPanel from './viewSettings/ConditionalColorPanel.vue';
 import PlannedSectionPanel from './viewSettings/PlannedSectionPanel.vue';
 
 interface AnchorRect {
@@ -40,6 +41,13 @@ const props = defineProps<{
     modelValue: boolean;
     view: DatabaseView;
     anchorRect: AnchorRect | null;
+    /**
+     * When the popover opens, jump straight into this section instead
+     * of showing the root catalogue. Used by the summary chip bar so
+     * clicking a chip drops you inside the filter/sort editor in one
+     * step (Notion-style deep link).
+     */
+    initialSection?: SectionId | null;
 }>();
 
 const emit = defineEmits<{
@@ -57,9 +65,22 @@ const viewDatasourceId = toRef(() => props.view.dataSourceDatabaseId);
 const datasourceState = useDatabaseBundle(viewDatasourceId);
 const viewSchema = computed(() => datasourceState.bundle.value?.schema ?? []);
 
-const POPOVER_WIDTH = 280;
-const POPOVER_MAX_HEIGHT = 420;
+const POPOVER_WIDTH_DEFAULT = 280;
+const POPOVER_WIDTH_WIDE = 360;
+const POPOVER_MAX_HEIGHT = 480;
 const popoverStyle = ref<Record<string, string>>({});
+
+/**
+ * Sections that need extra horizontal room (multi-control rows). Keep
+ * the catalogue compact so the root menu stays readable, expand only
+ * when the user drills into an editor with side-by-side controls.
+ */
+const WIDE_SECTIONS: readonly SectionId[] = ['filter', 'sort', 'conditionalColor'];
+
+function currentWidth(): number {
+    const id = activeSectionId.value;
+    return id && WIDE_SECTIONS.includes(id) ? POPOVER_WIDTH_WIDE : POPOVER_WIDTH_DEFAULT;
+}
 
 function reposition(): void {
     const rect = props.anchorRect;
@@ -68,13 +89,14 @@ function reposition(): void {
         return;
     }
     const margin = 6;
+    const width = currentWidth();
     const top = Math.min(rect.bottom + 4, window.innerHeight - POPOVER_MAX_HEIGHT - margin);
-    const left = Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - margin);
+    const left = Math.min(rect.left, window.innerWidth - width - margin);
     popoverStyle.value = {
         position: 'fixed',
         top: `${Math.max(margin, top)}px`,
         left: `${Math.max(margin, left)}px`,
-        width: `${POPOVER_WIDTH}px`,
+        width: `${width}px`,
         maxHeight: `${POPOVER_MAX_HEIGHT}px`,
         zIndex: '1000',
     };
@@ -96,6 +118,7 @@ function onDocClick(event: MouseEvent): void {
     // Popups teleported to <body> by child components.
     if (target.closest('.ui-select__panel')) return;
     if (target.closest('.ui-icon-picker__panel')) return;
+    if (target.closest('.color-token-picker__panel')) return;
     if (target.closest('.ui-modal')) return;
     emit('update:modelValue', false);
 }
@@ -116,11 +139,20 @@ watch(
     () => props.modelValue,
     (open) => {
         if (open) {
-            activeSectionId.value = null;
+            activeSectionId.value = props.initialSection ?? null;
             reposition();
         }
     },
 );
+
+watch(() => props.initialSection, (next) => {
+    if (props.modelValue) {
+        activeSectionId.value = next ?? activeSectionId.value;
+        reposition();
+    }
+});
+
+watch(activeSectionId, reposition);
 
 watch(() => props.anchorRect, reposition, { deep: true });
 
@@ -195,6 +227,11 @@ onBeforeUnmount(() => {
                     @patch-config="(patch) => emit('patch-config', patch)" />
                 <SortPanel
                     v-else-if="activeSection.id === 'sort'"
+                    :view="view"
+                    :schema="viewSchema"
+                    @patch-config="(patch) => emit('patch-config', patch)" />
+                <ConditionalColorPanel
+                    v-else-if="activeSection.id === 'conditionalColor'"
                     :view="view"
                     :schema="viewSchema"
                     @patch-config="(patch) => emit('patch-config', patch)" />

@@ -24,10 +24,12 @@ import type {
   GraphQueryResponse,
   KindDefinition,
   Note,
-  NoteProperty,
+  NotePropertiesResponse,
   PageTemplate,
   PropertyConfig,
   PropertyDefinition,
+  PropertyMergePreview,
+  PropertyMergeResolutionEntry,
   PropertyType,
   PropertyValue,
   TemplateApplicationOptions,
@@ -194,11 +196,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    /** Patch a definition (label, icon, description, config, position). */
+    /** Patch a definition (label, type, icon, description, config, position). */
     update: (
       id: string,
       data: Partial<{
         label: string;
+        type: PropertyType;
         icon: string | null;
         description: string | null;
         config: PropertyConfig;
@@ -216,11 +219,11 @@ export const api = {
         body: JSON.stringify({ ids }),
       }),
     /**
-     * Create a new property definition that lives on a single note. This
-     * is the default code path used by the inline property panel: each
-     * note keeps its own schema, so adding a property here never leaks
-     * to its siblings (kind-scoped definitions remain available for
-     * the future Templates feature).
+     * Create a property definition rooted on a note. Routing rules:
+     *   – standalone note  → created as `scope='note'` (private).
+     *   – row of one database → created as `scope='database'` on it.
+     *   – row of multiple databases → caller must pass `databaseId` to
+     *     pick the target, or `private: true` to force the private path.
      */
     createForNote: (
       noteId: string,
@@ -232,6 +235,10 @@ export const api = {
         description?: string | null;
         config?: PropertyConfig;
         position?: string;
+        /** Force the legacy per-note (private) schema. */
+        private?: boolean;
+        /** Target database id when the note belongs to multiple databases. */
+        databaseId?: string;
       },
     ) =>
       http<PropertyDefinition>(`/notes/${noteId}/properties`, {
@@ -247,9 +254,13 @@ export const api = {
     /** Delete a definition (cascades all stored values). */
     remove: (id: string) =>
       http<{ ok: true }>(`/properties/${id}`, { method: 'DELETE' }),
-    /** List every property + current value for a note. */
+    /**
+     * Return the note's effective schema (private + every database it
+     * belongs to) plus its database memberships, so the caller can
+     * subscribe to shared-schema realtime events.
+     */
     listForNote: (noteId: string) =>
-      http<NoteProperty[]>(`/notes/${noteId}/properties`),
+      http<NotePropertiesResponse>(`/notes/${noteId}/properties`),
     /** Set / update one value. Sending an empty value clears it server-side. */
     setValue: (noteId: string, propertyId: string, value: PropertyValue) =>
       http<{ ok: true; value: PropertyValue | null }>(
@@ -458,6 +469,34 @@ export const api = {
           method: 'POST',
           body: JSON.stringify(data),
         }),
+      /**
+       * Preview the schema merge required to link an existing note into
+       * this database. The response lists the definitions that will be
+       * auto-promoted/inherited and any per-key collisions that need a
+       * user-supplied {@link PropertyMergeResolutionEntry}.
+       */
+      previewLink: (databaseId: string, noteId: string) =>
+        http<PropertyMergePreview>(`/databases/${databaseId}/rows/preview-link`, {
+          method: 'POST',
+          body: JSON.stringify({ noteId }),
+        }),
+      /**
+       * Apply a previously previewed merge and add the row. The
+       * `resolutions` array must cover every collision returned by the
+       * preview (`merge` | `rename` | `keepPrivate`).
+       */
+      resolveLink: (
+        databaseId: string,
+        input: {
+          noteId: string;
+          position?: string;
+          resolutions: PropertyMergeResolutionEntry[];
+        },
+      ) =>
+        http<{ row: DatabaseRow; noteId: string }>(
+          `/databases/${databaseId}/rows/resolve-link`,
+          { method: 'POST', body: JSON.stringify(input) },
+        ),
       remove: (databaseId: string, rowId: string, options?: { deleteNote?: boolean }) =>
         http<{ ok: true }>(
           `/databases/${databaseId}/rows/${rowId}` +

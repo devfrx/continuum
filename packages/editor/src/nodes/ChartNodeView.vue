@@ -32,6 +32,15 @@ const SelectComponent = inject<Component | null>(SELECT_COMPONENT_KEY, null);
 
 const editing = ref(false);
 
+/**
+ * Chart blocks live inside the editor doc, so the lock state of the
+ * host note flows through `editor.isEditable`. When the editor is
+ * read-only, every write affordance (title input, toolbar controls,
+ * inline data editor) must be inert — both visually and behaviourally
+ * — so a locked note can never mutate the chart through the embed.
+ */
+const editable = computed(() => props.editor?.isEditable ?? true);
+
 const attrs = computed<ChartAttrs>(() => ({
     kind: props.node.attrs.kind as ChartKind,
     data: props.node.attrs.data as ChartData,
@@ -39,6 +48,7 @@ const attrs = computed<ChartAttrs>(() => ({
 }));
 
 function patch(partial: Partial<ChartAttrs>): void {
+    if (!editable.value) return;
     props.updateAttributes(partial);
 }
 
@@ -55,30 +65,38 @@ function onData(data: ChartData): void {
 }
 
 function onTitle(title: string): void {
+    if (!editable.value) return;
     patch({ options: { ...attrs.value.options, title } });
 }
 
+function onToggleEdit(): void {
+    if (!editable.value) return;
+    editing.value = !editing.value;
+}
+
 function remove(): void {
+    if (!editable.value) return;
     if (typeof props.deleteNode === 'function') props.deleteNode();
 }
 </script>
 
 <template>
-    <NodeViewWrapper class="continuum-chart" data-type="chart">
+    <NodeViewWrapper class="continuum-chart" :class="{ 'is-readonly': !editable }" data-type="chart">
         <div class="continuum-chart__shell" contenteditable="false">
             <header class="continuum-chart__head">
                 <input type="text" class="continuum-chart__title" :value="attrs.options.title ?? ''"
-                    placeholder="Chart title" @input="(e) => onTitle((e.target as HTMLInputElement).value)" />
+                    placeholder="Chart title" :readonly="!editable" :disabled="!editable"
+                    @input="(e) => onTitle((e.target as HTMLInputElement).value)" />
                 <ChartToolbar :kind="attrs.kind" :options="attrs.options" :select-component="SelectComponent"
-                    :editing="editing" @update:kind="onKind" @update:options="onOptions"
-                    @toggle-edit="editing = !editing" @remove="remove" />
+                    :editing="editing" :editable="editable" @update:kind="onKind" @update:options="onOptions"
+                    @toggle-edit="onToggleEdit" @remove="remove" />
             </header>
 
             <div class="continuum-chart__canvas-wrap">
                 <ChartCanvas :kind="attrs.kind" :data="attrs.data" :options="attrs.options" />
             </div>
 
-            <ChartDataEditor v-if="editing" :data="attrs.data" @update:data="onData" />
+            <ChartDataEditor v-if="editing && editable" :data="attrs.data" @update:data="onData" />
         </div>
     </NodeViewWrapper>
 </template>

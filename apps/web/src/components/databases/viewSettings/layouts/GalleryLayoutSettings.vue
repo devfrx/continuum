@@ -3,13 +3,14 @@
  * GalleryLayoutSettings.vue — knobs specific to the Gallery renderer.
  *
  * Mirrors `GalleryView.vue` consumption from `config.layout`:
+ *   – `showNoteCover`    whether the note-level cover can fill card covers
  *   – `coverPropertyId`  `files` / `url` property used for the card cover
  *
  * The "None" option clears the cover so cards render as title-only
  * tiles — handled by emitting `null`.
  */
 import { computed } from 'vue';
-import { UiSelect } from '@/components/ui';
+import { UiSelect, UiSwitch } from '@/components/ui';
 import CommonDisplayToggles from './CommonDisplayToggles.vue';
 import type { LayoutSettingsProps, LayoutSettingsEmits } from './types';
 
@@ -30,6 +31,12 @@ const coverPropertyId = computed<string>(() => {
     return coverable.value[0]?.id ?? NONE;
 });
 
+const showNoteCover = computed<boolean>(() => {
+    const v = (props.view.config.layout as { showNoteCover?: unknown } | null | undefined)
+        ?.showNoteCover;
+    return v !== false;
+});
+
 const options = computed(() => [
     { value: NONE, label: 'No cover' },
     ...coverable.value.map((p) => ({ value: p.id, label: p.label })),
@@ -42,10 +49,21 @@ function patch(p: Record<string, unknown>): void {
 function onCoverChange(value: string): void {
     patch({ coverPropertyId: value === NONE ? null : value });
 }
+
+function onShowNoteCoverChange(value: boolean): void {
+    patch({ showNoteCover: value });
+}
 </script>
 
 <template>
     <div class="gallery-layout">
+        <div class="gallery-layout__row">
+            <UiSwitch
+                :model-value="showNoteCover"
+                label="Show note cover"
+                block
+                @update:model-value="onShowNoteCoverChange" />
+        </div>
         <div v-if="coverable.length === 0" class="gallery-layout__hint">
             Add a <strong>files</strong> or <strong>url</strong> property to display card covers.
         </div>

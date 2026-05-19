@@ -8,6 +8,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import Icon from '@/components/ui/Icon.vue';
 import { propertyEditorRegistry } from './editors/registry';
+import { useDatabaseDirectory } from '@/composables/useDatabaseDirectory';
 import {
     PROPERTY_TYPE_ICONS,
     type NoteProperty,
@@ -21,6 +22,7 @@ const props = defineProps<{
     noteId?: string | null;
     readonly?: boolean;
     valueReadonly?: boolean;
+    canRemove?: boolean;
     reorderable?: boolean;
     dragActive?: boolean;
     dropTarget?: boolean;
@@ -28,6 +30,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     'update:value': [value: PropertyValue];
+    'clear:value': [];
     'select': [id: string];
     'remove': [];
     'reload': [];
@@ -39,12 +42,26 @@ const emit = defineEmits<{
 
 const editor = computed(() => propertyEditorRegistry[props.entry.definition.type]);
 const valueReadonly = computed(() => props.readonly || props.valueReadonly === true);
+const canOpenMenu = computed(() => !props.readonly && props.canRemove !== false);
 const icon = computed(
     () =>
         props.entry.definition.icon ||
         PROPERTY_TYPE_ICONS[props.entry.definition.type] ||
         'circle',
 );
+
+// ── Shared-schema chip ───────────────────────────────────────────────
+// When a definition is owned by a database (`scope='database'`) we
+// surface that lineage on the row so users understand the property is
+// shared across every note in that database. Lookup is backed by the
+// global directory composable (lazy + reactive), so unmounting/remounting
+// rows doesn't trigger extra HTTP traffic.
+const databaseDirectory = useDatabaseDirectory();
+const sharedDatabaseName = computed<string | null>(() => {
+    const def = props.entry.definition;
+    if (def.scope !== 'database' || !def.databaseId) return null;
+    return databaseDirectory.displayName(def.databaseId);
+});
 
 const menuOpen = ref(false);
 const root = ref<HTMLDivElement | null>(null);
@@ -181,7 +198,7 @@ function onDocClick(e: MouseEvent): void {
 }
 
 function toggleMenu(): void {
-    if (props.readonly) return;
+    if (!canOpenMenu.value) return;
     menuOpen.value = !menuOpen.value;
     if (menuOpen.value) {
         queueMicrotask(() => document.addEventListener('mousedown', onDocClick));
@@ -217,11 +234,21 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             @click="toggleMenu" @contextmenu.prevent="toggleMenu">
             <Icon :name="icon" :size="13" class="prop-row__icon" />
             <span class="prop-row__name">{{ entry.definition.label }}</span>
+            <span v-if="sharedDatabaseName" class="prop-row__chip"
+                :title="`Shared with database: ${sharedDatabaseName}`">
+                <Icon name="database" :size="10" />
+                <span class="prop-row__chip-label">{{ sharedDatabaseName }}</span>
+            </span>
         </button>
         <div v-else class="prop-row__label prop-row__label--readonly"
             :title="entry.definition.description ?? entry.definition.label">
             <Icon :name="icon" :size="13" class="prop-row__icon" />
             <span class="prop-row__name">{{ entry.definition.label }}</span>
+            <span v-if="sharedDatabaseName" class="prop-row__chip"
+                :title="`Shared with database: ${sharedDatabaseName}`">
+                <Icon name="database" :size="10" />
+                <span class="prop-row__chip-label">{{ sharedDatabaseName }}</span>
+            </span>
         </div>
         <div class="prop-row__editor">
             <div v-if="valueReadonly" class="prop-row__readonly" :class="`prop-row__readonly--${entry.definition.type}`">
@@ -254,11 +281,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             <component v-else :is="editor" :value="entry.value" :definition="entry.definition"
                 :note-id="noteId"
                 @update:value="emit('update:value', $event)"
+                @clear:value="emit('clear:value')"
                 @select="emit('select', $event)"
                 @reload="emit('reload')" />
         </div>
 
-        <div v-if="menuOpen && !readonly" class="prop-row__menu" role="menu" @click="close">
+        <div v-if="menuOpen && canOpenMenu" class="prop-row__menu" role="menu" @click="close">
             <button type="button" class="prop-row__menu-item prop-row__menu-item--danger" role="menuitem"
                 @click="emit('remove')">
                 <Icon name="trash" :size="12" />
@@ -361,6 +389,31 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 .prop-row__icon {
     color: var(--fg-subtle);
     flex-shrink: 0;
+}
+
+/* Shared-schema chip: small "{dbName}" pill next to the label when the
+   definition is owned by a database (scope='database'). Visually
+   subordinate to the label, never wider than 140px, never wrapping. */
+.prop-row__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: color-mix(in srgb, var(--accent) 78%, var(--fg-muted));
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 14px;
+    max-width: 140px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.prop-row__chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .prop-row__drag,

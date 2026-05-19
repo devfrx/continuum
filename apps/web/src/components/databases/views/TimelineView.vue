@@ -22,22 +22,21 @@ import { Icon } from '@/components/ui';
 import type {
     DatabaseRowSnapshot,
     PropertyDefinition,
-    PropertyValue,
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
+import { useConditionalColors } from '../conditionalColor';
+import { isTimelineDateProperty, rangeForRow } from './dateRows';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
+const { rowStyleFor } = useConditionalColors({
+    activeView: computed(() => props.activeView),
+    schema: computed(() => props.schema),
+});
 
 // ── Configuration ────────────────────────────────────────────────────────
-
-const TIMELINE_TYPES = ['date', 'dateRange', 'createdTime', 'lastEditedTime'] as const;
-
-function isTimelineable(def: PropertyDefinition): boolean {
-    return (TIMELINE_TYPES as readonly string[]).includes(def.type);
-}
 
 const layout = computed<Record<string, unknown>>(
     () => (props.activeView.config.layout ?? {}) as Record<string, unknown>,
@@ -47,15 +46,21 @@ const explicitDatePropertyId = computed<string | null>(() =>
     typeof layout.value.datePropertyId === 'string' ? layout.value.datePropertyId : null,
 );
 
+const dateProperties = computed<PropertyDefinition[]>(() =>
+    props.schema.filter(isTimelineDateProperty),
+);
+
 const dateProperty = computed<PropertyDefinition | null>(() => {
     const explicit = explicitDatePropertyId.value;
     if (explicit) {
         const def = props.schema.find((p) => p.id === explicit);
-        if (def && isTimelineable(def)) return def;
+        if (def && isTimelineDateProperty(def)) return def;
     }
     return (
-        props.schema.find((p) => p.type === 'dateRange')
-        ?? props.schema.find((p) => p.type === 'date')
+        dateProperties.value.find((p) => p.type === 'dateRange')
+        ?? dateProperties.value.find((p) => p.type === 'date')
+        ?? dateProperties.value.find((p) => p.type === 'lastEditedTime')
+        ?? dateProperties.value.find((p) => p.type === 'createdTime')
         ?? null
     );
 });
@@ -131,23 +136,6 @@ interface TimelineBar {
     clippedRight: boolean;
 }
 
-/** Read the [start, end] timestamps a row covers, or `null` when unscheduled. */
-function rangeOf(value: PropertyValue | undefined | null): { from: number; to: number } | null {
-    if (!value) return null;
-    if (value.type === 'date' || value.type === 'createdTime' || value.type === 'lastEditedTime') {
-        const t = Date.parse(value.value);
-        if (!Number.isFinite(t)) return null;
-        return { from: t, to: t };
-    }
-    if (value.type === 'dateRange') {
-        const from = Date.parse(value.value.from);
-        const to = Date.parse(value.value.to);
-        if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
-        return { from: Math.min(from, to), to: Math.max(from, to) };
-    }
-    return null;
-}
-
 interface Partition {
     bars: TimelineBar[];
     unscheduled: DatabaseRowSnapshot[];
@@ -155,17 +143,17 @@ interface Partition {
 
 const partition = computed<Partition>(() => {
     const def = dateProperty.value;
+    const candidates = dateProperties.value;
     const bars: TimelineBar[] = [];
     const unscheduled: DatabaseRowSnapshot[] = [];
-    if (!def) return { bars, unscheduled: [...props.rows] };
+    if (!candidates.length) return { bars, unscheduled: [...props.rows] };
     const year = cursor.value.getFullYear();
     const month = cursor.value.getMonth();
     const monthStart = new Date(year, month, 1).getTime();
     const monthEnd = new Date(year, month + 1, 0).getTime();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     for (const row of props.rows) {
-        const entry = row.properties.find((p) => p.definition.id === def.id);
-        const range = rangeOf(entry?.value);
+        const range = rangeForRow(row, candidates, def);
         if (!range) { unscheduled.push(row); continue; }
         // Drop rows entirely outside the visible month.
         if (range.to < monthStart || range.from > monthEnd) continue;
@@ -231,7 +219,7 @@ function barStyle(bar: TimelineBar): Record<string, string> {
                         'db-timeline__bar--clipped-l': bar.clippedLeft,
                         'db-timeline__bar--clipped-r': bar.clippedRight,
                     }"
-                    :style="barStyle(bar)"
+                    :style="[barStyle(bar), rowStyleFor(bar.row)]"
                     @click="openRow(bar.row)">
                     <Icon
                         v-if="common.showPageIcon"
@@ -254,6 +242,7 @@ function barStyle(bar: TimelineBar): Record<string, string> {
                 :key="row.rowId"
                 type="button"
                 class="db-timeline__badge"
+                :style="rowStyleFor(row)"
                 @click="openRow(row)">
                 <Icon
                     v-if="common.showPageIcon"

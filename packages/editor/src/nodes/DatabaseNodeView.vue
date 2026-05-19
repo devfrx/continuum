@@ -43,11 +43,25 @@ function patch(partial: Partial<DatabaseBlockAttrs>): void {
 function remove(): void {
     if (typeof props.deleteNode === 'function') props.deleteNode();
 }
+
+function stopEditorDrag(event: DragEvent): void {
+    event.stopPropagation();
+}
 </script>
 
 <template>
     <NodeViewWrapper class="continuum-database" data-type="database">
-        <div class="continuum-database__shell" contenteditable="false">
+        <div
+            class="continuum-database__shell"
+            contenteditable="false"
+            @dragstart="stopEditorDrag"
+            @drag="stopEditorDrag"
+            @dragenter="stopEditorDrag"
+            @dragover="stopEditorDrag"
+            @dragleave="stopEditorDrag"
+            @drop="stopEditorDrag"
+            @dragend="stopEditorDrag"
+        >
             <component
                 v-if="HostComponent"
                 :is="HostComponent"
@@ -75,7 +89,7 @@ function remove(): void {
 
 .continuum-database__shell {
     border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.06));
-    border-radius: var(--radius-sm, 8px);
+    border-radius: var(--radius-lg, 16px);
     overflow: hidden;
     background: var(--bg-elev, #232323);
     color: var(--fg, #ededed);

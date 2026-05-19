@@ -153,16 +153,79 @@ export interface TextConfig {
 export interface LongTextConfig {
   type: 'longText';
   placeholder?: string;
+  /** Optional max character length for the editor. */
+  maxLength?: number;
 }
+
+/**
+ * Display format for `number` properties. Mirrors the Notion catalogue:
+ *
+ *   – `'number'`              — `1234.5`
+ *   – `'numberWithSeparators'` — `1,234.5` (locale-aware grouping)
+ *   – `'percent'`             — `12.5%`
+ *   – `'currency:<ISO>'`      — `US$ 1,234.50`, `€ 1.234,50`, …
+ *
+ * Currency codes follow ISO 4217 and are validated against
+ * {@link SUPPORTED_NUMBER_CURRENCIES}. Unknown codes fall back to plain
+ * number formatting on render.
+ */
+export type NumberFormat =
+  | 'number'
+  | 'numberWithSeparators'
+  | 'percent'
+  | `currency:${string}`;
+
+/** Visual variant for rendering a stored number. */
+export type NumberDisplay = 'number' | 'bar' | 'ring';
+
+/**
+ * Supported currency codes for `NumberFormat = 'currency:<ISO>'`. The
+ * registry is shared with the settings panel so the picker stays in
+ * sync with what the renderer can handle.
+ */
+export const SUPPORTED_NUMBER_CURRENCIES = [
+  'USD', 'AUD', 'CAD', 'SGD', 'EUR', 'GBP', 'JPY', 'RUB', 'INR', 'KRW',
+  'CNY', 'BRL', 'TRY', 'IDR', 'CHF', 'HKD', 'NZD', 'SEK', 'NOK', 'MXN',
+  'ZAR', 'TWD', 'DKK', 'PLN', 'THB', 'PHP', 'CZK', 'HUF', 'ILS', 'AED',
+  'SAR',
+] as const;
+
+export type NumberCurrencyCode = (typeof SUPPORTED_NUMBER_CURRENCIES)[number];
 
 export interface NumberConfig {
   type: 'number';
-  /** Optional unit suffix (e.g. "kg", "%"). */
+  /** Optional unit suffix (e.g. "kg"). Ignored when `format` is `'percent'` or `'currency:*'`. */
   unit?: string;
-  /** Optional decimals count for display. */
+  /** Optional decimals count for display. `undefined` = locale default. */
   precision?: number;
   min?: number;
   max?: number;
+  /**
+   * Display format. Defaults to `'number'`. Persisted as a string so
+   * downstream code can pattern-match `currency:*` without enumerating
+   * every currency.
+   */
+  format?: NumberFormat;
+  /**
+   * Visual variant. `'number'` is the default text rendering; `'bar'`
+   * and `'ring'` render a progress visualisation scaled by `divideBy`.
+   */
+  displayAs?: NumberDisplay;
+  /**
+   * CSS colour applied to the bar/ring fill. Accepts any CSS colour
+   * value (hex, `var(--accent)`, …). Defaults to `var(--accent)`.
+   */
+  color?: string;
+  /**
+   * Divisor used to scale the value into the 0..1 range for `bar`/`ring`
+   * displays. Defaults to `100`.
+   */
+  divideBy?: number;
+  /**
+   * Whether to render the raw number next to the bar/ring. Defaults to
+   * `true`. Ignored when `displayAs === 'number'`.
+   */
+  showNumber?: boolean;
 }
 
 export interface DateConfig {
@@ -615,6 +678,110 @@ export interface NoteProperty {
   definition: PropertyDefinition;
   /** Null when the user has not set a value for this property yet. */
   value: PropertyValue | null;
+}
+
+// ── Unified note schema (private + shared) ────────────────────────────
+//
+// A note's *effective* schema is the union of:
+//   – its private definitions (`scope='note'`, `noteId=:id`), and
+//   – the shared definitions of every database it belongs to
+//     (`scope='database'`, `databaseId IN memberships`).
+//
+// `GET /api/notes/:id/properties` returns that union together with the
+// list of database ids the note is a member of, so the client can
+// subscribe to schema changes on those databases.
+
+/** Wire shape of `GET /api/notes/:id/properties`. */
+export interface NotePropertiesResponse {
+  /**
+   * Full effective `NoteProperty[]` for the note: shared (database)
+   * definitions first, then the note's private definitions. Each entry
+   * carries its `definition.scope` and `definition.databaseId` so the UI
+   * can tell which schema it lives in.
+   */
+  properties: NoteProperty[];
+  /**
+   * Ids of every database the note is currently a row of. Drives
+   * realtime subscriptions for shared-schema changes on the client.
+   * Empty when the note is standalone.
+   */
+  databaseIds: UUID[];
+}
+
+// ── Schema merge protocol (used when linking an existing note) ────────
+//
+// When a standalone note is added to a database, its private schema
+// must be reconciled with the database's shared schema. The merge
+// happens key-by-key: identical keys collide and the user (or the
+// auto-merger) decides what to do. The contract below is shared by the
+// preview endpoint (`POST /api/databases/:id/rows/preview-link`) and
+// the apply endpoint (`POST /api/databases/:id/rows/resolve-link`).
+
+/**
+ * Action proposed for a single collision between a private definition
+ * on the joining note and a shared definition on the database, both
+ * sharing the same `key`.
+ *
+ *   – `merge`: drop the private definition, migrate the existing value
+ *     under the shared definition. Compatible types only (same `type`).
+ *     For `select`, `multiSelect` and `status` the options are unioned;
+ *     existing values are preserved when their option survives the union.
+ *   – `rename`: keep the private definition but rename its key/label
+ *     before promoting it to the shared schema (no data loss).
+ *   – `keepPrivate`: leave the private definition untouched; the note
+ *     ends up with two same-labelled properties (one private, one
+ *     shared) for the user to deal with later.
+ */
+export type PropertyMergeAction = 'merge' | 'rename' | 'keepPrivate';
+
+/** One collision row in the preview payload. */
+export interface PropertyMergeCollision {
+  /** Shared property key (identical on both sides). */
+  key: string;
+  /** Private definition on the joining note (full DTO). */
+  private: PropertyDefinition;
+  /** Existing shared definition on the database (full DTO). */
+  shared: PropertyDefinition;
+  /** True when both types match → `merge` is offered as the default. */
+  compatible: boolean;
+  /** Suggested action ('merge' when compatible, otherwise 'rename'). */
+  suggested: PropertyMergeAction;
+}
+
+/** Preview of the merge plan returned before the link is committed. */
+export interface PropertyMergePreview {
+  /**
+   * Private definitions that do not collide with any shared key. They
+   * will be auto-promoted to the database's shared schema when the
+   * link is applied (no user input needed).
+   */
+  autoPromoted: PropertyDefinition[];
+  /**
+   * Shared definitions on the database that the note does not own
+   * privately. They will become visible on the note immediately after
+   * the link (with empty values).
+   */
+  autoInherited: PropertyDefinition[];
+  /** Collisions requiring an explicit `PropertyMergeAction`. */
+  collisions: PropertyMergeCollision[];
+}
+
+/** Per-collision resolution sent back when applying the link. */
+export interface PropertyMergeResolutionEntry {
+  /** Key being resolved (must match a collision in the preview). */
+  key: string;
+  action: PropertyMergeAction;
+  /** Required when `action='rename'`. New unique key/label for the private definition. */
+  renameTo?: { key?: string; label: string };
+}
+
+/** Input to `POST /api/databases/:id/rows/resolve-link`. */
+export interface PropertyMergeResolveInput {
+  noteId: UUID;
+  /** Optional position for the new row (LexoRank). */
+  position?: string;
+  /** Per-key resolutions. Must cover every collision returned by the preview. */
+  resolutions: PropertyMergeResolutionEntry[];
 }
 
 /** Per-type defaults used by the UI when a value is cleared / unset. */

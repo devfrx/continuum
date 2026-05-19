@@ -4,7 +4,12 @@
  * Saves on blur (via emit) — the parent debounces persistence.
  */
 import { computed } from 'vue';
-import { PROPERTY_TYPE_PLACEHOLDERS, type PropertyDefinition, type TextValue } from '@continuum/shared';
+import {
+    PROPERTY_TYPE_PLACEHOLDERS,
+    type PropertyDefinition,
+    type TextConfig,
+    type TextValue,
+} from '@continuum/shared';
 
 const props = defineProps<{
     value: TextValue | null;
@@ -14,19 +19,24 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:value': [v: TextValue] }>();
 
 const local = computed(() => props.value?.value ?? '');
+const cfg = computed<TextConfig>(() => props.definition.config as TextConfig);
+const maxLength = computed(() => cfg.value.maxLength);
 const placeholder = computed(() => {
-    const cfg = props.definition.config as { placeholder?: string };
-    return cfg.placeholder ?? PROPERTY_TYPE_PLACEHOLDERS.text;
+    return cfg.value.placeholder ?? PROPERTY_TYPE_PLACEHOLDERS.text;
 });
 
 function onInput(e: Event): void {
-    emit('update:value', { type: 'text', value: (e.target as HTMLInputElement).value });
+    const input = e.target as HTMLInputElement;
+    const limit = maxLength.value;
+    const next = limit && input.value.length > limit ? input.value.slice(0, limit) : input.value;
+    if (next !== input.value) input.value = next;
+    emit('update:value', { type: 'text', value: next });
 }
 </script>
 
 <template>
     <input class="prop-editor" type="text" :value="local" :placeholder="placeholder" :spellcheck="false"
-        @input="onInput" />
+        :maxlength="maxLength" @input="onInput" />
 </template>
 
 <style scoped>

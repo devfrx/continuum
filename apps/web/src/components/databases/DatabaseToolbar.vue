@@ -21,7 +21,13 @@ import type {
     DatabaseViewType,
 } from '@continuum/shared';
 import AddViewModal from './AddViewModal.vue';
-import DatabaseViewSettings from './DatabaseViewSettings.vue';
+
+export interface AnchorRect {
+    top: number;
+    left: number;
+    bottom: number;
+    right: number;
+}
 
 const props = defineProps<{
     views: DatabaseView[];
@@ -34,16 +40,17 @@ const emit = defineEmits<{
     /** New view payload — `AddViewModal` collects both type and source. */
     'add-view': [payload: { type: DatabaseViewType; dataSourceDatabaseId: string; name?: string }];
     'add-row': [];
+    /** Open the link-existing-note flow scoped to the active datasource. */
+    'link-existing': [];
     'rename-view': [viewId: string, name: string];
     'delete-view': [viewId: string];
-    /** Swap a view's datasource (always a real UUID, never null). */
-    'change-view-source': [viewId: string, dataSourceDatabaseId: string];
-    /** Swap a view's renderer type. */
-    'change-view-type': [viewId: string, type: DatabaseViewType];
-    /** Partial patch merged into a view's `config.layout`. */
-    'patch-view-layout': [viewId: string, patch: Record<string, unknown>];
-    /** Partial patch merged into a view's `config` root (filter, sort, …). */
-    'patch-view-config': [viewId: string, patch: Record<string, unknown>];
+    /**
+     * Request the parent (DatabaseBody) to open the view options
+     * popover anchored to the supplied rect. The toolbar no longer
+     * owns the popover so that the summary chip bar can use the same
+     * mechanism without prop-drilling through the tab loop.
+     */
+    'open-settings': [viewId: string, anchorRect: AnchorRect];
     delete: [];
 }>();
 
@@ -82,12 +89,6 @@ function commitRename(view: DatabaseView): void {
 }
 
 // ── View tab context menu (rename / delete) ───────────────────────────────
-interface AnchorRect {
-    top: number;
-    left: number;
-    bottom: number;
-    right: number;
-}
 const menuForViewId = ref<string | null>(null);
 const menuAnchorRect = ref<AnchorRect | null>(null);
 
@@ -153,49 +154,27 @@ function onDocClick(event: MouseEvent): void {
     }
 }
 
-// ── Per-view settings popover ────────────────────────────────────────────
-const settingsForViewId = ref<string | null>(null);
-const settingsAnchorRect = ref<AnchorRect | null>(null);
+// ── View settings popover trigger ────────────────────────────────────────
+// The popover itself lives in DatabaseBody so that the summary chip bar
+// and the per-tab gear can both open it without duplicating state. Here
+// we just emit `open-settings` with the anchor rect of whichever
+// control the user clicked.
 
 function openSettings(viewId: string, event: MouseEvent): void {
     const target = event.currentTarget as HTMLElement | null;
     const rect = target?.getBoundingClientRect();
-    settingsAnchorRect.value = rect
+    const anchor: AnchorRect = rect
         ? { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right }
-        : menuAnchorRect.value;
+        : menuAnchorRect.value
+            ?? { top: 0, left: 0, bottom: 0, right: 0 };
     closeMenu();
-    settingsForViewId.value = viewId;
+    emit('open-settings', viewId, anchor);
 }
 
 function openSettingsFromMenu(viewId: string): void {
-    if (menuAnchorRect.value) settingsAnchorRect.value = menuAnchorRect.value;
+    const anchor = menuAnchorRect.value ?? { top: 0, left: 0, bottom: 0, right: 0 };
     closeMenu();
-    settingsForViewId.value = viewId;
-}
-
-function onSettingsModelValue(viewId: string, value: boolean): void {
-    if (!value && settingsForViewId.value === viewId) {
-        settingsForViewId.value = null;
-        settingsAnchorRect.value = null;
-    }
-}
-
-function onViewSourceChange(viewId: string, databaseId: string): void {
-    settingsForViewId.value = null;
-    settingsAnchorRect.value = null;
-    emit('change-view-source', viewId, databaseId);
-}
-
-function onViewTypeChange(viewId: string, type: DatabaseViewType): void {
-    emit('change-view-type', viewId, type);
-}
-
-function onViewLayoutPatch(viewId: string, patch: Record<string, unknown>): void {
-    emit('patch-view-layout', viewId, patch);
-}
-
-function onViewConfigPatch(viewId: string, patch: Record<string, unknown>): void {
-    emit('patch-view-config', viewId, patch);
+    emit('open-settings', viewId, anchor);
 }
 
 const TAB_MENU_WIDTH = 200;
@@ -276,16 +255,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                         </button>
                     </div>
                 </Teleport>
-                <DatabaseViewSettings
-                    v-if="settingsForViewId === view.id"
-                    :model-value="true"
-                    :view="view"
-                    :anchor-rect="settingsAnchorRect"
-                    @update:model-value="(value) => onSettingsModelValue(view.id, value)"
-                    @change-source="(databaseId) => onViewSourceChange(view.id, databaseId)"
-                    @change-type="(type) => onViewTypeChange(view.id, type)"
-                    @patch-layout="(patch) => onViewLayoutPatch(view.id, patch)"
-                    @patch-config="(patch) => onViewConfigPatch(view.id, patch)" />
             </div>
             <button
                 v-if="editable"
@@ -303,6 +272,14 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                 @click="emit('add-row')">
                 <Icon name="plus" />
                 <span>New row</span>
+            </button>
+            <button
+                v-if="editable"
+                class="db-toolbar__action"
+                title="Link an existing note as a row"
+                @click="emit('link-existing')">
+                <Icon name="link" />
+                <span>Link note</span>
             </button>
             <button
                 v-if="editable"

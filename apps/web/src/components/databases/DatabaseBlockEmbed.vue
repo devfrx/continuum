@@ -152,6 +152,25 @@ function onSelectView(viewId: string): void {
     if (viewId === props.attrs.activeViewId) return;
     emit('update:attrs', { activeViewId: viewId });
 }
+
+/**
+ * "Save as new view" — fork the current view's full config (filter,
+ * sort, layout, …) into a brand-new sibling view bound to the same
+ * datasource. Used by the summary chip bar so the user can promote an
+ * ad-hoc filter into a permanent saved view in one click.
+ */
+async function onSaveAsNewView(payload: { sourceViewId: string; name: string }): Promise<void> {
+    if (!props.editable) return;
+    const source = blockViewsState.views.value.find((v) => v.id === payload.sourceViewId);
+    if (!source) return;
+    const id = await blockViewsState.addView({
+        dataSourceDatabaseId: source.dataSourceDatabaseId,
+        name: payload.name,
+        type: source.type,
+        config: source.config,
+    });
+    if (id) emit('update:attrs', { activeViewId: id });
+}
 </script>
 
 <template>
@@ -175,8 +194,9 @@ function onSelectView(viewId: string): void {
         @delete-view="onRemoveView"
         @add-view="onAddView"
         @change-view-source="(id, source) => blockViewsState.patchView(id, { dataSourceDatabaseId: source, config: EMPTY_DATABASE_VIEW_CONFIG })"
-        @change-view-type="(id, type) => blockViewsState.patchView(id, { type })"
+        @change-view-type="(id, type, config) => blockViewsState.patchView(id, { type, ...(config ? { config } : {}) })"
         @patch-view-config="(id, patch) => blockViewsState.patchView(id, { config: patch })"
+        @save-as-new-view="onSaveAsNewView"
         @delete="emit('delete')" />
 </template>
 

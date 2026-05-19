@@ -22,11 +22,25 @@ import DatabaseListView from '../DatabaseListView.vue';
 import BoardView from './BoardView.vue';
 import GalleryView from './GalleryView.vue';
 import CalendarView from './CalendarView.vue';
-import TimelineView from './TimelineView.vue';
+import TimelineView from './timeline/TimelineView.vue';
 import FeedView from './FeedView.vue';
 import ChartView from './ChartView.vue';
 import PlaceholderView from './PlaceholderView.vue';
-import type { DatabaseViewRegistryEntry } from './types';
+import type {
+    AddRowPlan,
+    DatabaseViewRegistryEntry,
+} from './types';
+import {
+    boardGroupRequirement,
+    chartGroupRequirement,
+    chartValueRequirement,
+    dateLayoutRequirement,
+    seedTodayForDateLayout,
+    timelineLayoutRequirement,
+} from './layoutRequirements';
+
+const planDraft = (): AddRowPlan => ({ mode: 'draft' });
+const planInlineDraft = (): AddRowPlan => ({ mode: 'inline-draft' });
 
 export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> = {
     table: {
@@ -36,6 +50,7 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-table',
         status: 'ready',
         component: DatabaseTableView,
+        planAddRow: planInlineDraft,
     },
     board: {
         type: 'board',
@@ -44,6 +59,8 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-board',
         status: 'ready',
         component: BoardView,
+        layoutRequirements: [boardGroupRequirement],
+        planAddRow: planDraft,
     },
     gallery: {
         type: 'gallery',
@@ -52,6 +69,7 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-gallery',
         status: 'ready',
         component: GalleryView,
+        planAddRow: planDraft,
     },
     list: {
         type: 'list',
@@ -60,6 +78,7 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-list',
         status: 'ready',
         component: DatabaseListView,
+        planAddRow: planDraft,
     },
     calendar: {
         type: 'calendar',
@@ -68,6 +87,8 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-calendar',
         status: 'ready',
         component: CalendarView,
+        layoutRequirements: [dateLayoutRequirement],
+        planAddRow: (ctx) => ({ mode: 'draft', seeds: seedTodayForDateLayout(ctx) }),
     },
     timeline: {
         type: 'timeline',
@@ -76,6 +97,8 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-timeline',
         status: 'ready',
         component: TimelineView,
+        layoutRequirements: [timelineLayoutRequirement],
+        planAddRow: (ctx) => ({ mode: 'draft', seeds: seedTodayForDateLayout(ctx) }),
     },
     chart: {
         type: 'chart',
@@ -84,6 +107,11 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-chart',
         status: 'ready',
         component: ChartView,
+        layoutRequirements: [chartGroupRequirement, chartValueRequirement],
+        planAddRow: () => ({
+            mode: 'unsupported',
+            reason: 'Charts aggregate existing rows — add data from a Table or List view.',
+        }),
     },
     dashboard: {
         type: 'dashboard',
@@ -92,6 +120,10 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-dashboard',
         status: 'planned',
         component: PlaceholderView,
+        planAddRow: () => ({
+            mode: 'unsupported',
+            reason: 'Dashboards compose other views — add data from one of them.',
+        }),
     },
     feed: {
         type: 'feed',
@@ -100,6 +132,7 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-feed',
         status: 'ready',
         component: FeedView,
+        planAddRow: planDraft,
     },
     map: {
         type: 'map',
@@ -108,6 +141,7 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-map',
         status: 'planned',
         component: PlaceholderView,
+        planAddRow: planDraft,
     },
     form: {
         type: 'form',
@@ -116,6 +150,10 @@ export const viewRegistry: Record<DatabaseViewType, DatabaseViewRegistryEntry> =
         icon: 'view-form',
         status: 'planned',
         component: PlaceholderView,
+        planAddRow: () => ({
+            mode: 'unsupported',
+            reason: 'Forms collect new rows from external submitters.',
+        }),
     },
 };
 

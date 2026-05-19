@@ -25,7 +25,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ saved: [] }>();
 
-const { setValue } = useDatabaseCellSetter();
+const { setValue, clearValue } = useDatabaseCellSetter();
 const editor = computed(() => (
     props.entry ? propertyEditorRegistry[props.entry.definition.type] : null
 ));
@@ -34,6 +34,13 @@ async function onUpdate(value: PropertyValue): Promise<void> {
     if (!props.editable) return;
     if (!props.entry) return;
     await setValue(props.noteId, props.entry.definition.id, value);
+    emit('saved');
+}
+
+async function onClear(): Promise<void> {
+    if (!props.editable) return;
+    if (!props.entry) return;
+    await clearValue(props.noteId, props.entry.definition.id);
     emit('saved');
 }
 </script>
@@ -49,7 +56,8 @@ async function onUpdate(value: PropertyValue): Promise<void> {
             :note-id="noteId"
             compact
             :readonly="!editable"
-            @update:value="onUpdate" />
+            @update:value="onUpdate"
+            @clear:value="onClear" />
     </div>
 </template>
 
@@ -61,6 +69,41 @@ async function onUpdate(value: PropertyValue): Promise<void> {
     align-items: center;
     min-width: 0;
     overflow: hidden;
+    color: var(--db-conditional-text, inherit);
+}
+
+.db-cell :deep(input),
+.db-cell :deep(textarea),
+.db-cell :deep(button),
+.db-cell :deep(a),
+.db-cell :deep(.prop-editor),
+.db-cell :deep(.prop-num__input),
+.db-cell :deep(.prop-num__unit),
+.db-cell :deep(.prop-prog__input),
+.db-cell :deep(.prop-prog__display),
+.db-cell :deep(.prop-cb__state),
+.db-cell :deep(.prop-disp),
+.db-cell :deep(.prop-disp__icon),
+.db-cell :deep(.prop-date),
+.db-cell :deep(.prop-range),
+.db-cell :deep(.prop-url__link),
+.db-cell :deep(.prop-email__link),
+.db-cell :deep(.prop-phone__link),
+.db-cell :deep(.prop-sel__trigger),
+.db-cell :deep(.prop-sel__chip),
+.db-cell :deep(.prop-sel__caret),
+.db-cell :deep(.prop-status__trigger),
+.db-cell :deep(.prop-status__chip),
+.db-cell :deep(.prop-status__caret),
+.db-cell :deep(.prop-ms__trigger),
+.db-cell :deep(.prop-ms__chip),
+.db-cell :deep(.prop-ms__chip-x),
+.db-cell :deep(.prop-ms__more),
+.db-cell :deep(.prop-ms__caret),
+.db-cell :deep(.prop-rel__chip),
+.db-cell :deep(.prop-rel__title),
+.db-cell :deep(.prop-files) {
+    color: var(--db-conditional-text, currentColor);
 }
 
 .db-cell :deep(.db-cell__editor),

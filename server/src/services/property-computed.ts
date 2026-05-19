@@ -20,9 +20,10 @@
  * The result is a fully-materialised list of `NoteProperty` ready to be
  * shipped to the client by the routes layer.
  */
-import { and, asc, eq, inArray, max as sqlMax, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, max as sqlMax, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import {
+  databaseRows,
   notes,
   propertyDefinitions,
   propertyValues,
@@ -307,26 +308,106 @@ async function resolveRollup(
 }
 
 /**
- * Top-level entry point. Build the full `NoteProperty[]` for a note,
- * including computed values. The routes layer calls this from
- * `GET /api/notes/:noteId/properties`.
+ * Top-level entry point. Build the full effective `NoteProperty[]` for
+ * a note. The effective schema is the union of:
+ *
+ *   – private definitions  (`scope='note'`, `noteId=:id`), and
+ *   – shared definitions   (`scope='database'`) from every database the
+ *     note is a row of (`database_rows.noteId=:id`).
+ *
+ * Shared definitions come first, grouped by database, then private
+ * definitions. Within each group order is by `position`. This keeps the
+ * UI presentation consistent between the note inline panel and the
+ * database table headers without any client-side resorting.
+ *
+ * The routes layer wraps this in `resolveNotePropertiesResponse` so
+ * the client also receives the membership ids for realtime
+ * subscriptions.
  */
 export async function resolveNoteProperties(noteId: string): Promise<NoteProperty[]> {
   const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
   if (!note) throw new Error('note-missing');
 
+  const databaseIds = await listNoteDatabaseMemberships(noteId);
+
+  const defConds = [
+    and(eq(propertyDefinitions.scope, 'note'), eq(propertyDefinitions.noteId, noteId)),
+  ];
+  if (databaseIds.length > 0) {
+    defConds.push(
+      and(
+        eq(propertyDefinitions.scope, 'database'),
+        inArray(propertyDefinitions.databaseId, databaseIds),
+      ),
+    );
+  }
   const defs = await db
     .select()
     .from(propertyDefinitions)
-    .where(eq(propertyDefinitions.noteId, noteId))
+    .where(or(...defConds))
     .orderBy(asc(propertyDefinitions.position));
   if (defs.length === 0) return [];
+
+  // Stable display order: shared defs first (grouped by databaseId in
+  // membership order), then private defs. Position is preserved inside
+  // each group thanks to the SQL ORDER BY above.
+  const ordered = sortEffectiveDefs(defs, databaseIds);
 
   const valueRows = await db
     .select()
     .from(propertyValues)
     .where(eq(propertyValues.noteId, noteId));
-  return resolveFromPrefetched(note, defs, valueRows);
+  return resolveFromPrefetched(note, ordered, valueRows);
+}
+
+/**
+ * Same as `resolveNoteProperties`, but also returns the list of
+ * database ids the note is a row of so the client can subscribe to
+ * shared-schema changes on those databases.
+ */
+export async function resolveNotePropertiesResponse(
+  noteId: string,
+): Promise<{ properties: NoteProperty[]; databaseIds: string[] }> {
+  const properties = await resolveNoteProperties(noteId);
+  const databaseIds = await listNoteDatabaseMemberships(noteId);
+  return { properties, databaseIds };
+}
+
+/** Fetch the ids of every database the note currently belongs to. */
+export async function listNoteDatabaseMemberships(noteId: string): Promise<string[]> {
+  const rows = await db
+    .select({ databaseId: databaseRows.databaseId })
+    .from(databaseRows)
+    .where(eq(databaseRows.noteId, noteId));
+  return rows.map((r) => r.databaseId);
+}
+
+/**
+ * Order definitions for display: shared first (grouped by membership
+ * order, position-sorted inside each db), then private (position-sorted).
+ */
+function sortEffectiveDefs(
+  defs: PropertyDefinitionRow[],
+  databaseOrder: string[],
+): PropertyDefinitionRow[] {
+  const dbIndex = new Map(databaseOrder.map((id, i) => [id, i] as const));
+  const shared: PropertyDefinitionRow[] = [];
+  const privateDefs: PropertyDefinitionRow[] = [];
+  for (const def of defs) {
+    if (def.scope === 'database' && def.databaseId && dbIndex.has(def.databaseId)) {
+      shared.push(def);
+    } else if (def.scope === 'note') {
+      privateDefs.push(def);
+    }
+  }
+  shared.sort((a, b) => {
+    const ai = dbIndex.get(a.databaseId ?? '') ?? Number.MAX_SAFE_INTEGER;
+    const bi = dbIndex.get(b.databaseId ?? '') ?? Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return a.position.localeCompare(b.position);
+  });
+  privateDefs.sort((a, b) => a.position.localeCompare(b.position));
+  return [...shared, ...privateDefs];
 }
 
 /**
@@ -470,7 +551,36 @@ export async function resolveNotePropertiesBatch(
     return out;
   }
 
-  const defConds = [inArray(propertyDefinitions.noteId, noteRows.map((n) => n.id))];
+  const membershipRows = await db
+    .select({ noteId: databaseRows.noteId, databaseId: databaseRows.databaseId })
+    .from(databaseRows)
+    .where(inArray(databaseRows.noteId, noteRows.map((n) => n.id)));
+
+  const databaseIdsByNote = new Map<string, string[]>();
+  const allDatabaseIds = new Set<string>();
+  for (const row of membershipRows) {
+    const list = databaseIdsByNote.get(row.noteId) ?? [];
+    list.push(row.databaseId);
+    databaseIdsByNote.set(row.noteId, list);
+    allDatabaseIds.add(row.databaseId);
+  }
+
+  const scopedDefConds = [
+    and(
+      eq(propertyDefinitions.scope, 'note'),
+      inArray(propertyDefinitions.noteId, noteRows.map((n) => n.id)),
+    ),
+  ];
+  if (allDatabaseIds.size > 0) {
+    scopedDefConds.push(
+      and(
+        eq(propertyDefinitions.scope, 'database'),
+        inArray(propertyDefinitions.databaseId, Array.from(allDatabaseIds)),
+      ),
+    );
+  }
+
+  const defConds = [or(...scopedDefConds)];
   if (propertyKeys && propertyKeys.length > 0) {
     defConds.push(inArray(propertyDefinitions.key, propertyKeys));
   }
@@ -480,13 +590,21 @@ export async function resolveNotePropertiesBatch(
     .where(and(...defConds))
     .orderBy(asc(propertyDefinitions.position));
 
-  // Group defs by noteId for per-note lookup.
+  // Group private defs by note and shared defs by database. Each output
+  // note receives exactly the same effective schema as `resolveNoteProperties`:
+  // database-scoped definitions from its memberships first, then private defs.
   const defsByNote = new Map<string, PropertyDefinitionRow[]>();
+  const defsByDatabase = new Map<string, PropertyDefinitionRow[]>();
   for (const def of defs) {
-    if (!def.noteId) continue;
-    const arr = defsByNote.get(def.noteId) ?? [];
-    arr.push(def);
-    defsByNote.set(def.noteId, arr);
+    if (def.scope === 'note' && def.noteId) {
+      const arr = defsByNote.get(def.noteId) ?? [];
+      arr.push(def);
+      defsByNote.set(def.noteId, arr);
+    } else if (def.scope === 'database' && def.databaseId) {
+      const arr = defsByDatabase.get(def.databaseId) ?? [];
+      arr.push(def);
+      defsByDatabase.set(def.databaseId, arr);
+    }
   }
 
   const allDefIds = defs.map((d) => d.id);
@@ -517,7 +635,10 @@ export async function resolveNotePropertiesBatch(
         out.set(id, []);
         return;
       }
-      const noteDefs = defsByNote.get(id) ?? [];
+      const databaseIds = databaseIdsByNote.get(id) ?? [];
+      const sharedDefs = databaseIds.flatMap((databaseId) => defsByDatabase.get(databaseId) ?? []);
+      const privateDefs = defsByNote.get(id) ?? [];
+      const noteDefs = sortEffectiveDefs([...sharedDefs, ...privateDefs], databaseIds);
       const noteValues = valuesByNote.get(id) ?? [];
       out.set(id, await resolveFromPrefetched(note, noteDefs, noteValues));
     }),
@@ -543,16 +664,7 @@ export async function executeButtonAction(
   // `set-property` and `increment-property` both target a property by key.
   const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
   if (!note) throw new Error('note-missing');
-  const [target] = await db
-    .select()
-    .from(propertyDefinitions)
-    .where(
-      and(
-        eq(propertyDefinitions.noteId, note.id),
-        eq(propertyDefinitions.key, action.targetKey ?? ''),
-      ),
-    )
-    .limit(1);
+  const target = await resolveEffectiveDefinitionByKey(note, action.targetKey ?? '');
   if (!target) throw new Error('button-target-missing');
 
   if (action.type === 'increment-property') {
@@ -625,6 +737,43 @@ export async function executeButtonAction(
     targetPropertyId: target.id,
     value: valueRowToDto(row, target.type as PropertyDefinition['type']),
   };
+}
+
+/**
+ * Resolve a property definition by key using the same effective ordering
+ * as the note property panel. When a private definition intentionally
+ * shadows a shared database definition, the private one wins because it is
+ * ordered last by `sortEffectiveDefs`.
+ */
+async function resolveEffectiveDefinitionByKey(
+  note: NoteRow,
+  key: string,
+): Promise<PropertyDefinitionRow | null> {
+  if (!key) return null;
+  const databaseIds = await listNoteDatabaseMemberships(note.id);
+  const conditions = [
+    and(
+      eq(propertyDefinitions.scope, 'note'),
+      eq(propertyDefinitions.noteId, note.id),
+      eq(propertyDefinitions.key, key),
+    ),
+  ];
+  if (databaseIds.length > 0) {
+    conditions.push(
+      and(
+        eq(propertyDefinitions.scope, 'database'),
+        inArray(propertyDefinitions.databaseId, databaseIds),
+        eq(propertyDefinitions.key, key),
+      ),
+    );
+  }
+  const defs = await db
+    .select()
+    .from(propertyDefinitions)
+    .where(or(...conditions))
+    .orderBy(asc(propertyDefinitions.position));
+  const ordered = sortEffectiveDefs(defs, databaseIds);
+  return ordered[ordered.length - 1] ?? null;
 }
 
 // Unused import guard kept to keep `sql` template available for future

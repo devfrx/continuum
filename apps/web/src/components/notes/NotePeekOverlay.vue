@@ -2,11 +2,12 @@
 /**
  * Read-only note peek used by database view row clicks.
  *
- * `sidePeek` renders as a right drawer; `centerPeek` renders as a
- * centered modal. The component is deliberately read-only: full editing
- * stays in the canonical Notes route, reachable through the expand
- * action. Nested database blocks still render via the host bridge, but
- * receive `editable=false` from the editor.
+ * `sidePeek` and `centerPeek` render as detached floating panels with
+ * the same edge spacing / radius language as the app sidebar. The
+ * component is deliberately read-only: full editing stays in the
+ * canonical Notes route, reachable through the expand action. Nested
+ * database blocks still render via the host bridge, but receive
+ * `editable=false` from the editor.
  */
 import { computed, ref, watch } from 'vue';
 import { ContinuumEditor, type IconCatalogEntry } from '@continuum/editor';
@@ -99,6 +100,7 @@ function openFullPage(): void {
   inset: 0;
   z-index: 1200;
   display: flex;
+  padding: var(--layout-sidebar-edge, var(--space-4));
   background: rgba(0, 0, 0, 0.32);
 }
 
@@ -110,7 +112,6 @@ function openFullPage(): void {
 .note-peek--centerPeek {
   justify-content: center;
   align-items: center;
-  padding: 4vh 4vw;
 }
 
 .note-peek__panel {
@@ -122,20 +123,20 @@ function openFullPage(): void {
   color: var(--fg, #ededed);
   border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.1));
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48);
+  border-radius: var(--radius-lg, 12px);
+  overflow: hidden;
 }
 
 .note-peek--sidePeek .note-peek__panel {
-  width: min(520px, 44vw);
-  height: 100vh;
-  max-height: 100vh;
-  border-radius: 0;
+  width: min(540px, calc(100vw - (2 * var(--layout-sidebar-edge, var(--space-4)))));
+  height: 100%;
+  max-height: 100%;
 }
 
 .note-peek--centerPeek .note-peek__panel {
-  width: min(820px, 92vw);
-  height: min(720px, 86vh);
-  max-height: 86vh;
-  border-radius: 8px;
+  width: min(860px, calc(100vw - (2 * var(--layout-sidebar-edge, var(--space-4)))));
+  height: min(760px, calc(100vh - (2 * var(--layout-sidebar-edge, var(--space-4)))));
+  max-height: calc(100vh - (2 * var(--layout-sidebar-edge, var(--space-4))));
 }
 
 .note-peek__header {

@@ -137,28 +137,29 @@ function clearAll(): void {
 
 <template>
     <div class="sort-panel">
-        <header v-if="liveRules.length > 0" class="sort-panel__header">
-            <span class="sort-panel__count">
-                {{ liveRules.length }} sort {{ liveRules.length === 1 ? 'rule' : 'rules' }}
-            </span>
-            <button
-                type="button"
-                class="sort-panel__link"
-                @click="clearAll">
-                Clear all
-            </button>
-        </header>
-
         <ol v-if="liveRules.length > 0" class="sort-panel__list">
             <li
                 v-for="(rule, index) in liveRules"
                 :key="rule.id"
                 class="sort-panel__row">
-                <span class="sort-panel__index" aria-hidden="true">{{ index + 1 }}</span>
+                <div class="sort-panel__row-head">
+                    <span class="sort-panel__lead">
+                        {{ index === 0 ? 'Sort by' : 'Then by' }}
+                    </span>
+                    <button
+                        type="button"
+                        class="sort-panel__remove"
+                        aria-label="Remove rule"
+                        title="Remove this sort rule"
+                        @click="removeRule(index)">
+                        <Icon name="close" :size="12" />
+                    </button>
+                </div>
                 <UiSelect
                     :model-value="fieldIdOfRule(rule)"
                     :options="fieldOptions"
-                    class="sort-panel__field"
+                    class="sort-panel__control"
+                    aria-label="Field"
                     @update:model-value="(v) => changeField(index, String(v))" />
                 <UiSegmented
                     class="sort-panel__direction"
@@ -166,13 +167,6 @@ function clearAll(): void {
                     :options="directionOptions"
                     aria-label="Sort direction"
                     @update:model-value="(v) => onDirectionChange(index, String(v))" />
-                <button
-                    type="button"
-                    class="sort-panel__remove"
-                    aria-label="Remove rule"
-                    @click="removeRule(index)">
-                    <Icon name="close" :size="14" />
-                </button>
             </li>
         </ol>
 
@@ -186,36 +180,115 @@ function clearAll(): void {
             </template>
         </UiEmpty>
 
-        <UiButton
-            variant="ghost"
-            size="sm"
-            :disabled="sortableFields.length === 0"
-            @click="addRule">
-            <Icon name="plus" :size="14" />
-            <span>Add sort</span>
-        </UiButton>
+        <footer class="sort-panel__footer">
+            <UiButton
+                variant="ghost"
+                size="sm"
+                :disabled="sortableFields.length === 0"
+                @click="addRule">
+                <Icon name="plus" :size="14" />
+                <span>Add sort</span>
+            </UiButton>
+            <button
+                v-if="liveRules.length > 0"
+                type="button"
+                class="sort-panel__link"
+                @click="clearAll">
+                Clear all
+            </button>
+        </footer>
     </div>
 </template>
 
 <style scoped>
+/**
+ * Notion-style sort rule cards. Each rule stacks its controls
+ * vertically (Sort by / Then by → field → direction) so labels remain
+ * legible inside a 360px popover.
+ */
 .sort-panel {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
 }
 
-.sort-panel__header {
+.sort-panel__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: var(--text-xs);
-    color: var(--text-muted);
+    flex-direction: column;
+    gap: var(--space-2);
 }
 
-.sort-panel__count {
+.sort-panel__row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-1);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.sort-panel__row:focus-within {
+    border-color: var(--border-strong);
+}
+
+.sort-panel__row-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 22px;
+}
+
+.sort-panel__lead {
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-weight: var(--font-weight-semibold);
+    color: var(--text-muted);
+    padding: 0 var(--space-1);
+}
+
+.sort-panel__control {
+    width: 100%;
+    min-width: 0;
+}
+
+.sort-panel__direction {
+    --ui-seg-h: 28px;
+    width: 100%;
+}
+
+.sort-panel__remove {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+}
+
+.sort-panel__remove:hover {
+    color: var(--danger);
+    background: var(--danger-faint);
+}
+
+.sort-panel__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
 }
 
 .sort-panel__link {
@@ -236,66 +309,5 @@ function clearAll(): void {
 .sort-panel__link:hover {
     color: var(--text-primary);
     background: var(--surface-hover);
-}
-
-.sort-panel__list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-}
-
-.sort-panel__row {
-    display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2);
-    background: var(--surface-1);
-    border: var(--border-width-1) solid var(--border);
-    border-radius: var(--radius-sm);
-    transition: border-color var(--duration-fast) var(--ease-standard);
-}
-
-.sort-panel__row:focus-within {
-    border-color: var(--border-strong);
-}
-
-.sort-panel__index {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    text-align: center;
-    font-weight: var(--font-weight-semibold);
-}
-
-.sort-panel__field {
-    min-width: 0;
-}
-
-.sort-panel__direction {
-    --ui-seg-h: 28px;
-}
-
-.sort-panel__remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    background: transparent;
-    border: 0;
-    color: var(--text-muted);
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    transition:
-        background-color var(--duration-fast) var(--ease-standard),
-        color var(--duration-fast) var(--ease-standard);
-}
-
-.sort-panel__remove:hover {
-    color: var(--danger);
-    background: var(--danger-faint);
 }
 </style>

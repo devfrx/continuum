@@ -50,11 +50,15 @@ const panelEl = ref<HTMLElement | null>(null);
 
 const openChildId = computed<string | undefined>(() => props.openPath[props.depth]);
 
-const childItems = computed<ContextMenuItem[]>(() => {
+const openChildItem = computed<ContextMenuItem | null>(() => {
     const id = openChildId.value;
-    if (id === undefined) return [];
-    return props.items.find((i) => i.id === id)?.children ?? [];
+    if (id === undefined) return null;
+    return props.items.find((i) => i.id === id) ?? null;
 });
+
+const childItems = computed<ContextMenuItem[]>(() => openChildItem.value?.children ?? []);
+
+const hasChildPanel = computed<boolean>(() => Boolean(openChildItem.value?.panel));
 
 const childStyle = computed<Record<string, string>>(() => {
     const id = openChildId.value;
@@ -81,7 +85,7 @@ defineExpose({ panelEl });
                     'is-disabled': item.disabled,
                     'is-danger': item.danger,
                     'is-focused': focusIndex[depth] === idx,
-                    'has-children': !!item.children?.length,
+                    'has-children': !!item.children?.length || !!item.panel,
                 }" :disabled="item.disabled" @pointerenter="emit('hover', depth, item, idx)"
                 @click="emit('activate', item)">
                 <span v-if="item.swatch" class="ui-cm__swatch" :style="{ background: item.swatch }" />
@@ -92,17 +96,23 @@ defineExpose({ panelEl });
                     <Icon name="check" :size="12" />
                 </span>
                 <span v-else-if="item.shortcut" class="ui-cm__shortcut">{{ item.shortcut }}</span>
-                <span v-else-if="item.children?.length" class="ui-cm__chev">
+                <span v-else-if="item.children?.length || item.panel" class="ui-cm__chev">
                     <Icon name="chevron-right" :size="12" />
                 </span>
             </button>
         </div>
     </div>
 
-    <ContextMenuPanel v-if="openChildId !== undefined" :items="childItems" :depth="depth + 1" :panel-style="childStyle"
-        :open-path="openPath" :focus-index="focusIndex" :min-width="minWidth" :max-height="maxHeight"
-        :sub-styles="subStyles" :panel-data-attr="`${depth + 1}:${openChildId}`"
+    <ContextMenuPanel v-if="openChildItem && !hasChildPanel" :items="childItems" :depth="depth + 1"
+        :panel-style="childStyle" :open-path="openPath" :focus-index="focusIndex" :min-width="minWidth"
+        :max-height="maxHeight" :sub-styles="subStyles" :panel-data-attr="`${depth + 1}:${openChildId}`"
         @hover="(d, item, i) => emit('hover', d, item, i)" @activate="(item) => emit('activate', item)" />
+
+    <div v-else-if="openChildItem && hasChildPanel"
+        class="ui-context-menu ui-context-menu__panel ui-context-menu__panel--custom" role="dialog"
+        :data-cm-panel="`${depth + 1}:${openChildId}`" :style="childStyle">
+        <component :is="openChildItem.panel" v-bind="openChildItem.panelProps ?? {}" />
+    </div>
 </template>
 
 <style scoped>

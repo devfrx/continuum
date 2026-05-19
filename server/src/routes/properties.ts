@@ -14,7 +14,7 @@
  *
  *  Definitions — generic
  *  ─────────────────────
- *  PATCH  /api/properties/:id                     update a definition (label, icon, description, config, position)
+ *  PATCH  /api/properties/:id                     update a definition (label, type, icon, description, config, position)
  *  DELETE /api/properties/:id                     delete a definition (cascades values)
  *
  *  Values (per-note)
@@ -36,10 +36,12 @@ import { z } from 'zod';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import {
+  databases,
   kinds,
   notes,
   propertyDefinitions,
   propertyValues,
+  type NoteRow,
   type PropertyDefinitionRow,
 } from '../db/schema.js';
 import { slugify } from '../lib/slugify.js';
@@ -52,8 +54,17 @@ import {
   valueRowToDto,
   valueSchemaFor,
 } from '../services/properties.js';
-import { executeButtonAction, resolveNoteProperties } from '../services/property-computed.js';
-import type { ButtonConfig, NoteProperty, PropertyType } from '@continuum/shared';
+import {
+  executeButtonAction,
+  listNoteDatabaseMemberships,
+  resolveNotePropertiesResponse,
+} from '../services/property-computed.js';
+import { createDatabaseProperty } from '../services/databases.js';
+import type {
+  ButtonConfig,
+  NotePropertiesResponse,
+  PropertyType,
+} from '@continuum/shared';
 
 // ───────────────────────────── Schemas ─────────────────────────────────
 
@@ -75,8 +86,24 @@ const createDefinitionSchema = z.object({
   position: z.string().max(120).optional(),
 });
 
+/**
+ * Per-note create accepts an optional routing hint. When the note is a
+ * row of one or more databases the property is created on the shared
+ * schema instead of the note's private schema:
+ *
+ *   – `databaseId` present → create on that database explicitly.
+ *   – omitted + note has exactly one membership → create on it.
+ *   – omitted + note has multiple memberships → 400; client must pick.
+ *   – `private: true` always forces the legacy per-note path.
+ */
+const createNoteDefinitionSchema = createDefinitionSchema.extend({
+  databaseId: z.string().uuid().optional(),
+  private: z.boolean().optional(),
+});
+
 const updateDefinitionSchema = z.object({
   label: z.string().min(1).max(60).optional(),
+  type: propertyTypeSchema.optional(),
   icon: z.string().min(1).max(60).nullable().optional(),
   description: z.string().max(500).nullable().optional(),
   config: z.unknown().optional(),
@@ -112,6 +139,55 @@ async function nextPositionForNote(noteId: string): Promise<string> {
     .orderBy(asc(propertyDefinitions.position));
   if (rows.length === 0) return 'a0';
   return `${rows[rows.length - 1].position}m`;
+}
+
+/**
+ * Guard every value-level operation with the effective-schema contract:
+ * private definitions must belong to the note, database definitions must
+ * belong to a database row membership, kind definitions must match the
+ * note kind, and globals apply everywhere.
+ */
+async function definitionAppliesToNote(
+  defRow: PropertyDefinitionRow,
+  note: NoteRow,
+): Promise<boolean> {
+  if (defRow.scope === 'note') return defRow.noteId === note.id;
+  if (defRow.scope === 'kind') return defRow.kindId === note.kind;
+  if (defRow.scope === 'global') return true;
+  if (defRow.scope === 'database') {
+    if (!defRow.databaseId) return false;
+    const memberships = await listNoteDatabaseMemberships(note.id);
+    return memberships.includes(defRow.databaseId);
+  }
+  return false;
+}
+
+/**
+ * Block any value-level mutation on a shared (database-scoped)
+ * property whose owning database is locked. Mirrors the note-level
+ * `note.locked` guard already present on every mutating route — same
+ * 423 status code, with a stable machine-readable `error:
+ * 'database-locked'` payload so the client can surface a consistent
+ * message. Returns `true` when the route should abort.
+ */
+async function rejectIfDatabaseLocked(
+  defRow: PropertyDefinitionRow,
+  reply: import('fastify').FastifyReply,
+): Promise<boolean> {
+  if (defRow.scope !== 'database' || !defRow.databaseId) return false;
+  const [dbRow] = await db
+    .select({ locked: databases.locked })
+    .from(databases)
+    .where(eq(databases.id, defRow.databaseId))
+    .limit(1);
+  if (dbRow?.locked) {
+    reply.code(423).send({
+      error: 'database-locked',
+      message: 'Database is locked. Unlock it before editing this property.',
+    });
+    return true;
+  }
+  return false;
 }
 
 /** Normalised lexicographic rank used when a kind's properties are reordered. */
@@ -235,7 +311,7 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
   // Templates feature but are not auto-applied.
   app.post('/notes/:noteId/properties', async (req, reply) => {
     const { noteId } = noteIdParamSchema.parse(req.params);
-    const body = createDefinitionSchema.parse(req.body);
+    const body = createNoteDefinitionSchema.parse(req.body);
 
     const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
     if (!note) return reply.notFound('Note not found');
@@ -249,6 +325,78 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
     const key = body.key?.trim() ? slugify(body.key, 60) : slugify(body.label, 60);
     if (!key) return reply.badRequest('Could not derive a valid key from the label');
 
+    const configParser = configSchemaFor(body.type);
+    const config = configParser.parse(body.config ?? { type: body.type });
+
+    // ── Route the create to the right schema ────────────────────────
+    // The note may be standalone (→ private) or a row of one or more
+    // databases (→ shared). The client can force `private: true` to keep
+    // the property local even when the note has memberships.
+    const memberships = body.private ? [] : await listNoteDatabaseMemberships(noteId);
+    const explicitDb = body.databaseId ?? null;
+    if (explicitDb && !memberships.includes(explicitDb)) {
+      return reply.badRequest('Note is not a row of the supplied database');
+    }
+    let targetDatabaseId: string | null = null;
+    if (explicitDb) targetDatabaseId = explicitDb;
+    else if (memberships.length === 1) targetDatabaseId = memberships[0];
+    else if (memberships.length > 1) {
+      return reply.badRequest(
+        'Note belongs to multiple databases. Specify `databaseId` or set `private: true`.',
+      );
+    }
+
+    if (targetDatabaseId) {
+      // Shared schema path — reuse the canonical database property creator
+      // so collision / position / DTO shaping stays in one place.
+      const [database] = await db
+        .select()
+        .from(databases)
+        .where(eq(databases.id, targetDatabaseId))
+        .limit(1);
+      if (!database) return reply.notFound('Database not found');
+
+      const [collision] = await db
+        .select()
+        .from(propertyDefinitions)
+        .where(
+          and(
+            eq(propertyDefinitions.databaseId, targetDatabaseId),
+            eq(propertyDefinitions.key, key),
+          ),
+        )
+        .limit(1);
+      if (collision) {
+        return reply.conflict(
+          `A property with key "${key}" already exists on this database`,
+        );
+      }
+
+      const [targetDb] = await db
+        .select({ locked: databases.locked })
+        .from(databases)
+        .where(eq(databases.id, targetDatabaseId))
+        .limit(1);
+      if (targetDb?.locked) {
+        return reply.code(423).send({
+          error: 'database-locked',
+          message: 'Database is locked. Unlock it before adding properties.',
+        });
+      }
+
+      const created = await createDatabaseProperty(targetDatabaseId, {
+        key,
+        label: body.label,
+        type: body.type,
+        icon: body.icon ?? null,
+        description: body.description ?? null,
+        config,
+        position: body.position,
+      });
+      return definitionRowToDto(created);
+    }
+
+    // Private schema path — note keeps its own definition.
     const [existing] = await db
       .select()
       .from(propertyDefinitions)
@@ -257,9 +405,6 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
       )
       .limit(1);
     if (existing) return reply.conflict(`A property with key "${key}" already exists on this note`);
-
-    const configParser = configSchemaFor(body.type);
-    const config = configParser.parse(body.config ?? { type: body.type });
 
     const position = body.position ?? (await nextPositionForNote(noteId));
 
@@ -338,22 +483,33 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(propertyDefinitions.id, id))
       .limit(1);
     if (!existing) return reply.notFound('Property not found');
+    if (await rejectIfDatabaseLocked(existing, reply)) return;
 
     const patch: Partial<PropertyDefinitionRow> = { updatedAt: new Date() };
     if (body.label !== undefined) patch.label = body.label;
     if (body.icon !== undefined) patch.icon = body.icon;
     if (body.description !== undefined) patch.description = body.description;
     if (body.position !== undefined) patch.position = body.position;
-    if (body.config !== undefined) {
-      const parser = configSchemaFor(existing.type as PropertyType);
-      patch.config = parser.parse(body.config);
+    const existingType = existing.type as PropertyType;
+    const nextType = body.type ?? existingType;
+    const typeChanged = nextType !== existingType;
+
+    if (body.type !== undefined) patch.type = nextType;
+    if (body.config !== undefined || typeChanged) {
+      const parser = configSchemaFor(nextType);
+      patch.config = parser.parse(body.config ?? { type: nextType });
     }
 
-    const [updated] = await db
-      .update(propertyDefinitions)
-      .set(patch)
-      .where(eq(propertyDefinitions.id, id))
-      .returning();
+    const [updated] = await db.transaction(async (tx) => {
+      if (typeChanged) {
+        await tx.delete(propertyValues).where(eq(propertyValues.propertyId, id));
+      }
+      return tx
+        .update(propertyDefinitions)
+        .set(patch)
+        .where(eq(propertyDefinitions.id, id))
+        .returning();
+    });
     return definitionRowToDto(updated);
   });
 
@@ -366,6 +522,7 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(propertyDefinitions.id, id))
       .limit(1);
     if (!existing) return reply.notFound('Property not found');
+    if (await rejectIfDatabaseLocked(existing, reply)) return;
 
     // FK ON DELETE CASCADE removes all property_values rows.
     await db.delete(propertyDefinitions).where(eq(propertyDefinitions.id, id));
@@ -373,11 +530,14 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ───────────── Values: list per note ─────────────
+  // Returns the note's *effective* schema (private + every database it
+  // belongs to) plus the membership ids so the client can subscribe to
+  // shared-schema realtime events.
   app.get('/notes/:noteId/properties', async (req, reply) => {
     const { noteId } = noteIdParamSchema.parse(req.params);
     const [note] = await db.select().from(notes).where(eq(notes.id, noteId)).limit(1);
     if (!note) return reply.notFound('Note not found');
-    return resolveNoteProperties(noteId) satisfies Promise<NoteProperty[]>;
+    return resolveNotePropertiesResponse(noteId) satisfies Promise<NotePropertiesResponse>;
   });
 
   // ───────────── Values: PUT (upsert / clear-when-empty) ─────────────
@@ -398,13 +558,10 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(propertyDefinitions.id, propId))
       .limit(1);
     if (!defRow) return reply.notFound('Property not found');
-    if (defRow.scope === 'note') {
-      if (defRow.noteId !== noteId) {
-        return reply.badRequest('Property does not belong to this note');
-      }
-    } else if (defRow.scope === 'kind' && defRow.kindId !== note.kind) {
-      return reply.badRequest("Property does not belong to this note's kind");
+    if (!(await definitionAppliesToNote(defRow, note))) {
+      return reply.badRequest('Property does not belong to this note');
     }
+    if (await rejectIfDatabaseLocked(defRow, reply)) return;
     if (defRow.type === 'button' || isComputedPropertyType(defRow.type as PropertyType)) {
       return reply.badRequest(
         `Cannot set value for '${defRow.type}': this property is auto-managed.`,
@@ -459,6 +616,11 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
       .from(propertyDefinitions)
       .where(eq(propertyDefinitions.id, propId))
       .limit(1);
+    if (!defRow) return reply.notFound('Property not found');
+    if (!(await definitionAppliesToNote(defRow, note))) {
+      return reply.badRequest('Property does not belong to this note');
+    }
+    if (await rejectIfDatabaseLocked(defRow, reply)) return;
     if (defRow && (defRow.type === 'button' || isComputedPropertyType(defRow.type as PropertyType))) {
       return reply.badRequest(
         `Cannot clear value for '${defRow.type}': this property is auto-managed.`,
@@ -492,6 +654,10 @@ export const propertyRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(propertyDefinitions.id, propId))
       .limit(1);
     if (!defRow) return reply.notFound('Property not found');
+    if (!(await definitionAppliesToNote(defRow, note))) {
+      return reply.badRequest('Property does not belong to this note');
+    }
+    if (await rejectIfDatabaseLocked(defRow, reply)) return;
     if (defRow.type !== 'button') {
       return reply.badRequest('Property is not a button');
     }

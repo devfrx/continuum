@@ -49,6 +49,7 @@ import { useGraphPalette } from '@/composables/useGraphPalette';
 import { useGraphPropertyEncodings } from '@/composables/query/useGraphPropertyEncodings';
 import { useGraphQuery } from '@/composables/query/useGraphQuery';
 import { useProperties } from '@/composables/useProperties';
+import { useRealtime } from '@/lib/realtime/useRealtime';
 import { computeLodTier, lodDensity3D } from '@/components/graph/lodConfig';
 import {
   buildGraphEncodingMaps,
@@ -169,6 +170,19 @@ watch(
   ],
   scheduleQueryReload,
   { deep: true },
+);
+
+useRealtime(
+  [
+    'note.created',
+    'note.updated',
+    'note.deleted',
+    'property.value.changed',
+    'database.schema.changed',
+    'database.rows.changed',
+    'database.deleted',
+  ],
+  scheduleQueryReload,
 );
 onBeforeUnmount(() => {
   if (reloadTimer != null) {

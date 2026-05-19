@@ -36,7 +36,7 @@ import {
   type SystemFieldId,
 } from '@continuum/shared';
 import { db } from '../../db/client.js';
-import { kinds, propertyDefinitions } from '../../db/schema.js';
+import { databases, kinds, propertyDefinitions } from '../../db/schema.js';
 
 interface SystemFieldSpec {
   id: SystemFieldId;
@@ -198,28 +198,27 @@ export async function buildFieldCatalog(
   // encountered wins for label/icon/type; choice options are unioned
   // across every definition sharing the key (deduped by id) so the
   // value picker sees the full catalogue.
-  const [allDefs, allKinds] = await Promise.all([
+  const [allDefs, allKinds, allDatabases] = await Promise.all([
     db
       .select()
       .from(propertyDefinitions)
       .orderBy(asc(propertyDefinitions.kindId), asc(propertyDefinitions.position)),
     db.select().from(kinds),
+    db.select().from(databases),
   ]);
   const kindLabelById = new Map(allKinds.map((k) => [k.id, k.label] as const));
+  const databaseTitleById = new Map(allDatabases.map((database) => [database.id, database.title] as const));
 
   interface KeyGroup {
     representative: (typeof allDefs)[number];
     kindIds: Set<string>;
+    databaseIds: Set<string>;
     scopes: Set<string>;
     options: Map<string, PropertyOption | StatusOption>;
   }
 
   const byKey = new Map<string, KeyGroup>();
   for (const def of allDefs) {
-    // Database-scoped definitions belong to a single Database and must
-    // never leak into the global graph/note field picker — they get
-    // their own catalogue scoped to the owning database.
-    if (def.scope === 'database') continue;
     const cap = PROPERTY_TYPE_CAPABILITIES[def.type as PropertyType];
     if (!cap) continue;
     let group = byKey.get(def.key);
@@ -227,6 +226,7 @@ export async function buildFieldCatalog(
       group = {
         representative: def,
         kindIds: new Set(),
+        databaseIds: new Set(),
         scopes: new Set(),
         options: new Map(),
       };
@@ -234,6 +234,7 @@ export async function buildFieldCatalog(
     }
     group.scopes.add(def.scope);
     if (def.kindId) group.kindIds.add(def.kindId);
+    if (def.databaseId) group.databaseIds.add(def.databaseId);
     if (cap.hasOptions) {
       const cfg = def.config as { options?: ReadonlyArray<PropertyOption | StatusOption> };
       for (const opt of cfg?.options ?? []) {
@@ -247,7 +248,13 @@ export async function buildFieldCatalog(
     const def = group.representative;
     const cap = PROPERTY_TYPE_CAPABILITIES[def.type as PropertyType];
     if (!cap) continue;
-    const hint = computePropertyHint(group.scopes, group.kindIds, kindLabelById);
+    const hint = computePropertyHint(
+      group.scopes,
+      group.kindIds,
+      group.databaseIds,
+      kindLabelById,
+      databaseTitleById,
+    );
     const descriptor: FieldDescriptor = {
       ref: { kind: 'property', key },
       key: fieldRefKey({ kind: 'property', key }),
@@ -299,9 +306,16 @@ export async function buildFieldCatalog(
 function computePropertyHint(
   scopes: Set<string>,
   kindIds: Set<string>,
+  databaseIds: Set<string>,
   kindLabelById: Map<string, string>,
+  databaseTitleById: Map<string, string>,
 ): string {
   if (scopes.size === 1 && scopes.has('global')) return 'Global';
+  if (databaseIds.size === 1) {
+    const [only] = databaseIds;
+    return `Database · ${(only && databaseTitleById.get(only)) || only || 'Database'}`;
+  }
+  if (databaseIds.size > 1) return 'Multiple databases';
   if (kindIds.size === 0) return 'Property';
   if (kindIds.size === 1) {
     const [only] = kindIds;

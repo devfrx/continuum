@@ -36,7 +36,7 @@ export const SECTIONS: readonly SectionEntry[] = [
     { id: 'filter', label: 'Filter', icon: 'filter', hint: 'Narrow rows by conditions', status: 'ready' },
     { id: 'sort', label: 'Sort', icon: 'arrow-down', hint: 'Order rows by any property', status: 'ready' },
     { id: 'group', label: 'Group', icon: 'sidebar', hint: 'Bucket rows by a property', status: 'planned' },
-    { id: 'conditionalColor', label: 'Conditional color', icon: 'palette', hint: 'Color rows by rules', status: 'planned' },
+    { id: 'conditionalColor', label: 'Conditional color', icon: 'palette', hint: 'Color rows by rules', status: 'ready' },
     { id: 'automations', label: 'Automations', icon: 'ai', hint: 'Trigger actions on changes', status: 'planned' },
     { id: 'dataSource', label: 'Data source', icon: 'database', hint: 'Swap the datasource', status: 'ready' },
 ] as const;

@@ -284,6 +284,7 @@ export function configSchemaFor(type: PropertyType): z.ZodTypeAny {
       return z.object({
         type: z.literal('longText'),
         placeholder: z.string().max(200).optional(),
+        maxLength: z.number().int().positive().max(1_000_000).optional(),
       });
     case 'number':
       return z.object({
@@ -292,6 +293,18 @@ export function configSchemaFor(type: PropertyType): z.ZodTypeAny {
         precision: z.number().int().min(0).max(10).optional(),
         min: z.number().optional(),
         max: z.number().optional(),
+        format: z
+          .string()
+          .max(40)
+          .regex(
+            /^(number|numberWithSeparators|percent|currency:[A-Z]{3})$/u,
+            'format must be number, numberWithSeparators, percent, or currency:<ISO>',
+          )
+          .optional(),
+        displayAs: z.enum(['number', 'bar', 'ring']).optional(),
+        color: z.string().max(64).optional(),
+        divideBy: z.number().positive().optional(),
+        showNumber: z.boolean().optional(),
       });
     case 'date':
       return z.object({

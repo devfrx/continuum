@@ -49,6 +49,9 @@ import type {
 } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
+import { useConditionalColors } from '../conditionalColor';
+import { resolveCardProperties } from './cardProperties';
+import DatabaseCardProperty from './DatabaseCardProperty.vue';
 import {
     isBoardGroupable,
     readSelectedOptionIds,
@@ -58,6 +61,10 @@ import {
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
+const { rowStyleFor, cellStyleFor } = useConditionalColors({
+    activeView: computed(() => props.activeView),
+    schema: computed(() => props.schema),
+});
 
 // ── Group-by resolution ──────────────────────────────────────────────────
 
@@ -160,33 +167,29 @@ function openRow(row: DatabaseRowSnapshot): void {
     openRowById(row.noteId);
 }
 
-function rowSummary(row: DatabaseRowSnapshot): string[] {
-    const parts: string[] = [];
-    for (const entry of row.properties.slice(0, 5)) {
-        if (entry.definition.id === groupByProperty.value?.id) continue;
-        const value = entry.value;
-        if (!value) continue;
-        if (value.type === 'text' || value.type === 'longText') parts.push(value.value);
-        else if (value.type === 'number') parts.push(String(value.value));
-        else if (value.type === 'checkbox') parts.push(value.value ? '✓' : '✗');
-        else if (value.type === 'date') parts.push(value.value);
-        else if (value.type === 'dateRange') parts.push(`${value.value.from} → ${value.value.to}`);
-        else if (value.type === 'select' || value.type === 'status') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            const opt = cfg.options?.find((o) => o.id === value.value);
-            parts.push(opt?.label ?? value.value);
-        }
-        else if (value.type === 'multiSelect') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            const labels = value.value.map((id) => cfg.options?.find((o) => o.id === id)?.label ?? id);
-            parts.push(labels.join(', '));
-        }
-        else if (value.type === 'url' || value.type === 'email' || value.type === 'phone') {
-            parts.push(value.value);
-        }
-        if (parts.length >= 3) break;
-    }
-    return parts;
+/**
+ * Visible card properties — honours the view's visibility config and
+ * skips the group-by property (already conveyed by the column).
+ * Hard-capped to keep cards skimmable; the Table view remains the
+ * place for the full property surface.
+ */
+function cardProperties(): PropertyDefinition[] {
+    const skip = new Set<string>();
+    if (groupByProperty.value) skip.add(groupByProperty.value.key);
+    return resolveCardProperties({
+        schema: props.schema,
+        view: props.activeView,
+        skipKeys: skip,
+        limit: 4,
+    });
+}
+
+function hasEntry(row: DatabaseRowSnapshot, def: PropertyDefinition): boolean {
+    const v = row.properties.find((p) => p.definition.id === def.id)?.value;
+    if (!v) return false;
+    if (v.type === 'multiSelect' && v.value.length === 0) return false;
+    if ((v.type === 'text' || v.type === 'longText' || v.type === 'url' || v.type === 'email' || v.type === 'phone') && !v.value) return false;
+    return true;
 }
 
 async function moveTo(row: DatabaseRowSnapshot, columnKey: string): Promise<void> {
@@ -209,6 +212,7 @@ async function moveTo(row: DatabaseRowSnapshot, columnKey: string): Promise<void
 
 function onCardDragStart(event: DragEvent, row: DatabaseRowSnapshot): void {
     if (!props.editable) return;
+    event.stopPropagation();
     event.dataTransfer?.setData('text/plain', row.rowId);
     event.dataTransfer!.effectAllowed = 'move';
 }
@@ -216,12 +220,14 @@ function onCardDragStart(event: DragEvent, row: DatabaseRowSnapshot): void {
 function onColumnDragOver(event: DragEvent): void {
     if (!props.editable) return;
     event.preventDefault();
+    event.stopPropagation();
     event.dataTransfer!.dropEffect = 'move';
 }
 
 async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> {
     if (!props.editable) return;
     event.preventDefault();
+    event.stopPropagation();
     const rowId = event.dataTransfer?.getData('text/plain');
     if (!rowId) return;
     const row = props.rows.find((r) => r.rowId === rowId);
@@ -261,6 +267,7 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
                         :key="row.rowId"
                         class="db-board__card"
                         :draggable="editable"
+                        :style="rowStyleFor(row)"
                         @dragstart="(e) => onCardDragStart(e, row)"
                         @click="openRow(row)">
                         <div class="db-board__card-title-row">
@@ -272,12 +279,16 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
                                 :style="{ color: colorOf(row.note.kind) }" />
                             <strong class="db-board__card-title">{{ row.note.title || 'Untitled' }}</strong>
                         </div>
-                        <p
-                            v-for="(line, i) in rowSummary(row)"
-                            :key="i"
-                            class="db-board__card-line">
-                            {{ line }}
-                        </p>
+                        <div v-if="cardProperties().length" class="db-board__card-props">
+                            <DatabaseCardProperty
+                                v-for="def in cardProperties()"
+                                v-show="hasEntry(row, def)"
+                                :key="def.id"
+                                :row="row"
+                                :property="def"
+                                variant="stacked"
+                                :cell-style="cellStyleFor(row, def.key)" />
+                        </div>
                     </li>
                     <li v-if="!column.rows.length" class="db-board__card db-board__card--empty">
                         Drop a card here
@@ -354,21 +365,23 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
 .db-board__card {
     background: var(--surface-2);
     border: var(--border-width-1) solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
+    color: var(--text-primary);
     transition:
         border-color var(--duration-fast) var(--ease-standard),
         background-color var(--duration-fast) var(--ease-standard),
-        transform var(--duration-fast) var(--ease-standard);
+        transform var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .db-board__card:hover {
     border-color: var(--border-strong);
-    background: var(--surface-hover);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.15));
 }
 
 .db-board__card[draggable='true']:active {
@@ -394,12 +407,13 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
     color: var(--text-muted);
     font-size: var(--text-xs);
     text-align: center;
+    padding: var(--space-2) var(--space-3);
 }
 
 .db-board__card-title {
-    color: var(--text-primary);
+    color: inherit;
     font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-semibold);
     line-height: var(--leading-tight);
     min-width: 0;
     overflow: hidden;
@@ -407,17 +421,15 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
     white-space: nowrap;
 }
 
-.db-board__card-line {
-    margin: 0;
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.db-board__card-props {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: var(--space-1);
+    border-top: var(--border-width-1) dashed var(--border);
 }
 
-.db-board--wrap .db-board__card-title,
-.db-board--wrap .db-board__card-line {
+.db-board--wrap .db-board__card-title {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;

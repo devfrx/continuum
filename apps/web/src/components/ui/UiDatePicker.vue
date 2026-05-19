@@ -10,7 +10,8 @@
  * Stores ISO 8601 strings via `v-model`. Empty string represents "no
  * value". Locale comes from the browser; week starts on Monday.
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useFloatingPosition } from '@/composables/useFloatingPosition';
 import Icon from './Icon.vue';
 
 interface Props {
@@ -34,6 +35,15 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const root = ref<HTMLDivElement | null>(null);
+const panel = ref<HTMLDivElement | null>(null);
+
+const { style: panelStyle, reposition } = useFloatingPosition({
+    triggerRef: root,
+    panelRef: panel,
+    open,
+    minWidth: 260,
+    maxHeight: props.datetime ? 380 : 340,
+});
 
 /** Month being browsed in the popover (1st of the month, local time). */
 const cursor = ref<Date>(new Date());
@@ -189,8 +199,10 @@ function clampInt(s: string, lo: number, hi: number): number {
 }
 
 function onDocClick(e: MouseEvent): void {
-    if (!root.value) return;
-    if (!root.value.contains(e.target as Node)) close();
+    const target = e.target as Node;
+    if (root.value?.contains(target)) return;
+    if (panel.value?.contains(target)) return;
+    close();
 }
 
 function toggle(): void {
@@ -199,12 +211,15 @@ function toggle(): void {
 
 function openPanel(): void {
     open.value = true;
-    queueMicrotask(() => document.addEventListener('mousedown', onDocClick));
+    void nextTick(() => {
+        reposition();
+        document.addEventListener('mousedown', onDocClick, true);
+    });
 }
 
 function close(): void {
     open.value = false;
-    document.removeEventListener('mousedown', onDocClick);
+    document.removeEventListener('mousedown', onDocClick, true);
 }
 
 function onTriggerKey(e: KeyboardEvent): void {
@@ -214,7 +229,7 @@ function onTriggerKey(e: KeyboardEvent): void {
     }
 }
 
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
+onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick, true));
 </script>
 
 <template>
@@ -225,47 +240,49 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
             <span v-else class="ui-dp__placeholder">{{ placeholder }}</span>
         </button>
 
-        <div v-if="open" class="ui-dp__panel" role="dialog">
-            <header class="ui-dp__header">
-                <button type="button" class="ui-dp__nav" @click="shiftMonth(-1)" aria-label="Previous month">
-                    <Icon name="chevron-left" :size="12" />
-                </button>
-                <span class="ui-dp__title">{{ monthLabel }}</span>
-                <button type="button" class="ui-dp__nav" @click="shiftMonth(1)" aria-label="Next month">
-                    <Icon name="chevron-right" :size="12" />
-                </button>
-            </header>
+        <Teleport to="body">
+            <div v-if="open" ref="panel" class="ui-dp__panel" role="dialog" :style="panelStyle">
+                <header class="ui-dp__header">
+                    <button type="button" class="ui-dp__nav" @click="shiftMonth(-1)" aria-label="Previous month">
+                        <Icon name="chevron-left" :size="12" />
+                    </button>
+                    <span class="ui-dp__title">{{ monthLabel }}</span>
+                    <button type="button" class="ui-dp__nav" @click="shiftMonth(1)" aria-label="Next month">
+                        <Icon name="chevron-right" :size="12" />
+                    </button>
+                </header>
 
-            <div class="ui-dp__weekdays">
-                <span v-for="d in weekdays" :key="d">{{ d }}</span>
+                <div class="ui-dp__weekdays">
+                    <span v-for="d in weekdays" :key="d">{{ d }}</span>
+                </div>
+
+                <div class="ui-dp__grid">
+                    <button v-for="(c, i) in cells" :key="i" type="button" class="ui-dp__day" :class="{
+                        'is-out': !c.inMonth,
+                        'is-today': c.isToday,
+                        'is-selected': c.isSelected,
+                    }" @click="pick(c)">
+                        {{ c.date.getDate() }}
+                    </button>
+                </div>
+
+                <div v-if="datetime" class="ui-dp__time">
+                    <Icon name="prop-clock" :size="12" />
+                    <input v-model="hour" inputmode="numeric" maxlength="2" class="ui-dp__time-input" aria-label="Hour"
+                        @blur="onTimeBlur" />
+                    <span class="ui-dp__time-sep">:</span>
+                    <input v-model="minute" inputmode="numeric" maxlength="2" class="ui-dp__time-input" aria-label="Minute"
+                        @blur="onTimeBlur" />
+                </div>
+
+                <footer class="ui-dp__footer">
+                    <button type="button" class="ui-dp__action" @click="jumpToday">Today</button>
+                    <button type="button" class="ui-dp__action ui-dp__action--ghost" :disabled="!modelValue" @click="clear">
+                        Clear
+                    </button>
+                </footer>
             </div>
-
-            <div class="ui-dp__grid">
-                <button v-for="(c, i) in cells" :key="i" type="button" class="ui-dp__day" :class="{
-                    'is-out': !c.inMonth,
-                    'is-today': c.isToday,
-                    'is-selected': c.isSelected,
-                }" @click="pick(c)">
-                    {{ c.date.getDate() }}
-                </button>
-            </div>
-
-            <div v-if="datetime" class="ui-dp__time">
-                <Icon name="prop-clock" :size="12" />
-                <input v-model="hour" inputmode="numeric" maxlength="2" class="ui-dp__time-input" aria-label="Hour"
-                    @blur="onTimeBlur" />
-                <span class="ui-dp__time-sep">:</span>
-                <input v-model="minute" inputmode="numeric" maxlength="2" class="ui-dp__time-input" aria-label="Minute"
-                    @blur="onTimeBlur" />
-            </div>
-
-            <footer class="ui-dp__footer">
-                <button type="button" class="ui-dp__action" @click="jumpToday">Today</button>
-                <button type="button" class="ui-dp__action ui-dp__action--ghost" :disabled="!modelValue" @click="clear">
-                    Clear
-                </button>
-            </footer>
-        </div>
+        </Teleport>
     </div>
 </template>
 
@@ -319,16 +336,15 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 }
 
 .ui-dp__panel {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 60;
-    background: var(--bg-elev);
+    position: fixed;
+    z-index: 1300;
+    background: var(--surface-2);
     border: var(--border-width-1) solid var(--border);
-    border-radius: var(--radius-base);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-dropdown);
     padding: var(--space-3);
     min-width: 260px;
+    overflow: auto;
     user-select: none;
 }
 

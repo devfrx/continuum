@@ -10,35 +10,54 @@
  * `<component :is>` interchangeability with the other renderers.
  */
 import { Icon } from '@/components/ui';
-import type { DatabaseRowSnapshot, PropertyOption } from '@continuum/shared';
+import { computed } from 'vue';
+import type { DatabaseRowSnapshot, PropertyDefinition } from '@continuum/shared';
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './views/types';
 import { useDatabaseRowDisplay } from './useDatabaseRowDisplay';
+import { useConditionalColors } from './conditionalColor';
+import { resolveCardProperties } from './views/cardProperties';
+import DatabaseCardProperty from './views/DatabaseCardProperty.vue';
+import { useDatabaseRowReorder } from './views/useDatabaseRowReorder';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
 const { common, openRow: openRowById, iconOf, colorOf } = useDatabaseRowDisplay(() => props.activeView);
+const { rowStyleFor, cellStyleFor } = useConditionalColors({
+    activeView: computed(() => props.activeView),
+    schema: computed(() => props.schema),
+});
 
-function summarize(row: DatabaseRowSnapshot): string {
-    const parts: string[] = [];
-    for (const entry of row.properties.slice(0, 3)) {
-        const value = entry.value;
-        if (!value) continue;
-        if (value.type === 'text' || value.type === 'longText') parts.push(value.value);
-        else if (value.type === 'number') parts.push(String(value.value));
-        else if (value.type === 'checkbox') parts.push(value.value ? '✓' : '✗');
-        else if (value.type === 'date') parts.push(value.value);
-        else if (value.type === 'select' || value.type === 'status') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            const opt = cfg.options?.find((o) => o.id === value.value);
-            parts.push(opt?.label ?? value.value);
-        } else if (value.type === 'multiSelect') {
-            const cfg = (entry.definition.config ?? {}) as { options?: PropertyOption[] };
-            parts.push(value.value.map((id) => cfg.options?.find((o) => o.id === id)?.label ?? id).join(', '));
-        } else if (value.type === 'url' || value.type === 'email' || value.type === 'phone') {
-            parts.push(value.value);
-        }
-    }
-    return parts.join(' · ');
+const {
+    orderedRows,
+    isDraggingRow,
+    isDropTargetRow,
+    onRowDragStart,
+    onRowDragOver,
+    onRowDrop,
+    onListDragOver,
+    onListDropEnd,
+    clearDragState,
+} = useDatabaseRowReorder({
+    databaseId: computed(() => props.database.id),
+    rows: computed(() => props.rows),
+    editable: computed(() => props.editable),
+    onReordered: () => emit('cell-saved'),
+});
+
+function listProperties(): PropertyDefinition[] {
+    return resolveCardProperties({
+        schema: props.schema,
+        view: props.activeView,
+        limit: 4,
+    });
+}
+
+function hasEntry(row: DatabaseRowSnapshot, def: PropertyDefinition): boolean {
+    const v = row.properties.find((p) => p.definition.id === def.id)?.value;
+    if (!v) return false;
+    if (v.type === 'multiSelect' && v.value.length === 0) return false;
+    if ((v.type === 'text' || v.type === 'longText' || v.type === 'url' || v.type === 'email' || v.type === 'phone') && !v.value) return false;
+    return true;
 }
 
 function openRow(row: DatabaseRowSnapshot): void {
@@ -47,9 +66,20 @@ function openRow(row: DatabaseRowSnapshot): void {
 </script>
 
 <template>
-    <ul class="db-list" :class="{ 'db-list--wrap': common.wrapContent }">
-        <li v-if="!props.rows.length" class="db-list__empty">No rows yet.</li>
-        <li v-for="row in props.rows" :key="row.rowId" class="db-list__row">
+    <ul class="db-list" :class="{ 'db-list--wrap': common.wrapContent }"
+        @dragover="onListDragOver" @drop="onListDropEnd">
+        <li v-if="!orderedRows.length" class="db-list__empty">No rows yet.</li>
+        <li v-for="row in orderedRows" :key="row.rowId" data-row-drop-target="true" class="db-list__row"
+            :class="{
+                'is-dragging': isDraggingRow(row.rowId),
+                'is-drop-target': isDropTargetRow(row.rowId),
+            }"
+            :draggable="editable"
+            :style="rowStyleFor(row)"
+            @dragstart.stop="(event) => onRowDragStart(event, row)"
+            @dragover="(event) => onRowDragOver(event, row)"
+            @drop="(event) => onRowDrop(event, row)"
+            @dragend="clearDragState">
             <Icon
                 v-if="common.showPageIcon"
                 :name="iconOf(row.note.kind)"
@@ -58,7 +88,18 @@ function openRow(row: DatabaseRowSnapshot): void {
                 :style="{ color: colorOf(row.note.kind) }" />
             <div class="db-list__main" @click="openRow(row)">
                 <strong class="db-list__title">{{ row.note.title || 'Untitled' }}</strong>
-                <span class="db-list__meta">{{ summarize(row) }}</span>
+                <div v-if="listProperties().length" class="db-list__props">
+                    <DatabaseCardProperty
+                        v-for="def in listProperties()"
+                        v-show="hasEntry(row, def)"
+                        :key="def.id"
+                        class="db-list__prop"
+                        :row="row"
+                        :property="def"
+                        variant="inline"
+                        hide-label
+                        :cell-style="cellStyleFor(row, def.key)" />
+                </div>
             </div>
             <button
                 v-if="props.editable"
@@ -85,11 +126,29 @@ function openRow(row: DatabaseRowSnapshot): void {
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
     border-bottom: var(--border-width-1) solid var(--border);
+    color: var(--text-primary);
     transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-list__row:hover {
     background: var(--surface-hover);
+}
+
+.db-list__row[draggable='true'] {
+    cursor: grab;
+}
+
+.db-list__row[draggable='true']:active {
+    cursor: grabbing;
+}
+
+.db-list__row.is-dragging {
+    opacity: 0.55;
+}
+
+.db-list__row.is-drop-target {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .db-list__icon {
@@ -103,27 +162,29 @@ function openRow(row: DatabaseRowSnapshot): void {
     display: flex;
     flex-direction: column;
     cursor: pointer;
-    gap: 1px;
+    gap: var(--space-1);
 }
 
 .db-list__title {
     font-size: var(--text-md);
-    color: var(--text-primary);
+    color: inherit;
     font-weight: var(--font-weight-medium);
     line-height: var(--leading-tight);
 }
 
-.db-list__meta {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: var(--leading-tight);
+.db-list__props {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    align-items: center;
+    min-width: 0;
 }
 
-.db-list--wrap .db-list__title,
-.db-list--wrap .db-list__meta {
+.db-list__prop {
+    min-width: 0;
+}
+
+.db-list--wrap .db-list__title {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;

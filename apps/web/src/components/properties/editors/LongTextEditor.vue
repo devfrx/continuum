@@ -3,7 +3,12 @@
  * Multi-line text property editor (auto-grows).
  */
 import { computed, nextTick, ref, watch } from 'vue';
-import { PROPERTY_TYPE_PLACEHOLDERS, type LongTextValue, type PropertyDefinition } from '@continuum/shared';
+import {
+    PROPERTY_TYPE_PLACEHOLDERS,
+    type LongTextConfig,
+    type LongTextValue,
+    type PropertyDefinition,
+} from '@continuum/shared';
 
 const props = defineProps<{
     value: LongTextValue | null;
@@ -13,9 +18,10 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:value': [v: LongTextValue] }>();
 
 const local = computed(() => props.value?.value ?? '');
+const cfg = computed<LongTextConfig>(() => props.definition.config as LongTextConfig);
+const maxLength = computed(() => cfg.value.maxLength);
 const placeholder = computed(() => {
-    const cfg = props.definition.config as { placeholder?: string };
-    return cfg.placeholder ?? PROPERTY_TYPE_PLACEHOLDERS.longText;
+    return cfg.value.placeholder ?? PROPERTY_TYPE_PLACEHOLDERS.longText;
 });
 
 const ref_ = ref<HTMLTextAreaElement | null>(null);
@@ -32,9 +38,15 @@ watch(local, () => {
 }, { immediate: true });
 
 function onInput(e: Event): void {
+    const textarea = e.target as HTMLTextAreaElement;
+    const limit = maxLength.value;
+    const next = limit && textarea.value.length > limit
+        ? textarea.value.slice(0, limit)
+        : textarea.value;
+    if (next !== textarea.value) textarea.value = next;
     emit('update:value', {
         type: 'longText',
-        value: (e.target as HTMLTextAreaElement).value,
+        value: next,
     });
     autosize();
 }
@@ -42,7 +54,7 @@ function onInput(e: Event): void {
 
 <template>
     <textarea ref="ref_" class="prop-editor" rows="1" :value="local" :placeholder="placeholder" :spellcheck="false"
-        @input="onInput" />
+        :maxlength="maxLength" @input="onInput" />
 </template>
 
 <style scoped>
