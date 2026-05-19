@@ -1,6 +1,7 @@
 /**
- * useDatabaseRowReorder — native drag/drop row ordering for card-like
- * database views.
+ * useDatabaseRowReorder — drag/drop row ordering for card-like
+ * database views, built on top of the centralised `useDragAndDrop`
+ * primitives.
  *
  * The composable keeps a local ordered copy for immediate visual
  * feedback, then persists the visible order through the existing
@@ -8,11 +9,23 @@
  * full lists and visible subsets, so filtered/card views can reorder
  * the rows they currently render without needing the parent to pass a
  * second unfiltered row collection.
+ *
+ * Per-row source/target pairs are created lazily and cached by
+ * `rowId`, so each card composes one `dragHandlers` + `dropHandlers`
+ * map that already carries the row identity — no per-event closure
+ * allocation in the template.
  */
 import { ref, watch, type ComputedRef, type Ref } from 'vue';
 import { api } from '@/api';
 import { publishDatabaseRowsChanged } from '@/lib/realtime';
 import type { DatabaseRowSnapshot } from '@continuum/shared';
+import {
+  DRAG_MIME,
+  useDragSource,
+  useDropTarget,
+  type DragSourceHandlers,
+  type DropTargetHandlers,
+} from '@/composables/useDragAndDrop';
 
 interface UseDatabaseRowReorderOptions {
   databaseId: ComputedRef<string>;
@@ -21,22 +34,27 @@ interface UseDatabaseRowReorderOptions {
   onReordered: () => void;
 }
 
+/** Tag used so other surfaces can filter against this drag's `kind`. */
+const DRAG_KIND = 'database-row';
+
+interface RowBindings {
+  readonly source: { readonly isDragging: Ref<boolean>; readonly handlers: DragSourceHandlers };
+  readonly target: { readonly isOver: Ref<boolean>; readonly handlers: DropTargetHandlers };
+}
+
 export function useDatabaseRowReorder(options: UseDatabaseRowReorderOptions): {
   orderedRows: Ref<DatabaseRowSnapshot[]>;
-  draggedRowId: Ref<string | null>;
-  dropTargetRowId: Ref<string | null>;
   isDraggingRow: (rowId: string) => boolean;
   isDropTargetRow: (rowId: string) => boolean;
-  onRowDragStart: (event: DragEvent, row: DatabaseRowSnapshot) => void;
-  onRowDragOver: (event: DragEvent, row: DatabaseRowSnapshot) => void;
-  onRowDrop: (event: DragEvent, row: DatabaseRowSnapshot) => Promise<void>;
-  onListDragOver: (event: DragEvent) => void;
-  onListDropEnd: (event: DragEvent) => Promise<void>;
-  clearDragState: () => void;
+  /** Per-row drag-source handlers — spread via `v-on`. */
+  rowSourceHandlers: (row: DatabaseRowSnapshot) => DragSourceHandlers;
+  /** Per-row drop-target handlers — spread via `v-on`. */
+  rowTargetHandlers: (row: DatabaseRowSnapshot) => DropTargetHandlers;
+  /** List-level drop handlers for the "after the last row" gutter. */
+  listTargetHandlers: DropTargetHandlers;
 } {
   const orderedRows = ref<DatabaseRowSnapshot[]>([]);
   const draggedRowId = ref<string | null>(null);
-  const dropTargetRowId = ref<string | null>(null);
   const persisting = ref(false);
 
   watch(
@@ -48,24 +66,39 @@ export function useDatabaseRowReorder(options: UseDatabaseRowReorderOptions): {
     { immediate: true },
   );
 
-  function moveBefore(
+  // ── Local immutable reorder helpers ───────────────────────────────
+  //
+  // Notion-style semantics:
+  //   – dragging forward (source index < target index) drops the row
+  //     **after** the hovered card, so the visible order changes from
+  //     `[A, B, C]` → `[B, A, C]` when A is dropped on B.
+  //   – dragging backward (source index > target index) drops the row
+  //     **before** the hovered card, so dropping C on A produces
+  //     `[C, A, B]`.
+  // Without this branch the move-by-one-slot case becomes a no-op
+  // because we'd splice the row back in at its original index after
+  // removal — the source bug that returned `[A, B, C]` unchanged.
+  function moveRelativeToTarget(
     rows: DatabaseRowSnapshot[],
     fromId: string,
     toId: string,
   ): DatabaseRowSnapshot[] {
-    const fromIndex = rows.findIndex((row) => row.rowId === fromId);
-    const toIndex = rows.findIndex((row) => row.rowId === toId);
-    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return rows;
+    if (fromId === toId) return rows;
+    const fromIndex = rows.findIndex((r) => r.rowId === fromId);
+    const toIndex = rows.findIndex((r) => r.rowId === toId);
+    if (fromIndex < 0 || toIndex < 0) return rows;
     const next = [...rows];
     const [moved] = next.splice(fromIndex, 1);
     if (!moved) return rows;
-    const insertAt = next.findIndex((row) => row.rowId === toId);
-    next.splice(insertAt < 0 ? next.length : insertAt, 0, moved);
+    const newTargetIndex = next.findIndex((r) => r.rowId === toId);
+    if (newTargetIndex < 0) return rows;
+    const insertAt = fromIndex < toIndex ? newTargetIndex + 1 : newTargetIndex;
+    next.splice(insertAt, 0, moved);
     return next;
   }
 
   function moveToEnd(rows: DatabaseRowSnapshot[], fromId: string): DatabaseRowSnapshot[] {
-    const fromIndex = rows.findIndex((row) => row.rowId === fromId);
+    const fromIndex = rows.findIndex((r) => r.rowId === fromId);
     if (fromIndex < 0 || fromIndex === rows.length - 1) return rows;
     const next = [...rows];
     const [moved] = next.splice(fromIndex, 1);
@@ -79,7 +112,7 @@ export function useDatabaseRowReorder(options: UseDatabaseRowReorderOptions): {
     try {
       await api.databases.rows.reorder(
         options.databaseId.value,
-        next.map((row) => row.rowId),
+        next.map((r) => r.rowId),
       );
       publishDatabaseRowsChanged(options.databaseId.value);
       options.onReordered();
@@ -88,70 +121,51 @@ export function useDatabaseRowReorder(options: UseDatabaseRowReorderOptions): {
     }
   }
 
-  function rowIdFromEvent(event: DragEvent): string | null {
-    return event.dataTransfer?.getData('text/plain') || draggedRowId.value;
-  }
+  // ── Per-row drag/drop bindings (cached per rowId) ─────────────────
+  const bindings = new Map<string, RowBindings>();
 
-  function onRowDragStart(event: DragEvent, row: DatabaseRowSnapshot): void {
-    if (!options.editable.value) return;
-    event.stopPropagation();
-    draggedRowId.value = row.rowId;
-    dropTargetRowId.value = row.rowId;
-    event.dataTransfer?.setData('text/plain', row.rowId);
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
-  }
+  function bindingsFor(row: DatabaseRowSnapshot): RowBindings {
+    const cached = bindings.get(row.rowId);
+    if (cached) return cached;
 
-  function onRowDragOver(event: DragEvent, row: DatabaseRowSnapshot): void {
-    if (!options.editable.value || !draggedRowId.value) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dropTargetRowId.value = row.rowId;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  }
+    const source = useDragSource({
+      mime: DRAG_MIME.rowId,
+      kind: DRAG_KIND,
+      disabled: () => !options.editable.value,
+      getPayload: () => row.rowId,
+      onStart: () => {
+        draggedRowId.value = row.rowId;
+      },
+      onEnd: () => {
+        if (draggedRowId.value === row.rowId) draggedRowId.value = null;
+      },
+    });
 
-  async function onRowDrop(event: DragEvent, row: DatabaseRowSnapshot): Promise<void> {
-    if (!options.editable.value) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const fromId = rowIdFromEvent(event);
-    clearDragState();
-    if (!fromId || fromId === row.rowId) return;
-    const previous = [...orderedRows.value];
-    const next = moveBefore(previous, fromId, row.rowId);
-    if (next === previous) return;
-    try {
-      await persist(next);
-    } catch (err) {
-      orderedRows.value = previous;
-      throw err;
-    }
-  }
+    const target = useDropTarget({
+      accept: DRAG_MIME.rowId,
+      acceptKind: DRAG_KIND,
+      disabled: () => !options.editable.value,
+      autoscroll: { edge: 56 },
+      onDrop: async (payload) => {
+        if (!payload || payload === row.rowId) return;
+        const previous = [...orderedRows.value];
+        const next = moveRelativeToTarget(previous, payload, row.rowId);
+        if (next === previous) return;
+        try {
+          await persist(next);
+        } catch (err) {
+          orderedRows.value = previous;
+          throw err;
+        }
+      },
+    });
 
-  function onListDragOver(event: DragEvent): void {
-    if (!options.editable.value || !draggedRowId.value) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  }
-
-  async function onListDropEnd(event: DragEvent): Promise<void> {
-    if (!options.editable.value) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('[data-row-drop-target="true"]')) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const fromId = rowIdFromEvent(event);
-    clearDragState();
-    if (!fromId) return;
-    const previous = [...orderedRows.value];
-    const next = moveToEnd(previous, fromId);
-    if (next === previous) return;
-    try {
-      await persist(next);
-    } catch (err) {
-      orderedRows.value = previous;
-      throw err;
-    }
+    const entry: RowBindings = {
+      source: { isDragging: source.isDragging, handlers: source.dragHandlers },
+      target: { isOver: target.isOver, handlers: target.dropHandlers },
+    };
+    bindings.set(row.rowId, entry);
+    return entry;
   }
 
   function isDraggingRow(rowId: string): boolean {
@@ -159,25 +173,41 @@ export function useDatabaseRowReorder(options: UseDatabaseRowReorderOptions): {
   }
 
   function isDropTargetRow(rowId: string): boolean {
-    return dropTargetRowId.value === rowId && draggedRowId.value !== rowId;
+    const entry = bindings.get(rowId);
+    return entry?.target.isOver.value === true && draggedRowId.value !== rowId;
   }
 
-  function clearDragState(): void {
-    draggedRowId.value = null;
-    dropTargetRowId.value = null;
-  }
+  // ── List-level "drop after the last row" target ───────────────────
+  const listTarget = useDropTarget({
+    accept: DRAG_MIME.rowId,
+    acceptKind: DRAG_KIND,
+    disabled: () => !options.editable.value,
+    autoscroll: { edge: 56 },
+    onDrop: async (payload, event) => {
+      // Cards (which install their own drop targets) stop propagation
+      // so this list-level callback only fires for drops that landed in
+      // the gutter outside any card — the "move to end" case.
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-row-drop-target="true"]')) return;
+      if (!payload) return;
+      const previous = [...orderedRows.value];
+      const next = moveToEnd(previous, payload);
+      if (next === previous) return;
+      try {
+        await persist(next);
+      } catch (err) {
+        orderedRows.value = previous;
+        throw err;
+      }
+    },
+  });
 
   return {
     orderedRows,
-    draggedRowId,
-    dropTargetRowId,
     isDraggingRow,
     isDropTargetRow,
-    onRowDragStart,
-    onRowDragOver,
-    onRowDrop,
-    onListDragOver,
-    onListDropEnd,
-    clearDragState,
+    rowSourceHandlers: (row) => bindingsFor(row).source.handlers,
+    rowTargetHandlers: (row) => bindingsFor(row).target.handlers,
+    listTargetHandlers: listTarget.dropHandlers,
   };
 }

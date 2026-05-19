@@ -15,9 +15,15 @@
 import type { DatabaseView, PropertyDefinition } from '@continuum/shared';
 export {
   readCommonDisplay,
+  readCardDisplay,
   type CommonDisplayLayout,
   type OpenInMode,
   type ResolvedCommonDisplayLayout,
+  type CardDisplayLayout,
+  type CardPreviewMode,
+  type CardSize,
+  type CardLayout,
+  type ResolvedCardDisplayLayout,
 } from '../../layout';
 
 /** Props every per-layout settings component receives. */

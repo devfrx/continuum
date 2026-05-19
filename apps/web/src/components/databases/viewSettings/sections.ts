@@ -32,7 +32,7 @@ export interface SectionEntry {
 
 export const SECTIONS: readonly SectionEntry[] = [
     { id: 'layout', label: 'Layout', icon: 'layout', hint: 'Renderer & layout knobs', status: 'ready' },
-    { id: 'properties', label: 'Properties', icon: 'eye', hint: 'Visible columns & order', status: 'planned' },
+    { id: 'properties', label: 'Properties', icon: 'eye', hint: 'Visible columns & order', status: 'ready' },
     { id: 'filter', label: 'Filter', icon: 'filter', hint: 'Narrow rows by conditions', status: 'ready' },
     { id: 'sort', label: 'Sort', icon: 'arrow-down', hint: 'Order rows by any property', status: 'ready' },
     { id: 'group', label: 'Group', icon: 'sidebar', hint: 'Bucket rows by a property', status: 'planned' },

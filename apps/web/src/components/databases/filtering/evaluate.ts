@@ -26,6 +26,28 @@ import type {
     SortRule,
 } from './types';
 
+// ───────────────── Optional evaluator context ─────────────────
+
+/**
+ * Pluggable resolver for `kind: 'viewMeta'` field refs. The filter
+ * engine is decoupled from the conditional-color module — callers
+ * (typically `useDatabaseViewQuery`) pass a tiny callback that knows
+ * how to derive view-scoped metadata for a row. Omitting the
+ * resolver makes every `viewMeta` field evaluate as empty, which is
+ * the correct behaviour when no view metadata is in play (e.g. inside
+ * the conditional-color rule editor itself).
+ */
+export type ViewMetaResolver = (
+    row: DatabaseRowSnapshot,
+    id: string,
+) => unknown;
+
+/** Optional evaluator context threaded through every public entry point. */
+export interface EvaluatorContext {
+    /** Resolver for synthetic `kind: 'viewMeta'` field refs. */
+    resolveViewMeta?: ViewMetaResolver | null;
+}
+
 // ───────────────── Value extraction ─────────────────
 
 /**
@@ -37,6 +59,7 @@ function readFieldValue(
     row: DatabaseRowSnapshot,
     field: FilterCondition['field'],
     schema: readonly PropertyDefinition[],
+    ctx?: EvaluatorContext,
 ): { type: string; value: unknown } | null {
     if (field.kind === 'system') {
         switch (field.id) {
@@ -63,6 +86,14 @@ function readFieldValue(
         if (!def) return null;
         const prop = row.properties.find((p) => p.definition.id === def.id);
         return propertyValue(prop, def);
+    }
+    if (field.kind === 'viewMeta') {
+        const resolver = ctx?.resolveViewMeta;
+        if (!resolver) return null;
+        const value = resolver(row, field.id);
+        return value === null || value === undefined
+            ? null
+            : { type: 'select', value };
     }
     return null;
 }
@@ -174,8 +205,9 @@ function matchCondition(
     row: DatabaseRowSnapshot,
     condition: FilterCondition,
     schema: readonly PropertyDefinition[],
+    ctx?: EvaluatorContext,
 ): boolean {
-    const cell = readFieldValue(row, condition.field, schema);
+    const cell = readFieldValue(row, condition.field, schema, ctx);
     const raw = cell?.value ?? null;
     const v: FilterValue = condition.value;
     switch (condition.operator) {
@@ -347,15 +379,16 @@ export function matchFilter(
     row: DatabaseRowSnapshot,
     node: FilterNode | null | undefined,
     schema: readonly PropertyDefinition[],
+    ctx?: EvaluatorContext,
 ): boolean {
     if (!node) return true;
-    if (isFilterCondition(node)) return matchCondition(row, node, schema);
+    if (isFilterCondition(node)) return matchCondition(row, node, schema, ctx);
     if (isFilterGroup(node)) {
         if (node.children.length === 0) return true;
         if (node.combinator === 'and') {
-            return node.children.every((c) => matchFilter(row, c, schema));
+            return node.children.every((c) => matchFilter(row, c, schema, ctx));
         }
-        return node.children.some((c) => matchFilter(row, c, schema));
+        return node.children.some((c) => matchFilter(row, c, schema, ctx));
     }
     return true;
 }
@@ -371,13 +404,14 @@ export function applySort(
     rows: readonly DatabaseRowSnapshot[],
     rules: readonly SortRule[],
     schema: readonly PropertyDefinition[],
+    ctx?: EvaluatorContext,
 ): DatabaseRowSnapshot[] {
     if (rules.length === 0) return [...rows];
     const indexed = rows.map((row, i) => ({ row, i }));
     indexed.sort((a, b) => {
         for (const rule of rules) {
-            const av = readFieldValue(a.row, rule.field, schema)?.value ?? null;
-            const bv = readFieldValue(b.row, rule.field, schema)?.value ?? null;
+            const av = readFieldValue(a.row, rule.field, schema, ctx)?.value ?? null;
+            const bv = readFieldValue(b.row, rule.field, schema, ctx)?.value ?? null;
             const cmp = compareValues(av, bv);
             if (cmp !== 0) return rule.direction === 'asc' ? cmp : -cmp;
         }

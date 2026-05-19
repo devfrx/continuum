@@ -35,7 +35,7 @@
  * column updates the row's property value through `api.properties.setValue`
  * and emits `cell-saved` so the parent reloads the snapshot.
  */
-import { computed, watch } from 'vue';
+import { computed, ref, watch, type Ref } from 'vue';
 import { Icon } from '@/components/ui';
 import { api } from '@/api';
 import {
@@ -50,6 +50,7 @@ import type {
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
 import { useConditionalColors } from '../conditionalColor';
+import { readCardDisplay } from '../layout';
 import { resolveCardProperties } from './cardProperties';
 import DatabaseCardProperty from './DatabaseCardProperty.vue';
 import {
@@ -57,6 +58,13 @@ import {
     readSelectedOptionIds,
     nextValueOnDrop,
 } from './boardGrouping';
+import {
+    DRAG_MIME,
+    useDragSource,
+    useDropTarget,
+    type DragSourceHandlers,
+    type DropTargetHandlers,
+} from '@/composables/useDragAndDrop';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
@@ -65,6 +73,49 @@ const { rowStyleFor, cellStyleFor } = useConditionalColors({
     activeView: computed(() => props.activeView),
     schema: computed(() => props.schema),
 });
+
+/**
+ * Card display knobs (preview / size / layout / colour columns) shared
+ * with the Gallery layout. Reads defensively from `config.layout` so
+ * unknown values fall back to the documented defaults.
+ */
+const cardDisplay = computed(() => readCardDisplay(props.activeView.config.layout));
+
+const boardClasses = computed(() => ({
+    'db-board--wrap': common.value.wrapContent,
+    [`db-board--size-${cardDisplay.value.cardSize}`]: true,
+    [`db-board--layout-${cardDisplay.value.cardLayout}`]: true,
+    'db-board--color-cols': cardDisplay.value.colorColumns,
+    [`db-board--preview-${cardDisplay.value.cardPreview}`]: true,
+}));
+
+/**
+ * Translate the configured `cardPreview` into a row-derived cover URL.
+ * Returns `null` whenever no media should be painted at the top of the
+ * card (preview = `none` / `properties`, or no usable image found).
+ */
+function cardCoverUrl(row: DatabaseRowSnapshot): string | null {
+    const mode = cardDisplay.value.cardPreview;
+    if (mode === 'none' || mode === 'properties') return null;
+    if (mode === 'pageCover') return row.note?.coverImage ?? null;
+    // pageContent: Board snapshots don't ship a body excerpt — fall back
+    // to a cover image when present so the user still gets a preview
+    // surface; degrade to no media otherwise.
+    return row.note?.coverImage ?? null;
+}
+
+/**
+ * Compute the soft column tint applied when `colorColumns` is on.
+ * Uses a low-alpha overlay so the column stays readable against any
+ * theme; the header dot keeps showing the saturated swatch.
+ */
+function columnStyle(column: BoardColumn): Record<string, string> {
+    if (!cardDisplay.value.colorColumns || !column.color) return {};
+    return {
+        backgroundColor: `color-mix(in srgb, ${column.color} 14%, transparent)`,
+        borderColor: `color-mix(in srgb, ${column.color} 32%, transparent)`,
+    };
+}
 
 // ── Group-by resolution ──────────────────────────────────────────────────
 
@@ -209,35 +260,79 @@ async function moveTo(row: DatabaseRowSnapshot, columnKey: string): Promise<void
 }
 
 // ── Drag-and-drop ────────────────────────────────────────────────────────
+//
+// Board cards expose a shared `application/x-continuum-card-id` MIME
+// carrying their `rowId`. Each column installs a drop target that
+// resolves the moved row by id and re-applies the saved property
+// value through `moveTo`, mirroring Notion semantics for multi-select
+// columns. Per-row source bindings + per-column target bindings are
+// cached so the templates only pay one allocation per logical entity.
 
-function onCardDragStart(event: DragEvent, row: DatabaseRowSnapshot): void {
-    if (!props.editable) return;
-    event.stopPropagation();
-    event.dataTransfer?.setData('text/plain', row.rowId);
-    event.dataTransfer!.effectAllowed = 'move';
+const BOARD_DRAG_KIND = 'database-board-card';
+
+const draggedRowId = ref<string | null>(null);
+const dropColumnKey = ref<string | null>(null);
+
+const cardSources = new Map<string, { isDragging: Ref<boolean>; handlers: DragSourceHandlers }>();
+const columnTargets = new Map<string, { isOver: Ref<boolean>; handlers: DropTargetHandlers }>();
+
+function cardHandlers(row: DatabaseRowSnapshot): DragSourceHandlers {
+    const cached = cardSources.get(row.rowId);
+    if (cached) return cached.handlers;
+    const source = useDragSource({
+        mime: DRAG_MIME.cardId,
+        kind: BOARD_DRAG_KIND,
+        disabled: () => !props.editable,
+        getPayload: () => row.rowId,
+        onStart: () => {
+            draggedRowId.value = row.rowId;
+        },
+        onEnd: () => {
+            if (draggedRowId.value === row.rowId) draggedRowId.value = null;
+            dropColumnKey.value = null;
+        },
+    });
+    cardSources.set(row.rowId, { isDragging: source.isDragging, handlers: source.dragHandlers });
+    return source.dragHandlers;
 }
 
-function onColumnDragOver(event: DragEvent): void {
-    if (!props.editable) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer!.dropEffect = 'move';
+function columnHandlers(columnKey: string): DropTargetHandlers {
+    const cached = columnTargets.get(columnKey);
+    if (cached) return cached.handlers;
+    const target = useDropTarget({
+        accept: DRAG_MIME.cardId,
+        acceptKind: BOARD_DRAG_KIND,
+        disabled: () => !props.editable,
+        autoscroll: { edge: 48 },
+        onEnter: () => {
+            dropColumnKey.value = columnKey;
+        },
+        onLeave: () => {
+            if (dropColumnKey.value === columnKey) dropColumnKey.value = null;
+        },
+        onDrop: async (payload) => {
+            dropColumnKey.value = null;
+            const row = props.rows.find((r) => r.rowId === payload);
+            if (!row) return;
+            await moveTo(row, columnKey);
+        },
+    });
+    columnTargets.set(columnKey, { isOver: target.isOver, handlers: target.dropHandlers });
+    return target.dropHandlers;
 }
 
-async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> {
-    if (!props.editable) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const rowId = event.dataTransfer?.getData('text/plain');
-    if (!rowId) return;
-    const row = props.rows.find((r) => r.rowId === rowId);
-    if (!row) return;
-    await moveTo(row, columnKey);
+function isColumnDropTarget(columnKey: string): boolean {
+    if (dropColumnKey.value !== columnKey) return false;
+    return draggedRowId.value !== null;
+}
+
+function isCardDragging(rowId: string): boolean {
+    return draggedRowId.value === rowId;
 }
 </script>
 
 <template>
-    <div class="db-board" :class="{ 'db-board--wrap': common.wrapContent }">
+    <div class="db-board" :class="boardClasses">
         <div v-if="!groupByProperty" class="db-board__empty">
             <Icon name="view-board" :size="28" />
             <h4>Board needs an option-based property</h4>
@@ -252,8 +347,9 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
                 v-for="column in columns"
                 :key="column.key"
                 class="db-board__col"
-                @dragover="onColumnDragOver"
-                @drop="(e) => onColumnDrop(e, column.key)">
+                :class="{ 'is-drop-target': isColumnDropTarget(column.key) }"
+                :style="columnStyle(column)"
+                v-on="columnHandlers(column.key)">
                 <header class="db-board__col-head">
                     <span
                         class="db-board__col-dot"
@@ -266,10 +362,16 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
                         v-for="row in column.rows"
                         :key="row.rowId"
                         class="db-board__card"
+                        :class="{ 'is-dragging': isCardDragging(row.rowId) }"
                         :draggable="editable"
                         :style="rowStyleFor(row)"
-                        @dragstart="(e) => onCardDragStart(e, row)"
+                        v-on="cardHandlers(row)"
                         @click="openRow(row)">
+                        <div
+                            v-if="cardCoverUrl(row)"
+                            class="db-board__card-cover"
+                            :class="{ 'db-board__card-cover--fit': cardDisplay.fitMedia }"
+                            :style="{ backgroundImage: `url('${cardCoverUrl(row)}')` }" />
                         <div class="db-board__card-title-row">
                             <Icon
                                 v-if="common.showPageIcon"
@@ -279,7 +381,9 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
                                 :style="{ color: colorOf(row.note.kind) }" />
                             <strong class="db-board__card-title">{{ row.note.title || 'Untitled' }}</strong>
                         </div>
-                        <div v-if="cardProperties().length" class="db-board__card-props">
+                        <div
+                            v-if="cardDisplay.cardPreview !== 'none' && cardProperties().length"
+                            class="db-board__card-props">
                             <DatabaseCardProperty
                                 v-for="def in cardProperties()"
                                 v-show="hasEntry(row, def)"
@@ -320,6 +424,20 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
     border-radius: var(--radius-md);
     display: flex;
     flex-direction: column;
+    transition:
+        border-color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.db-board__col.is-drop-target {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft, rgba(232, 220, 200, 0.18));
+}
+
+.db-board__card.is-dragging {
+    opacity: 0.55;
+    transform: scale(0.97);
 }
 
 .db-board__col-head {
@@ -458,5 +576,82 @@ async function onColumnDrop(event: DragEvent, columnKey: string): Promise<void> 
     max-width: 44ch;
     font-size: var(--text-xs);
     color: var(--text-secondary);
+}
+
+/* ── Card preview cover ─────────────────────────────────────────── */
+.db-board__card-cover {
+    aspect-ratio: 16 / 9;
+    margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) 0;
+    background-color: var(--surface-3, rgba(0, 0, 0, 0.15));
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.db-board__card-cover--fit {
+    background-size: contain;
+}
+
+/* ── Card size variants ─────────────────────────────────────────── */
+.db-board--size-small .db-board__card {
+    padding: calc(var(--space-2));
+    gap: var(--space-1);
+}
+
+.db-board--size-small .db-board__card-cover {
+    margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) 0;
+    aspect-ratio: 21 / 9;
+}
+
+.db-board--size-small .db-board__card-title {
+    font-size: var(--text-xs);
+}
+
+.db-board--size-large .db-board__card {
+    padding: var(--space-4);
+    gap: var(--space-3);
+}
+
+.db-board--size-large .db-board__card-cover {
+    margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) 0;
+    aspect-ratio: 4 / 3;
+}
+
+.db-board--size-large .db-board__card-title {
+    font-size: var(--text-md);
+}
+
+/* ── List layout (wider, single-line cards) ─────────────────────── */
+.db-board--layout-list .db-board__col {
+    min-width: 320px;
+    max-width: 380px;
+}
+
+.db-board--layout-list .db-board__card {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.db-board--layout-list .db-board__card-cover {
+    margin: 0;
+    flex: 0 0 64px;
+    aspect-ratio: 1 / 1;
+    border-radius: var(--radius-sm);
+}
+
+.db-board--layout-list .db-board__card-title-row,
+.db-board--layout-list .db-board__card-props {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.db-board--layout-list .db-board__card-props {
+    border-top: none;
+    padding-top: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-2);
 }
 </style>

@@ -31,12 +31,9 @@ const {
     orderedRows,
     isDraggingRow,
     isDropTargetRow,
-    onRowDragStart,
-    onRowDragOver,
-    onRowDrop,
-    onListDragOver,
-    onListDropEnd,
-    clearDragState,
+    rowSourceHandlers,
+    rowTargetHandlers,
+    listTargetHandlers,
 } = useDatabaseRowReorder({
     databaseId: computed(() => props.database.id),
     rows: computed(() => props.rows),
@@ -67,7 +64,7 @@ function openRow(row: DatabaseRowSnapshot): void {
 
 <template>
     <ul class="db-list" :class="{ 'db-list--wrap': common.wrapContent }"
-        @dragover="onListDragOver" @drop="onListDropEnd">
+        v-on="listTargetHandlers">
         <li v-if="!orderedRows.length" class="db-list__empty">No rows yet.</li>
         <li v-for="row in orderedRows" :key="row.rowId" data-row-drop-target="true" class="db-list__row"
             :class="{
@@ -76,10 +73,7 @@ function openRow(row: DatabaseRowSnapshot): void {
             }"
             :draggable="editable"
             :style="rowStyleFor(row)"
-            @dragstart.stop="(event) => onRowDragStart(event, row)"
-            @dragover="(event) => onRowDragOver(event, row)"
-            @drop="(event) => onRowDrop(event, row)"
-            @dragend="clearDragState">
+            v-on="{ ...rowSourceHandlers(row), ...rowTargetHandlers(row) }">
             <Icon
                 v-if="common.showPageIcon"
                 :name="iconOf(row.note.kind)"

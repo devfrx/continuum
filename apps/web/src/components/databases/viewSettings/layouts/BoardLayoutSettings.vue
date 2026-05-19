@@ -6,15 +6,21 @@
  *   – `groupByPropertyId`   `select` / `multiSelect` / `status` property
  *     used for columns. Multi-select properties make rows appear in
  *     every selected column simultaneously, matching Notion semantics.
+ *   – `colorColumns`        when `true`, columns are tinted with the
+ *     option's colour (header dot stays, background gains a soft wash).
+ *   – `cardPreview` / `cardSize` / `cardLayout`     card display knobs
+ *     shared with the Gallery layout via `CardLayoutToggles.vue`.
  *
  * Falls back to a "no group-by available" hint when the schema exposes
  * no option-based properties — same UX the renderer surfaces inside
  * the canvas.
  */
 import { computed } from 'vue';
-import { UiSelect } from '@/components/ui';
+import { UiSelect, UiSwitch } from '@/components/ui';
 import CommonDisplayToggles from './CommonDisplayToggles.vue';
+import CardLayoutToggles from './CardLayoutToggles.vue';
 import type { LayoutSettingsProps, LayoutSettingsEmits } from './types';
+import { readCardDisplay } from './types';
 import { isBoardGroupable } from '../../views/boardGrouping';
 
 const props = defineProps<LayoutSettingsProps>();
@@ -29,6 +35,8 @@ const groupByPropertyId = computed<string>(() => {
     return groupable.value[0]?.id ?? '';
 });
 
+const colorColumns = computed<boolean>(() => readCardDisplay(props.view.config.layout).colorColumns);
+
 const options = computed(() =>
     groupable.value.map((p) => ({ value: p.id, label: p.label })),
 );
@@ -39,6 +47,10 @@ function patch(p: Record<string, unknown>): void {
 
 function onGroupByChange(value: string): void {
     patch({ groupByPropertyId: value });
+}
+
+function onColorColumnsChange(value: boolean): void {
+    patch({ colorColumns: value });
 }
 </script>
 
@@ -56,6 +68,16 @@ function onGroupByChange(value: string): void {
                 aria-label="Group rows by property"
                 @update:model-value="(v) => onGroupByChange(String(v))" />
         </div>
+
+        <label class="board-layout__row">
+            <span class="board-layout__label">Color columns</span>
+            <UiSwitch
+                :model-value="colorColumns"
+                aria-label="Color board columns with the group option colour"
+                @update:model-value="onColorColumnsChange" />
+        </label>
+
+        <CardLayoutToggles :view="view" hide-fit-media @patch-layout="patch" />
         <CommonDisplayToggles :view="view" @patch-layout="patch" />
     </div>
 </template>

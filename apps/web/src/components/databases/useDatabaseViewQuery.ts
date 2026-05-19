@@ -20,8 +20,9 @@ import type {
     DatabaseView,
     PropertyDefinition,
 } from '@continuum/shared';
-import { applySort, matchFilter } from './filtering/evaluate';
+import { applySort, matchFilter, type EvaluatorContext } from './filtering/evaluate';
 import type { FilterNode, SortRule } from './filtering/types';
+import type { ConditionalColorRule } from './conditionalColor/types';
 
 export interface UseDatabaseViewQueryArgs {
     rows: Ref<DatabaseRowSnapshot[]> | ComputedRef<DatabaseRowSnapshot[]>;
@@ -67,15 +68,55 @@ export function useDatabaseViewQuery(
 
     const hasSort = computed<boolean>(() => sort.value.length > 0);
 
+    /**
+     * Conditional-color rules currently configured on the view. Used
+     * to back the synthetic `view.conditionalColor` field so filter
+     * and sort rules can reference the colour token a row matches.
+     */
+    const colorRules = computed<readonly ConditionalColorRule[]>(() => {
+        const list = args.activeView.value.config.conditionalColors;
+        return Array.isArray(list) ? list : [];
+    });
+
+    /**
+     * Evaluator context shared by filter & sort. The resolver walks the
+     * rule list and returns the first matching rule's colour token id
+     * — mirroring `evaluateRowColors` precedence. We deliberately do
+     * NOT pass the context recursively into `matchFilter` when
+     * resolving the colour (rules cannot reference their own output),
+     * so the resolver below uses an empty `EvaluatorContext`.
+     */
+    const evaluatorContext = computed<EvaluatorContext>(() => {
+        const rules = colorRules.value;
+        if (rules.length === 0) return {};
+        const schema = args.schema.value;
+        return {
+            resolveViewMeta(row, id) {
+                if (id !== 'view.conditionalColor') return null;
+                for (const rule of rules) {
+                    if (matchFilter(row, rule.condition, schema)) return rule.color;
+                }
+                return null;
+            },
+        };
+    });
+
     const filteredRows = computed<DatabaseRowSnapshot[]>(() => {
         const list = args.rows.value;
         if (!hasFilter.value) return list;
-        return list.filter((row) => matchFilter(row, filter.value, args.schema.value));
+        return list.filter((row) =>
+            matchFilter(row, filter.value, args.schema.value, evaluatorContext.value),
+        );
     });
 
     const finalRows = computed<DatabaseRowSnapshot[]>(() => {
         if (!hasSort.value) return filteredRows.value;
-        return applySort(filteredRows.value, sort.value, args.schema.value);
+        return applySort(
+            filteredRows.value,
+            sort.value,
+            args.schema.value,
+            evaluatorContext.value,
+        );
     });
 
     return { filteredRows, finalRows, hasFilter, hasSort };

@@ -5,6 +5,9 @@
  * Mirrors `GalleryView.vue` consumption from `config.layout`:
  *   – `showNoteCover`    whether the note-level cover can fill card covers
  *   – `coverPropertyId`  `files` / `url` property used for the card cover
+ *   – `cardPreview` / `cardSize` / `cardLayout` / `fitMedia`
+ *     card display knobs shared with the Board layout via
+ *     `CardLayoutToggles.vue`.
  *
  * The "None" option clears the cover so cards render as title-only
  * tiles — handled by emitting `null`.
@@ -12,6 +15,7 @@
 import { computed } from 'vue';
 import { UiSelect, UiSwitch } from '@/components/ui';
 import CommonDisplayToggles from './CommonDisplayToggles.vue';
+import CardLayoutToggles from './CardLayoutToggles.vue';
 import type { LayoutSettingsProps, LayoutSettingsEmits } from './types';
 
 const props = defineProps<LayoutSettingsProps>();
@@ -75,6 +79,7 @@ function onShowNoteCoverChange(value: boolean): void {
                 aria-label="Card cover property"
                 @update:model-value="(v) => onCoverChange(String(v))" />
         </div>
+        <CardLayoutToggles :view="view" @patch-layout="patch" />
         <CommonDisplayToggles :view="view" @patch-layout="patch" />
     </div>
 </template>

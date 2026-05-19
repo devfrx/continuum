@@ -39,6 +39,18 @@ export type SystemFieldId =
 export type GraphMetricId = 'degree' | 'inDegree' | 'outDegree';
 
 /**
+ * View-scoped synthetic fields — derived from a view's own configuration
+ * rather than from the underlying note or graph. The only entry today is
+ * `view.conditionalColor`, which exposes the matched conditional-color
+ * token as a filterable / sortable dimension inside Database views.
+ *
+ * Synthetic by design: these refs are produced by the client (the view
+ * knows its own rules) and are silently ignored by server-side query
+ * compilers — they never leak into the graph or database query plan.
+ */
+export type ViewMetaFieldId = 'view.conditionalColor';
+
+/**
  * Discriminated reference to a queryable field. The `kind` tag is what every
  * downstream consumer (filter compiler, value picker, sort) switches on.
  *
@@ -49,11 +61,16 @@ export type GraphMetricId = 'degree' | 'inDegree' | 'outDegree';
  * the matching definition rows at evaluation time, so saved filters and
  * encodings keep working when properties are added/removed on individual
  * notes.
+ *
+ * For `kind: 'viewMeta'` the value is resolved from the active view's own
+ * configuration (e.g. the colour token a row currently matches). These
+ * refs only make sense inside the view that produced them.
  */
 export type FieldRef =
   | { kind: 'system'; id: SystemFieldId }
   | { kind: 'property'; key: string }
-  | { kind: 'graphMetric'; id: GraphMetricId };
+  | { kind: 'graphMetric'; id: GraphMetricId }
+  | { kind: 'viewMeta'; id: ViewMetaFieldId };
 
 /**
  * Logical data type of a field. Drives two things:
@@ -166,6 +183,8 @@ export function fieldRefKey(ref: FieldRef): string {
       return `prop:${ref.key}`;
     case 'graphMetric':
       return `metric:${ref.id}`;
+    case 'viewMeta':
+      return `meta:${ref.id}`;
   }
 }
 
@@ -188,6 +207,8 @@ export function parseFieldRefKey(key: string): FieldRef | null {
       return PROPERTY_KEY_RE.test(rest) ? { kind: 'property', key: rest } : null;
     case 'metric':
       return { kind: 'graphMetric', id: rest as GraphMetricId };
+    case 'meta':
+      return { kind: 'viewMeta', id: rest as ViewMetaFieldId };
     default:
       return null;
   }

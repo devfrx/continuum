@@ -159,7 +159,8 @@ function hasEncodingValue(node: GraphNode, ref: FieldRef): boolean {
         const value = node.metrics?.[ref.id];
         return typeof value === 'number' && Number.isFinite(value);
     }
-    return hasPropertyValue(propertySnapshot(node, ref.key));
+    if (ref.kind === 'property') return hasPropertyValue(propertySnapshot(node, ref.key));
+    return false;
 }
 
 const coverageByChannel = computed<Record<Channel, CoverageInfo | null>>(() => {

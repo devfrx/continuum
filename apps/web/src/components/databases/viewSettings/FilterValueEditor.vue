@@ -34,6 +34,12 @@ interface OptionEntry {
 }
 
 const optionEntries = computed<OptionEntry[]>(() => {
+    // Synthetic descriptors (e.g. the conditional-color field) carry
+    // their options inline so the editor can render a real option
+    // picker without a backing PropertyDefinition.
+    if (props.descriptor.options && props.descriptor.options.length > 0) {
+        return props.descriptor.options.map((o) => ({ id: o.id, label: o.label }));
+    }
     const def = props.descriptor.definition;
     if (!def) return [];
     const config = def.config as { options?: Array<{ id: string; label: string }> } | undefined;

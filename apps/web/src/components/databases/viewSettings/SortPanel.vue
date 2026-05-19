@@ -24,7 +24,7 @@ import type {
 } from '@continuum/shared';
 import { describeFields, isSortableType } from '../filtering/operators';
 import type { DatabaseFieldDescriptor } from '../filtering/types';
-import { TITLE_FIELD_ID } from '../filtering/types';
+import { CONDITIONAL_COLOR_FIELD_ID, TITLE_FIELD_ID } from '../filtering/types';
 
 const props = defineProps<{
     view: DatabaseView;
@@ -38,7 +38,9 @@ const emit = defineEmits<{
 // ───────────────── Derived field catalogue ─────────────────
 
 const sortableFields = computed<DatabaseFieldDescriptor[]>(() =>
-    describeFields(props.schema).filter((f) => isSortableType(f.type)),
+    describeFields(props.schema, {
+        conditionalColors: props.view.config.conditionalColors,
+    }).filter((f) => isSortableType(f.type)),
 );
 
 const fieldOptions = computed(() =>
@@ -63,12 +65,18 @@ function fieldRefOf(descriptor: DatabaseFieldDescriptor): FieldRef {
     if (descriptor.id === TITLE_FIELD_ID) {
         return { kind: 'system', id: 'note.title' };
     }
+    if (descriptor.id === CONDITIONAL_COLOR_FIELD_ID) {
+        return { kind: 'viewMeta', id: 'view.conditionalColor' };
+    }
     return { kind: 'property', key: descriptor.definition!.key };
 }
 
 function fieldIdOfRule(rule: SortRule): string {
     const field = rule.field;
     if (field.kind === 'system' && field.id === 'note.title') return TITLE_FIELD_ID;
+    if (field.kind === 'viewMeta' && field.id === 'view.conditionalColor') {
+        return CONDITIONAL_COLOR_FIELD_ID;
+    }
     if (field.kind === 'property') {
         const def = props.schema.find((d) => d.key === field.key);
         return def ? def.id : '';

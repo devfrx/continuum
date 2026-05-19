@@ -19,7 +19,9 @@ import type {
     PropertyDefinition,
     PropertyType,
 } from './types';
-import { TITLE_FIELD_ID } from './types';
+import { CONDITIONAL_COLOR_FIELD_ID, TITLE_FIELD_ID } from './types';
+import { DATABASE_COLOR_TOKENS } from '../conditionalColor/palette';
+import type { ConditionalColorRule } from '../conditionalColor/types';
 
 /** Property types that map onto text-shaped operators. */
 const TEXT_TYPES: ReadonlySet<PropertyType> = new Set([
@@ -129,9 +131,61 @@ export function isSortableType(type: PropertyType): boolean {
     return true;
 }
 
+/**
+ * Operator catalogue surfaced for the synthetic conditional-color
+ * field. Mirrors a single-select property type — the value is one of
+ * the colour tokens used by the view's rules.
+ */
+const CONDITIONAL_COLOR_OPS: readonly FilterOperatorId[] = SINGLE_OPTION_OPS;
+
+/**
+ * Build the descriptor for the synthetic "conditional color" field.
+ * The option catalogue is the *unique* set of colour tokens currently
+ * referenced by the view's rules — limiting the picker to colours the
+ * user can actually trigger keeps the dropdown focused and prevents
+ * "dead" filters that never match.
+ *
+ * Returns `null` when the view has no rules, so callers can simply
+ * `?? []` the result into the field list.
+ */
+export function describeConditionalColorField(
+    rules: readonly ConditionalColorRule[] | null | undefined,
+): DatabaseFieldDescriptor | null {
+    if (!rules || rules.length === 0) return null;
+    const used = new Set<string>();
+    for (const rule of rules) {
+        if (rule.color) used.add(rule.color);
+    }
+    if (used.size === 0) return null;
+    const options = DATABASE_COLOR_TOKENS
+        .filter((t) => used.has(t.id))
+        .map((t) => ({ id: t.id, label: t.label }));
+    return {
+        id: CONDITIONAL_COLOR_FIELD_ID,
+        label: 'Conditional color',
+        type: 'select',
+        operators: CONDITIONAL_COLOR_OPS,
+        definition: null,
+        options,
+    };
+}
+
+/** Optional knobs passed to `describeFields`. */
+export interface DescribeFieldsOptions {
+    /**
+     * When provided, the active conditional-color rules drive a
+     * synthetic "Conditional color" entry at the bottom of the field
+     * list. Omit (or pass an empty list) to hide the entry — the
+     * conditional-color editor itself does this to prevent a rule from
+     * filtering on its own output.
+     */
+    conditionalColors?: readonly ConditionalColorRule[] | null;
+}
+
 /** Build the descriptor list shown by the field picker. */
 export function describeFields(
     schema: readonly PropertyDefinition[],
+    options?: DescribeFieldsOptions,
 ): DatabaseFieldDescriptor[] {
     const title: DatabaseFieldDescriptor = {
         id: TITLE_FIELD_ID,
@@ -147,15 +201,19 @@ export function describeFields(
         operators: operatorsForType(def.type),
         definition: def,
     }));
-    return [title, ...rest];
+    const list = [title, ...rest];
+    const color = describeConditionalColorField(options?.conditionalColors ?? null);
+    if (color) list.push(color);
+    return list;
 }
 
 /** Lookup helper: descriptor for one field id (or `null` if unknown). */
 export function describeField(
     schema: readonly PropertyDefinition[],
     fieldId: string,
+    options?: DescribeFieldsOptions,
 ): DatabaseFieldDescriptor | null {
-    return describeFields(schema).find((d) => d.id === fieldId) ?? null;
+    return describeFields(schema, options).find((d) => d.id === fieldId) ?? null;
 }
 
 /**

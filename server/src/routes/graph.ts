@@ -51,6 +51,10 @@ const fieldRefSchema = z.discriminatedUnion('kind', [
     kind: z.literal('graphMetric'),
     id: z.enum(['degree', 'inDegree', 'outDegree']),
   }),
+  z.object({
+    kind: z.literal('viewMeta'),
+    id: z.enum(['view.conditionalColor']),
+  }),
 ]);
 
 const operatorSchema = z.enum([

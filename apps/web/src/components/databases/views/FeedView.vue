@@ -118,12 +118,9 @@ const {
     orderedRows,
     isDraggingRow,
     isDropTargetRow,
-    onRowDragStart,
-    onRowDragOver,
-    onRowDrop,
-    onListDragOver,
-    onListDropEnd,
-    clearDragState,
+    rowSourceHandlers,
+    rowTargetHandlers,
+    listTargetHandlers,
 } = useDatabaseRowReorder({
     databaseId: computed(() => props.database.id),
     rows: sortedRows,
@@ -181,7 +178,7 @@ function openRow(row: DatabaseRowSnapshot): void {
             <Icon name="view-feed" :size="22" />
             <p>No rows yet — add the first one from the toolbar to see it appear here.</p>
         </div>
-        <ol v-else class="db-feed__list" @dragover="onListDragOver" @drop="onListDropEnd">
+        <ol v-else class="db-feed__list" v-on="listTargetHandlers">
             <li
                 v-for="row in orderedRows"
                 :key="row.rowId"
@@ -193,10 +190,7 @@ function openRow(row: DatabaseRowSnapshot): void {
                 }"
                 :draggable="editable"
                 :style="rowStyleFor(row)"
-                @dragstart.stop="(event) => onRowDragStart(event, row)"
-                @dragover="(event) => onRowDragOver(event, row)"
-                @drop="(event) => onRowDrop(event, row)"
-                @dragend="clearDragState"
+                v-on="{ ...rowSourceHandlers(row), ...rowTargetHandlers(row) }"
                 @click="openRow(row)">
                 <div class="db-feed__head">
                     <Icon

@@ -28,7 +28,7 @@
  * embed to the note-editor composables; the resolver picks the change
  * up on the next query refresh.
  */
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import { api } from '@/api';
 import { Icon, UiConfirmModal } from '@/components/ui';
 import AddPropertyModal from '@/components/properties/AddPropertyModal.vue';
@@ -54,6 +54,18 @@ import PropertyIconPicker from '@/components/properties/iconPicker/PropertyIconP
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './views/types';
 import { useDatabaseRowDisplay } from './useDatabaseRowDisplay';
 import { useConditionalColors } from './conditionalColor';
+import {
+    patchPropertyOrder,
+    resolveViewProperties,
+    type DropInsertPosition,
+} from './viewProperties';
+import {
+    DRAG_MIME,
+    useDragSource,
+    useDropTarget,
+    type DragSourceHandlers,
+    type DropTargetHandlers,
+} from '@/composables/useDragAndDrop';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
 const emit = defineEmits<DatabaseViewSurfaceEmits>();
@@ -96,28 +108,111 @@ function onPropertyCreated(): void {
 }
 
 // ── Column visibility from the active view ────────────────────────────────
-const visibleSchema = computed<PropertyDefinition[]>(() => {
-    const view = props.activeView;
-    if (!view) return props.schema;
-    const visible = view.config.visibleProperties;
-    const hidden = new Set(view.config.hiddenProperties ?? []);
+const visibleSchema = computed<PropertyDefinition[]>(() => resolveViewProperties({
+    schema: props.schema,
+    view: props.activeView,
+}));
 
-    if (visible && visible.length > 0) {
-        // Respect both the explicit order and the explicit subset; ignore
-        // any saved keys that no longer exist on the schema.
-        const byKey = new Map(props.schema.map((p) => [p.key, p] as const));
-        const ordered: PropertyDefinition[] = [];
-        for (const key of visible) {
-            if (hidden.has(key)) continue;
-            const def = byKey.get(key);
-            if (def) ordered.push(def);
-        }
-        return ordered;
-    }
-    // No explicit visibility list: show all schema properties except those
-    // the user has actively hidden in this view.
-    return props.schema.filter((p) => !hidden.has(p.key));
-});
+// ── Column order drag-and-drop ──────────────────────────────────────────
+// The persisted order uses property keys (`visibleProperties`) while the
+// transient drag surface can use the shared property MIME. Keeping this
+// logic in the table means direct header dragging and the Properties
+// settings panel write the exact same view config shape.
+const TABLE_COLUMN_DRAG_KIND = 'database-table-column';
+
+const draggedColumnKey = ref<string | null>(null);
+const dropColumnKey = ref<string | null>(null);
+const dropColumnPosition = ref<DropInsertPosition>('before');
+
+const columnSources = new Map<string, { isDragging: Ref<boolean>; handlers: DragSourceHandlers }>();
+const columnTargets = new Map<string, { isOver: Ref<boolean>; handlers: DropTargetHandlers }>();
+
+function columnDropPosition(event: DragEvent): DropInsertPosition {
+    const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    if (!target) return 'before';
+    const rect = target.getBoundingClientRect();
+    return event.clientX > rect.left + rect.width / 2 ? 'after' : 'before';
+}
+
+function updateColumnDropState(propertyKey: string, event: DragEvent): void {
+    if (draggedColumnKey.value === propertyKey) return;
+    dropColumnKey.value = propertyKey;
+    dropColumnPosition.value = columnDropPosition(event);
+}
+
+function clearColumnDropState(): void {
+    dropColumnKey.value = null;
+    dropColumnPosition.value = 'before';
+}
+
+function clearColumnDragState(): void {
+    draggedColumnKey.value = null;
+    clearColumnDropState();
+}
+
+function columnSourceHandlers(property: PropertyDefinition): DragSourceHandlers {
+    const cached = columnSources.get(property.key);
+    if (cached) return cached.handlers;
+    const source = useDragSource({
+        mime: DRAG_MIME.propertyId,
+        kind: TABLE_COLUMN_DRAG_KIND,
+        disabled: () => !props.editable || visibleSchema.value.length < 2,
+        getPayload: () => property.key,
+        onStart: () => {
+            cancelRename();
+            closeHeaderMenu();
+            draggedColumnKey.value = property.key;
+        },
+        onEnd: clearColumnDragState,
+    });
+    columnSources.set(property.key, { isDragging: source.isDragging, handlers: source.dragHandlers });
+    return source.dragHandlers;
+}
+
+function columnTargetHandlers(property: PropertyDefinition): DropTargetHandlers {
+    const cached = columnTargets.get(property.key);
+    if (cached) return cached.handlers;
+    const target = useDropTarget({
+        accept: DRAG_MIME.propertyId,
+        acceptKind: TABLE_COLUMN_DRAG_KIND,
+        disabled: () => !props.editable || visibleSchema.value.length < 2,
+        onEnter: (event) => updateColumnDropState(property.key, event),
+        onOver: (event) => updateColumnDropState(property.key, event),
+        onLeave: () => {
+            if (dropColumnKey.value === property.key) clearColumnDropState();
+        },
+        onDrop: (payload, event) => {
+            const patch = patchPropertyOrder(
+                props.schema,
+                props.activeView,
+                payload,
+                property.key,
+                columnDropPosition(event),
+            );
+            clearColumnDragState();
+            if (patch) emit('view-config-changed', patch);
+        },
+    });
+    columnTargets.set(property.key, { isOver: target.isOver, handlers: target.dropHandlers });
+    return target.dropHandlers;
+}
+
+function columnDragHandlers(property: PropertyDefinition): DragSourceHandlers & DropTargetHandlers {
+    return {
+        ...columnSourceHandlers(property),
+        ...columnTargetHandlers(property),
+    };
+}
+
+function isColumnDragging(propertyKey: string): boolean {
+    return draggedColumnKey.value === propertyKey;
+}
+
+function isColumnDropTarget(propertyKey: string, position: DropInsertPosition): boolean {
+    return dropColumnKey.value === propertyKey
+        && dropColumnPosition.value === position
+        && draggedColumnKey.value !== propertyKey;
+}
 
 // ── Column widths (table-only layout state) ──────────────────────────────
 // Widths are view-scoped, not datasource-scoped: a property name/icon/config
@@ -544,7 +639,14 @@ function onRootContextMenu(event: MouseEvent): void {
                 :key="property.id"
                 :ref="(el) => setHeaderRef(property.id, el)"
                 class="db-table__cell db-table__cell--header"
-                role="columnheader">
+                :class="{
+                    'is-column-dragging': isColumnDragging(property.key),
+                    'is-column-drop-before': isColumnDropTarget(property.key, 'before'),
+                    'is-column-drop-after': isColumnDropTarget(property.key, 'after'),
+                }"
+                role="columnheader"
+                :draggable="editable && visibleSchema.length > 1 && renameDraftId !== property.id"
+                v-on="columnDragHandlers(property)">
                 <template v-if="renameDraftId === property.id">
                     <input
                         v-model="renameDraftValue"
@@ -555,6 +657,11 @@ function onRootContextMenu(event: MouseEvent): void {
                         @blur="commitRename(property)" />
                 </template>
                 <template v-else>
+                    <Icon
+                        v-if="editable && visibleSchema.length > 1"
+                        name="drag"
+                        :size="12"
+                        class="db-table__col-drag" />
                     <Icon :name="property.icon ?? 'circle'" :size="12" />
                     <button
                         type="button"
@@ -823,6 +930,39 @@ function onRootContextMenu(event: MouseEvent): void {
     letter-spacing: 0.06em;
 }
 
+.db-table__cell--header[draggable='true'] {
+    cursor: grab;
+}
+
+.db-table__cell--header[draggable='true']:active {
+    cursor: grabbing;
+}
+
+.db-table__cell--header.is-column-dragging {
+    opacity: 0.48;
+}
+
+.db-table__cell--header.is-column-drop-before::before,
+.db-table__cell--header.is-column-drop-after::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    width: 2px;
+    border-radius: 999px;
+    background: var(--accent);
+    pointer-events: none;
+    z-index: 4;
+}
+
+.db-table__cell--header.is-column-drop-before::before {
+    left: -1px;
+}
+
+.db-table__cell--header.is-column-drop-after::after {
+    right: -1px;
+}
+
 .db-table__resize-handle {
     position: absolute;
     top: 0;
@@ -939,6 +1079,18 @@ function onRootContextMenu(event: MouseEvent): void {
 
 .db-table__col-trigger:hover {
     color: var(--text-primary);
+}
+
+.db-table__col-drag {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    opacity: 0.72;
+}
+
+.db-table__cell--header:hover .db-table__col-drag,
+.db-table__cell--header.is-column-dragging .db-table__col-drag {
+    color: var(--text-primary);
+    opacity: 1;
 }
 
 .db-table__col-rename {

@@ -23,6 +23,7 @@ import type {
 import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
 import { useConditionalColors } from '../conditionalColor';
+import { readCardDisplay } from '../layout';
 import { resolveCardProperties } from './cardProperties';
 import DatabaseCardProperty from './DatabaseCardProperty.vue';
 import { useDatabaseRowReorder } from './useDatabaseRowReorder';
@@ -39,12 +40,9 @@ const {
     orderedRows,
     isDraggingRow,
     isDropTargetRow,
-    onRowDragStart,
-    onRowDragOver,
-    onRowDrop,
-    onListDragOver,
-    onListDropEnd,
-    clearDragState,
+    rowSourceHandlers,
+    rowTargetHandlers,
+    listTargetHandlers,
 } = useDatabaseRowReorder({
     databaseId: computed(() => props.database.id),
     rows: computed(() => props.rows),
@@ -92,11 +90,15 @@ const coverProperty = computed<PropertyDefinition | null>(
     () => props.schema.find((p) => p.id === coverPropertyId.value) ?? null,
 );
 
-function coverUrlFor(row: DatabaseRowSnapshot): string | null {
-    if (showNoteCover.value) {
-        const universal = row.note?.coverImage;
-        if (universal) return universal;
-    }
+/**
+ * Card display knobs shared with the Board layout. `cardPreview`
+ * decides which surface is shown at the top of each card; the cover
+ * helpers below tailor their lookup to that choice so e.g. selecting
+ * “Page properties” ignores the note cover even when present.
+ */
+const cardDisplay = computed(() => readCardDisplay(props.activeView.config.layout));
+
+function propertyCoverUrl(row: DatabaseRowSnapshot): string | null {
     const def = coverProperty.value;
     if (!def) return null;
     const entry = row.properties.find((p) => p.definition.id === def.id);
@@ -110,9 +112,35 @@ function coverUrlFor(row: DatabaseRowSnapshot): string | null {
     return null;
 }
 
+function coverUrlFor(row: DatabaseRowSnapshot): string | null {
+    switch (cardDisplay.value.cardPreview) {
+        case 'none':
+        case 'pageContent':
+            // No usable body excerpt on the snapshot for `pageContent`;
+            // keep the card text-only rather than fabricating media.
+            return null;
+        case 'properties':
+            return propertyCoverUrl(row);
+        case 'pageCover':
+        default:
+            if (showNoteCover.value) {
+                const universal = row.note?.coverImage;
+                if (universal) return universal;
+            }
+            return propertyCoverUrl(row);
+    }
+}
+
 const hasCoverFrame = computed<boolean>(() =>
     orderedRows.value.some((row) => coverUrlFor(row) !== null),
 );
+
+const galleryClasses = computed(() => ({
+    'db-gallery--wrap': common.value.wrapContent,
+    [`db-gallery--size-${cardDisplay.value.cardSize}`]: true,
+    [`db-gallery--layout-${cardDisplay.value.cardLayout}`]: true,
+    'db-gallery--fit-media': cardDisplay.value.fitMedia,
+}));
 
 function detailProperties(): PropertyDefinition[] {
     const skip = new Set<string>();
@@ -139,12 +167,12 @@ function openRow(row: DatabaseRowSnapshot): void {
 </script>
 
 <template>
-    <div class="db-gallery" :class="{ 'db-gallery--wrap': common.wrapContent }">
+    <div class="db-gallery" :class="galleryClasses">
         <div v-if="!orderedRows.length" class="db-gallery__empty">
             <Icon name="view-gallery" :size="22" />
             <p>No rows yet — switch to Table or use the toolbar to add the first one.</p>
         </div>
-        <div v-else class="db-gallery__grid" @dragover="onListDragOver" @drop="onListDropEnd">
+        <div v-else class="db-gallery__grid" v-on="listTargetHandlers">
             <article
                 v-for="row in orderedRows"
                 :key="row.rowId"
@@ -157,10 +185,7 @@ function openRow(row: DatabaseRowSnapshot): void {
                 }"
                 :draggable="editable"
                 :style="rowStyleFor(row)"
-                @dragstart.stop="(event) => onRowDragStart(event, row)"
-                @dragover="(event) => onRowDragOver(event, row)"
-                @drop="(event) => onRowDrop(event, row)"
-                @dragend="clearDragState"
+                v-on="{ ...rowSourceHandlers(row), ...rowTargetHandlers(row) }"
                 @click="openRow(row)">
                 <div
                     v-if="coverUrlFor(row)"
@@ -179,7 +204,9 @@ function openRow(row: DatabaseRowSnapshot): void {
                             :style="{ color: colorOf(row.note.kind) }" />
                         <strong class="db-gallery__title">{{ row.note.title || 'Untitled' }}</strong>
                     </div>
-                    <div v-if="detailProperties().length" class="db-gallery__props">
+                    <div
+                        v-if="cardDisplay.cardPreview !== 'none' && detailProperties().length"
+                        class="db-gallery__props">
                         <DatabaseCardProperty
                             v-for="def in detailProperties()"
                             v-show="hasEntry(row, def)"
@@ -321,5 +348,68 @@ function openRow(row: DatabaseRowSnapshot): void {
     padding: var(--space-10, 40px) var(--space-5);
     color: var(--text-muted);
     text-align: center;
+}
+
+/* ── Card size variants ─────────────────────────────────────────── */
+.db-gallery--size-small .db-gallery__grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.db-gallery--size-small .db-gallery__body {
+    padding: var(--space-2);
+    gap: var(--space-1);
+}
+
+.db-gallery--size-small .db-gallery__title {
+    font-size: var(--text-xs);
+}
+
+.db-gallery--size-large .db-gallery__grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.db-gallery--size-large .db-gallery__body {
+    padding: var(--space-4);
+    gap: var(--space-3);
+}
+
+.db-gallery--size-large .db-gallery__title {
+    font-size: var(--text-md);
+}
+
+/* ── Fit-media: letterbox the cover rather than crop ────────────── */
+.db-gallery--fit-media .db-gallery__cover {
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-color: var(--surface-3, rgba(0, 0, 0, 0.18));
+}
+
+/* ── List layout (single column, wide cards) ────────────────────── */
+.db-gallery--layout-list .db-gallery__grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+}
+
+.db-gallery--layout-list .db-gallery__card {
+    flex-direction: row;
+    align-items: stretch;
+}
+
+.db-gallery--layout-list .db-gallery__cover {
+    aspect-ratio: auto;
+    flex: 0 0 160px;
+    align-self: stretch;
+}
+
+.db-gallery--layout-list .db-gallery__body {
+    flex: 1 1 auto;
+}
+
+.db-gallery--layout-list.db-gallery--size-small .db-gallery__cover {
+    flex-basis: 96px;
+}
+
+.db-gallery--layout-list.db-gallery--size-large .db-gallery__cover {
+    flex-basis: 240px;
 }
 </style>

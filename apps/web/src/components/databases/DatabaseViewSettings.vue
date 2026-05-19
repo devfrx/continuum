@@ -24,6 +24,7 @@ import { useDatabaseBundle } from '@/composables/useDatabase';
 import type { DatabaseView, DatabaseViewConfig, DatabaseViewType } from '@continuum/shared';
 import { sectionById, SECTIONS, type SectionId } from './viewSettings/sections';
 import LayoutPanel from './viewSettings/LayoutPanel.vue';
+import PropertiesPanel from './viewSettings/PropertiesPanel.vue';
 import DataSourcePanel from './viewSettings/DataSourcePanel.vue';
 import FilterPanel from './viewSettings/FilterPanel.vue';
 import SortPanel from './viewSettings/SortPanel.vue';
@@ -68,6 +69,7 @@ const viewSchema = computed(() => datasourceState.bundle.value?.schema ?? []);
 const POPOVER_WIDTH_DEFAULT = 280;
 const POPOVER_WIDTH_WIDE = 360;
 const POPOVER_MAX_HEIGHT = 480;
+const popoverRef = ref<HTMLElement | null>(null);
 const popoverStyle = ref<Record<string, string>>({});
 
 /**
@@ -75,19 +77,30 @@ const popoverStyle = ref<Record<string, string>>({});
  * the catalogue compact so the root menu stays readable, expand only
  * when the user drills into an editor with side-by-side controls.
  */
-const WIDE_SECTIONS: readonly SectionId[] = ['filter', 'sort', 'conditionalColor'];
+const WIDE_SECTIONS: readonly SectionId[] = ['properties', 'filter', 'sort', 'conditionalColor'];
 
 function currentWidth(): number {
     const id = activeSectionId.value;
     return id && WIDE_SECTIONS.includes(id) ? POPOVER_WIDTH_WIDE : POPOVER_WIDTH_DEFAULT;
 }
 
+function resetShellScroll(): void {
+    const popover = popoverRef.value;
+    if (!popover || popover.scrollTop === 0) return;
+    popover.scrollTop = 0;
+}
+
 function reposition(): void {
     const rect = props.anchorRect;
-    if (!rect || typeof window === 'undefined') {
-        popoverStyle.value = {};
-        return;
-    }
+    if (typeof window === 'undefined') return;
+    // If the anchor is momentarily missing (e.g. parent rebuilds the
+    // request object during a layout patch round-trip) keep the
+    // last-known popover style. Wiping it would let the wrapper fall
+    // back to content-driven sizing, making the popover balloon to fit
+    // its widest child (the segmented control) and lose its scroll
+    // cap — see the regression where toggling a switch turned the
+    // popover into a near-fullscreen panel.
+    if (!rect) return;
     const margin = 6;
     const width = currentWidth();
     const top = Math.min(rect.bottom + 4, window.innerHeight - POPOVER_MAX_HEIGHT - margin);
@@ -100,6 +113,7 @@ function reposition(): void {
         maxHeight: `${POPOVER_MAX_HEIGHT}px`,
         zIndex: '1000',
     };
+    resetShellScroll();
 }
 
 /**
@@ -176,10 +190,12 @@ onBeforeUnmount(() => {
     <Teleport to="body">
         <div
             v-if="modelValue"
+            ref="popoverRef"
             class="db-view-settings"
             role="dialog"
             aria-label="View settings"
             :style="popoverStyle"
+            @scroll.passive="resetShellScroll"
             @click.stop>
             <header class="db-view-settings__header">
                 <button
@@ -220,6 +236,11 @@ onBeforeUnmount(() => {
                     :schema="viewSchema"
                     @change-type="(type) => emit('change-type', type)"
                     @patch-layout="(patch) => emit('patch-layout', patch)" />
+                <PropertiesPanel
+                    v-else-if="activeSection.id === 'properties'"
+                    :view="view"
+                    :schema="viewSchema"
+                    @patch-config="(patch) => emit('patch-config', patch)" />
                 <FilterPanel
                     v-else-if="activeSection.id === 'filter'"
                     :view="view"
@@ -256,6 +277,19 @@ onBeforeUnmount(() => {
  * standard floating elevation; no glass / blur.
  */
 .db-view-settings {
+    /**
+     * Default geometry. The inline `popoverStyle` overrides width /
+     * maxHeight once `reposition()` runs, but we keep these CSS
+     * fallbacks so the wrapper can never collapse to content-driven
+     * sizing — without them, a child with a wide intrinsic preferred
+     * size (e.g. the "Open pages in" segmented control) would balloon
+     * the popover horizontally and uncap its height. See the
+     * regression where toggling a layout switch turned the panel into
+     * a near-fullscreen empty drawer.
+     */
+    width: 280px;
+    max-width: 360px;
+    max-height: 480px;
     background: var(--surface-2);
     color: var(--text-primary);
     border: var(--border-width-1) solid var(--border);
@@ -263,7 +297,7 @@ onBeforeUnmount(() => {
     box-shadow: var(--shadow-dropdown);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: clip;
 }
 
 .db-view-settings__header {

@@ -114,7 +114,10 @@ async function onAddView(payload: {
 }
 
 function defaultViewName(type: DatabaseViewType): string {
-    const count = blockViewsState.views.value.length + 1;
+    // New views adopt the human-readable label of their layout as the
+    // default name. The user can rename them right after creation; no
+    // numeric suffix is appended so the picker stays clean when many
+    // views share a layout.
     const labels: Record<DatabaseViewType, string> = {
         table: 'Table',
         board: 'Board',
@@ -128,7 +131,7 @@ function defaultViewName(type: DatabaseViewType): string {
         map: 'Map',
         form: 'Form',
     };
-    return `${labels[type] ?? 'View'} ${count}`;
+    return labels[type] ?? 'View';
 }
 
 /**

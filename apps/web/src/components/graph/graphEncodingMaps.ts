@@ -152,7 +152,10 @@ function numberForNode(node: GraphNode, ref: FieldRef): number | null {
     if (ref.id === 'note.updatedAt') return node.updatedAt ? timestampValue(node.updatedAt) : null;
     return null;
   }
-  return numberForPropertyValue(propertySnapshot(node, ref.key)?.value);
+  if (ref.kind === 'property') {
+    return numberForPropertyValue(propertySnapshot(node, ref.key)?.value);
+  }
+  return null;
 }
 
 function categoryKeyForPropertyValue(value: PropertyValue | null | undefined): string | null {
@@ -242,7 +245,7 @@ function hasBadgeValue(node: GraphNode, ref: FieldRef): boolean {
     if (ref.id === 'note.kind') return Boolean(node.kind);
     return false;
   }
-  const value = propertySnapshot(node, ref.key)?.value;
+  const value = ref.kind === 'property' ? propertySnapshot(node, ref.key)?.value : undefined;
   return categoryKeyForPropertyValue(value) != null || numberForPropertyValue(value) != null;
 }
 
@@ -261,7 +264,8 @@ function badgeIconForNode(
     return null;
   }
   if (ref.kind === 'graphMetric') return 'graph';
-  return opts.propertyByKey(ref.key)?.icon ?? 'sparkles';
+  if (ref.kind === 'property') return opts.propertyByKey(ref.key)?.icon ?? 'sparkles';
+  return 'sparkles';
 }
 
 function numericRangeFor(nodes: GraphNode[], ref: FieldRef | null): NumericRange {
