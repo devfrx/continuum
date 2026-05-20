@@ -71,6 +71,7 @@ const _ICONS = {
   'trash': { icon: 'solar:trash-bin-trash-bold' },
   'copy': { icon: 'solar:copy-bold' },
   'save': { icon: 'solar:diskette-bold' },
+  'upload': { icon: 'solar:upload-minimalistic-bold' },
   'download': { icon: 'solar:download-minimalistic-bold' },
   'menu': { icon: 'solar:hamburger-menu-bold' },
   'more-horizontal': { icon: 'solar:menu-dots-bold' },
@@ -116,7 +117,33 @@ const _ICONS = {
 
   // ── Editor — blocks & inline ────────────────────────────────────────────
   'image': { icon: 'solar:gallery-bold' },
+  'video': {
+    inner:
+      '<rect x="3" y="6" width="12" height="12" rx="3" fill="currentColor" opacity="0.92"/>'
+      + '<path d="M16 10.1l3.4-2.1c.7-.4 1.6.1 1.6.9v6.2c0 .8-.9 1.3-1.6.9L16 13.9v-3.8z" fill="currentColor" opacity="0.92"/>',
+    viewBox: '0 0 24 24',
+  },
+  'audio': {
+    inner:
+      '<path d="M10 5.6v12.8a1.2 1.2 0 0 1-1.85 1.01L4.7 17.2H3.6A1.6 1.6 0 0 1 2 15.6v-7.2a1.6 1.6 0 0 1 1.6-1.6h1.1l3.45-2.21A1.2 1.2 0 0 1 10 5.6z" fill="currentColor"/>'
+      + '<path d="M14.2 8.2a5.4 5.4 0 0 1 0 7.6M17.1 5.4a9.4 9.4 0 0 1 0 13.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.78"/>',
+    viewBox: '0 0 24 24',
+  },
   'file': { icon: 'solar:document-bold' },
+  'breadcrumbs': {
+    inner:
+      '<circle cx="5" cy="12" r="2.4" fill="currentColor"/>'
+      + '<circle cx="12" cy="12" r="2.4" fill="currentColor" opacity="0.78"/>'
+      + '<circle cx="19" cy="12" r="2.4" fill="currentColor" opacity="0.56"/>'
+      + '<path d="M7.8 12h1.8m4.8 0h1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity="0.55"/>',
+    viewBox: '0 0 24 24',
+  },
+  'tabs': {
+    inner:
+      '<path d="M4 6.8A2.8 2.8 0 0 1 6.8 4h2.8c.9 0 1.73.43 2.25 1.14l.76 1.02c.25.34.65.54 1.08.54H17.2A2.8 2.8 0 0 1 20 9.5v7.7a2.8 2.8 0 0 1-2.8 2.8H6.8A2.8 2.8 0 0 1 4 17.2V6.8Z" fill="currentColor" opacity="0.9"/>'
+      + '<path d="M7 9h10M7 13h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.42"/>',
+    viewBox: '0 0 24 24',
+  },
   'callout': { icon: 'solar:notification-unread-bold' },
   'toggle': { icon: 'solar:square-alt-arrow-right-bold' },
   'task': { icon: 'solar:checklist-bold' },

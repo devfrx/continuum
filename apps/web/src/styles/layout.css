@@ -76,9 +76,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
-  color: var(--fg-subtle);
-  border: var(--border-width-1) solid var(--border-subtle);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border: var(--border-width-1) solid var(--accent-border);
   border-left: none;
   border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
   cursor: pointer;
@@ -95,10 +95,10 @@
 
 .sidebar-pill:hover,
 .sidebar-pill.is-active {
-  background: var(--surface-2);
-  color: var(--fg-strong);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-2));
+  color: var(--accent-hover);
   width: 18px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-accent);
 }
 
 .sidebar-pill:focus-visible {

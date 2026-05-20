@@ -10,12 +10,14 @@
  * `editable=false` from the editor.
  */
 import { computed, ref, watch } from 'vue';
-import { ContinuumEditor, type IconCatalogEntry } from '@continuum/editor';
+import { ContinuumEditor, type EditorNoteContext, type IconCatalogEntry } from '@continuum/editor';
 import { Icon, UiSelect } from '@/components/ui';
 import { useKinds } from '@/composables/useKinds';
 import type { Note } from '@continuum/shared';
 import type { OpenInMode } from '@/components/databases/layout';
 import DatabaseBlockEmbed from '@/components/databases/DatabaseBlockEmbed.vue';
+import BreadcrumbBlockEmbed from '@/components/editorBlocks/BreadcrumbBlockEmbed.vue';
+import MediaBlockEmbed from '@/components/editorBlocks/MediaBlockEmbed.vue';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -34,6 +36,15 @@ void kinds.load();
 
 const content = ref('');
 const contentJson = ref<unknown>(null);
+
+const editorNoteContext = computed<EditorNoteContext | null>(() => {
+  if (!props.note) return null;
+  return {
+    noteId: props.note.id,
+    title: props.note.title,
+    folderId: props.note.folderId ?? null,
+  };
+});
 
 watch(
   () => props.note,
@@ -87,7 +98,10 @@ function openFullPage(): void {
             :icon-catalog="iconCatalog"
             :icon-component="Icon"
             :select-component="UiSelect"
-            :database-component="DatabaseBlockEmbed" />
+            :database-component="DatabaseBlockEmbed"
+            :breadcrumb-component="BreadcrumbBlockEmbed"
+            :media-component="MediaBlockEmbed"
+            :note-context="editorNoteContext" />
         </div>
       </article>
     </div>

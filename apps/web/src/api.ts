@@ -295,7 +295,16 @@ export const api = {
       const fd = new FormData();
       fd.append('file', file, file.name);
       const res = await fetch(`${BASE}/uploads`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        let message = `${res.status} ${res.statusText}`;
+        try {
+          const payload = (await res.json()) as { message?: string; error?: string };
+          message = payload.message ?? payload.error ?? message;
+        } catch {
+          // Keep the HTTP fallback when the server returns a non-JSON error.
+        }
+        throw new Error(message);
+      }
       return (await res.json()) as FileRef;
     },
     /** Delete an uploaded file from disk by id. */

@@ -6,6 +6,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Callout } from '../../nodes/Callout';
 import { Details, DetailsContent, DetailsSummary } from '../../nodes/Details';
+import { Tabs, TabPanel } from '../../nodes/Tabs';
 import { listTopLevelBlocks, type EditorBlockSnapshot } from '../blockActions';
 import {
   getTurnIntoTargetsForBlock,
@@ -25,6 +26,10 @@ function blockSnapshot(type: string, attrs: Record<string, unknown> = {}): Edito
     from: 0,
     to: 1,
     index: 0,
+    siblingIndex: 0,
+    depth: 0,
+    parentPos: null,
+    parentType: 'doc',
     node: { attrs, type: { name: type } } as ProseMirrorNode,
     type,
     label: type,
@@ -67,6 +72,8 @@ function createTestEditor(content: JSONContent): Editor {
       Details,
       DetailsSummary,
       DetailsContent,
+      Tabs,
+      TabPanel,
     ],
     content,
   });
@@ -131,6 +138,26 @@ describe('getTurnIntoTargetsForBlock', () => {
     expect(getTurnIntoTargetsForBlock(blockSnapshot('database'))).toHaveLength(0);
     expect(getTurnIntoTargetsForBlock(blockSnapshot('heading')).map((target) => target.id))
       .toContain('paragraph');
+  });
+});
+
+describe('listTopLevelBlocks', () => {
+  it('includes direct blocks inside tab panels as movable editor blocks', () => {
+    const editor = createTestEditor(doc([
+      {
+        type: 'tabs',
+        attrs: { activeTabId: 'one' },
+        content: [
+          { type: 'tabPanel', attrs: { id: 'one', title: 'One' }, content: [paragraph('inside')] },
+          { type: 'tabPanel', attrs: { id: 'two', title: 'Two' }, content: [paragraph('other')] },
+        ],
+      },
+    ]));
+
+    const blocks = listTopLevelBlocks(editor);
+
+    expect(blocks.map((block) => block.type)).toEqual(['tabs', 'paragraph', 'paragraph']);
+    expect(blocks[1]).toMatchObject({ parentType: 'tabPanel', depth: 1, siblingIndex: 0 });
   });
 });
 

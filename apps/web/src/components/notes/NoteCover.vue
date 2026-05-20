@@ -251,11 +251,11 @@ function finishDrag(event: PointerEvent, commit: boolean): void {
   font-size: 0.75rem;
   cursor: pointer;
   border-radius: 4px;
-  opacity: 0;
+  opacity: 0.5;
   transition: opacity 0.12s ease;
 }
 
-:global(.editor-header:hover) .note-cover-add__btn,
+.note-cover-add:hover .note-cover-add__btn,
 .note-cover-add__btn:focus-visible {
   opacity: 1;
 }

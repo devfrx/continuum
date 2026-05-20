@@ -5,7 +5,8 @@
  * focused on UI concerns. Built lazily so collaboration mode can swap the
  * undo/redo history out without re-declaring the rest of the pipeline.
  *
- * Custom blocks (Callout, Chart, Database, Details, Footnote, CodeBlock)
+ * Custom blocks (Callout, Chart, Database, Details, Footnote, CodeBlock,
+ * Breadcrumbs, Media, Tabs)
  * are sourced from the block registry — see `./blocks` — so adding a new
  * block only requires registering a `BlockDefinition`, never editing
  * this file.
@@ -66,6 +67,12 @@ interface BuildOptions {
   databaseView?: Component;
   /** Vue NodeView for the inline Footnote atom (marker + edit popover). */
   footnoteView: Component;
+  /** Vue NodeView wrapper for the dynamic Breadcrumbs block. */
+  breadcrumbBlockView: Component;
+  /** Vue NodeView wrapper for video/audio/file blocks. */
+  mediaBlockView: Component;
+  /** Vue NodeView for the tabbed container block. */
+  tabsView: Component;
   /**
    * Slash-menu wiring. When omitted (or `items` is empty) the slash
    * extension is skipped entirely so embeds that don't want a command
@@ -118,6 +125,9 @@ export function buildExtensions(opts: BuildOptions) {
       chartView: opts.chartView,
       databaseView: opts.databaseView,
       footnoteView: opts.footnoteView,
+      breadcrumbBlockView: opts.breadcrumbBlockView,
+      mediaBlockView: opts.mediaBlockView,
+      tabsView: opts.tabsView,
     }),
   );
 
@@ -183,7 +193,7 @@ export function buildExtensions(opts: BuildOptions) {
       },
     }),
     // Custom blocks (Callout, Details + summary + content, Chart,
-    // Database, Footnote, CodeBlock) — sourced from the registry so
+    // Database, Footnote, CodeBlock, Breadcrumbs, Media, Tabs) — sourced from the registry so
     // adding a block elsewhere does not require touching this list.
     ...registry.listExtensions(),
     TrailingNode,

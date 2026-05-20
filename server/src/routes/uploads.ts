@@ -18,8 +18,10 @@
  *
  * Static serving (read-only) is wired separately in `server/src/index.ts`.
  */
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
-import { resolve, extname } from 'node:path';
+import { createWriteStream } from 'node:fs';
+import { mkdir, rm, stat } from 'node:fs/promises';
+import { resolve, extname, isAbsolute, relative } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import multipart from '@fastify/multipart';
@@ -33,7 +35,8 @@ function safeName(input: string): string {
     .replace(/[\x00-\x1f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return cleaned.length > 200 ? cleaned.slice(0, 200) : cleaned || 'file';
+  const safe = cleaned === '.' || cleaned === '..' ? 'file' : cleaned;
+  return safe.length > 200 ? safe.slice(0, 200) : safe || 'file';
 }
 
 /** Resolve the uploads dir relative to the process cwd when not absolute. */
@@ -41,9 +44,15 @@ function uploadsRoot(): string {
   return resolve(process.cwd(), env.UPLOADS_DIR);
 }
 
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel));
+}
+
 export const uploadRoutes: FastifyPluginAsync = async (app) => {
   await app.register(multipart, {
     limits: { fileSize: env.UPLOADS_MAX_BYTES, files: 1 },
+    throwFileSizeLimit: false,
   });
 
   await mkdir(uploadsRoot(), { recursive: true });
@@ -58,8 +67,15 @@ export const uploadRoutes: FastifyPluginAsync = async (app) => {
 
     const name = safeName(file.filename || `upload${extname(file.filename || '')}`);
     const target = resolve(dir, name);
+    if (!isInside(dir, target)) return reply.badRequest('Path traversal rejected');
 
-    const buffer = await file.toBuffer();
+    try {
+      await pipeline(file.file, createWriteStream(target, { flags: 'wx' }));
+    } catch (err) {
+      await rm(dir, { recursive: true, force: true });
+      throw err;
+    }
+
     if (file.file.truncated) {
       await rm(dir, { recursive: true, force: true });
       return reply.code(413).send({
@@ -67,7 +83,7 @@ export const uploadRoutes: FastifyPluginAsync = async (app) => {
         message: `File exceeds the ${env.UPLOADS_MAX_BYTES} byte limit`,
       });
     }
-    await writeFile(target, buffer);
+
     const stats = await stat(target);
 
     const ref: FileRef = {
@@ -88,7 +104,7 @@ export const uploadRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Invalid upload id');
     }
     const dir = resolve(uploadsRoot(), id);
-    if (!dir.startsWith(uploadsRoot())) {
+    if (!isInside(uploadsRoot(), dir)) {
       return reply.badRequest('Path traversal rejected');
     }
     await rm(dir, { recursive: true, force: true });

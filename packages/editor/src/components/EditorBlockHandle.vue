@@ -29,7 +29,7 @@ import {
   getBlockAtElement,
   getBlockAtPos,
   insertParagraphAfterBlock,
-  listTopLevelBlocks,
+  listSiblingBlocks,
   moveBlockTo,
   selectBlock,
 } from '../blocks/blockActions';
@@ -67,16 +67,16 @@ const toolbarStyle = computed(() => ({
   top: `${toolbarPlacement.value?.y ?? 0}px`,
 }));
 
-const blockList = computed(() => {
-  // Re-read whenever an editor transaction bumps `blockVersion`.
+const activeSiblings = computed(() => {
+  const block = activeBlock.value;
   blockVersion.value;
-  return listTopLevelBlocks(props.editor);
+  return block ? listSiblingBlocks(props.editor, block) : [];
 });
 
 const activeBlockIndex = computed(() => {
   const block = activeBlock.value;
   if (!block) return -1;
-  return blockList.value.findIndex(
+  return activeSiblings.value.findIndex(
     (candidate) => candidate.from === block.from && candidate.to === block.to,
   );
 });
@@ -84,7 +84,7 @@ const activeBlockIndex = computed(() => {
 const canMoveUp = computed(() => activeBlockIndex.value > 0);
 const canMoveDown = computed(() => {
   const index = activeBlockIndex.value;
-  return index >= 0 && index < blockList.value.length - 1;
+  return index >= 0 && index < activeSiblings.value.length - 1;
 });
 
 const dropIndicatorStyle = computed(() => {
@@ -419,6 +419,7 @@ onBeforeUnmount(() => {
         'is-menu-open': menuOpen,
         'is-menu-above': menuOpensAbove,
         'is-dragging': draggingBlock !== null,
+        'is-nested': activeBlock.depth > 0,
       }"
       :style="toolbarStyle"
       @pointerenter="onHandlePointerEnter"

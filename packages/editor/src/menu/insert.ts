@@ -1,6 +1,6 @@
 /**
  * "Insert" submenu — block-level inserts (divider, quote, code block,
- * task list, toggle, callout, table, database views, image, wikilink).
+ * task list, toggle, callout, tabs, table, database views, image, wikilink).
  */
 import type { ContextMenuItem } from '@continuum/shared';
 import {
@@ -8,6 +8,8 @@ import {
   type DatabaseBlockInitialView,
 } from '@continuum/shared';
 import type { MenuContext } from '../editorMenu';
+import { createMediaBlockAttrs } from '../nodes/mediaBlockTypes';
+import { createTabsBlockContent } from '../nodes/tabsTypes';
 
 function newBlockId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -78,6 +80,12 @@ export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
         }).run(),
       },
       {
+        id: 'in-tabs',
+        label: 'Tabs',
+        icon: 'tabs',
+        onSelect: () => editor.chain().focus().insertContent(createTabsBlockContent()).run(),
+      },
+      {
         id: 'in-table',
         label: 'Table',
         icon: 'table',
@@ -100,6 +108,15 @@ export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
         onSelect: () => insertDatabaseView(ctx),
       },
       {
+        id: 'in-breadcrumbs',
+        label: 'Breadcrumbs',
+        icon: 'breadcrumbs',
+        onSelect: () => editor.chain().focus().insertContent({
+          type: 'breadcrumbBlock',
+          attrs: { showLeaf: true },
+        }).run(),
+      },
+      {
         id: 'in-image',
         label: 'Image\u2026',
         icon: 'image',
@@ -112,6 +129,33 @@ export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
           });
           if (url) editor.chain().focus().setImage({ src: url }).run();
         },
+      },
+      {
+        id: 'in-video',
+        label: 'Video',
+        icon: 'video',
+        onSelect: () => editor.chain().focus().insertContent({
+          type: 'mediaBlock',
+          attrs: createMediaBlockAttrs('video'),
+        }).run(),
+      },
+      {
+        id: 'in-audio',
+        label: 'Audio',
+        icon: 'audio',
+        onSelect: () => editor.chain().focus().insertContent({
+          type: 'mediaBlock',
+          attrs: createMediaBlockAttrs('audio'),
+        }).run(),
+      },
+      {
+        id: 'in-file',
+        label: 'File',
+        icon: 'file',
+        onSelect: () => editor.chain().focus().insertContent({
+          type: 'mediaBlock',
+          attrs: createMediaBlockAttrs('file'),
+        }).run(),
       },
       {
         id: 'in-wikilink',

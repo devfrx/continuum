@@ -9,7 +9,7 @@
  *
  * Native StarterKit-based items (paragraph, headings, lists, quote,
  * divider, table, wikilink) are declared inline below. Custom-block
- * items (toggle, callout, code-block, database, footnote) are sourced
+ * items (toggle, callout, tabs, code-block, database, footnote) are sourced
  * from the block registry (`BUILTIN_BLOCK_SLASH`), while database view
  * layouts are exposed as first-class insert commands backed by the same
  * `database` node.
@@ -140,7 +140,9 @@ export function createDefaultSlashCommands(): SlashCommandItem[] {
         editor.chain().focus().deleteRange(range).setBlockquote().run(),
     },
     block.callout,
+    block.tabs,
     block.codeBlock,
+    block.breadcrumb,
     {
       id: 'divider',
       title: 'Divider',
@@ -169,6 +171,9 @@ export function createDefaultSlashCommands(): SlashCommandItem[] {
           .run(),
     },
     block.database,
+    block.video,
+    block.audio,
+    block.file,
     ...DATABASE_VIEW_BLOCK_SLASH,
     {
       id: 'wikilink',

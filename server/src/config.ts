@@ -57,12 +57,12 @@ const schema = z.object({
   /**
    * Directory where uploaded files (used by the `files` property type) are
    * persisted. Resolved relative to the server's working directory unless
-   * an absolute path is provided. Served read-only at `/uploads/*`.
+  * an absolute path is provided. Served read-only at `/api/uploads/*`.
    */
   UPLOADS_DIR: z.string().default('./.docker-data/uploads'),
 
-  /** Max accepted upload size in bytes for a single file. Default 25 MiB. */
-  UPLOADS_MAX_BYTES: z.coerce.number().default(25 * 1024 * 1024),
+  /** Max accepted upload size in bytes for a single file. Default 512 MiB. */
+  UPLOADS_MAX_BYTES: z.coerce.number().default(512 * 1024 * 1024),
 });
 
 export const env = schema.parse(process.env);

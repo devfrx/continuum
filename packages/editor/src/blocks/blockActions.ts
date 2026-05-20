@@ -15,6 +15,10 @@ export interface EditorBlockSnapshot {
   from: number;
   to: number;
   index: number;
+  siblingIndex: number;
+  depth: number;
+  parentPos: number | null;
+  parentType: 'doc' | 'tabPanel';
   node: ProseMirrorNode;
   type: string;
   label: string;
@@ -41,6 +45,7 @@ const KNOWN_BLOCKS: Record<string, KnownBlockPresentation> = {
   details: { label: 'Toggle', icon: 'toggle' },
   chart: { label: 'Chart', icon: 'chart' },
   database: { label: 'Database', icon: 'database' },
+  tabs: { label: 'Tabs', icon: 'tabs' },
 };
 
 function presentationFor(node: ProseMirrorNode): KnownBlockPresentation {
@@ -65,25 +70,68 @@ function cloneForDuplicate(node: ProseMirrorNode): ProseMirrorNode {
   return node.type.create(attrs, content, node.marks);
 }
 
-/** Iterate the document's direct block children with their start positions. */
+/** Iterate movable editor blocks: document children plus direct children of tab panels. */
 export function listTopLevelBlocks(editor: Editor): EditorBlockSnapshot[] {
   const blocks: EditorBlockSnapshot[] = [];
   editor.state.doc.forEach((node, offset, index) => {
     if (!node.isBlock) return;
-    const pos = offset;
-    const presentation = presentationFor(node);
-    blocks.push({
-      pos,
-      from: pos,
-      to: pos + node.nodeSize,
-      index,
-      node,
-      type: node.type.name,
-      label: presentation.label,
-      icon: presentation.icon,
-    });
+    pushBlock(blocks, node, offset, index, 0, null, 'doc');
+    collectTabPanelBlocks(blocks, node, offset, 1);
   });
   return blocks;
+}
+
+export function listSiblingBlocks(editor: Editor, block: EditorBlockSnapshot): EditorBlockSnapshot[] {
+  return listTopLevelBlocks(editor).filter((candidate) => sameParent(candidate, block));
+}
+
+function pushBlock(
+  blocks: EditorBlockSnapshot[],
+  node: ProseMirrorNode,
+  pos: number,
+  siblingIndex: number,
+  depth: number,
+  parentPos: number | null,
+  parentType: EditorBlockSnapshot['parentType'],
+): void {
+  const presentation = presentationFor(node);
+  blocks.push({
+    pos,
+    from: pos,
+    to: pos + node.nodeSize,
+    index: blocks.length,
+    siblingIndex,
+    depth,
+    parentPos,
+    parentType,
+    node,
+    type: node.type.name,
+    label: presentation.label,
+    icon: presentation.icon,
+  });
+}
+
+function collectTabPanelBlocks(
+  blocks: EditorBlockSnapshot[],
+  node: ProseMirrorNode,
+  nodePos: number,
+  depth: number,
+): void {
+  if (node.type.name !== 'tabs') return;
+  node.forEach((panel, panelOffset) => {
+    if (panel.type.name !== 'tabPanel') return;
+    const panelPos = nodePos + 1 + panelOffset;
+    panel.forEach((child, childOffset, siblingIndex) => {
+      if (!child.isBlock) return;
+      const childPos = panelPos + 1 + childOffset;
+      pushBlock(blocks, child, childPos, siblingIndex, depth, panelPos, 'tabPanel');
+      collectTabPanelBlocks(blocks, child, childPos, depth + 1);
+    });
+  });
+}
+
+function sameParent(a: EditorBlockSnapshot, b: EditorBlockSnapshot): boolean {
+  return a.parentType === b.parentType && a.parentPos === b.parentPos;
 }
 
 /** Resolve the direct child block containing `pos`. */
@@ -91,24 +139,13 @@ export function getBlockAtPos(editor: Editor, pos: number): EditorBlockSnapshot 
   const doc = editor.state.doc;
   const safePos = Math.max(0, Math.min(pos, doc.content.size));
   let found: EditorBlockSnapshot | null = null;
-  doc.forEach((node, offset, index) => {
-    if (found || !node.isBlock) return;
-    const from = offset;
-    const to = from + node.nodeSize;
+  for (const block of listTopLevelBlocks(editor)) {
+    const from = block.from;
+    const to = block.to;
     const isEndOfLastBlock = safePos === doc.content.size && to === doc.content.size;
-    if (safePos < from || (safePos >= to && !isEndOfLastBlock)) return;
-    const presentation = presentationFor(node);
-    found = {
-      pos: from,
-      from,
-      to,
-      index,
-      node,
-      type: node.type.name,
-      label: presentation.label,
-      icon: presentation.icon,
-    };
-  });
+    if (safePos < from || (safePos >= to && !isEndOfLastBlock)) continue;
+    if (!found || block.depth > found.depth) found = block;
+  }
   return found;
 }
 
@@ -204,7 +241,7 @@ export function duplicateBlock(editor: Editor, block: EditorBlockSnapshot): bool
 export function deleteBlock(editor: Editor, block: EditorBlockSnapshot): boolean {
   const { state, view } = editor;
   const paragraph = state.schema.nodes.paragraph?.create();
-  const isOnlyBlock = listTopLevelBlocks(editor).length <= 1;
+  const isOnlyBlock = listSiblingBlocks(editor, block).length <= 1;
   const tr = isOnlyBlock && paragraph
     ? state.tr.replaceWith(block.from, block.to, paragraph)
     : state.tr.delete(block.from, block.to);
@@ -235,7 +272,7 @@ export function moveBlockBy(
   block: EditorBlockSnapshot,
   direction: -1 | 1,
 ): boolean {
-  const blocks = listTopLevelBlocks(editor);
+  const blocks = listSiblingBlocks(editor, block);
   const current = blocks.find(
     (candidate) => candidate.from === block.from && candidate.to === block.to,
   );

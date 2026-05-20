@@ -6,7 +6,7 @@
  * a renderer down through `ContinuumEditor` props; node views consume both
  * via `provide/inject` keys defined here.
  */
-import type { Component, InjectionKey } from 'vue';
+import type { Component, ComputedRef, InjectionKey } from 'vue';
 
 export interface IconCatalogEntry {
   /** Stable identifier used as `name:<id>` in the Callout `icon` attribute. */
@@ -33,4 +33,26 @@ export const SELECT_COMPONENT_KEY: InjectionKey<Component> = Symbol('continuum.s
  */
 export const DATABASE_COMPONENT_KEY: InjectionKey<Component> = Symbol(
   'continuum.databaseComponent',
+);
+
+export interface EditorNoteContext {
+  noteId: string | null;
+  title: string;
+  folderId: string | null;
+  onSelectFolder?: (folderId: string | null) => void;
+}
+
+/** Host component used to render the dynamic breadcrumb block. */
+export const BREADCRUMB_COMPONENT_KEY: InjectionKey<Component> = Symbol(
+  'continuum.breadcrumbComponent',
+);
+
+/** Host component used to render video/audio/file blocks. */
+export const MEDIA_COMPONENT_KEY: InjectionKey<Component> = Symbol(
+  'continuum.mediaComponent',
+);
+
+/** Reactive note context consumed by host-aware node views. */
+export const EDITOR_NOTE_CONTEXT_KEY: InjectionKey<ComputedRef<EditorNoteContext | null>> = Symbol(
+  'continuum.editorNoteContext',
 );

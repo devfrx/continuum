@@ -14,6 +14,8 @@ import { Icon, UiButton, UiConfirmModal, UiInput, UiSelect, UiTextarea } from '@
 import { ICONS, type AppIconName } from '@/assets/icons';
 import { useKinds } from '@/composables/useKinds';
 import { usePageTemplates } from '@/composables/usePageTemplates';
+import BreadcrumbBlockEmbed from '@/components/editorBlocks/BreadcrumbBlockEmbed.vue';
+import MediaBlockEmbed from '@/components/editorBlocks/MediaBlockEmbed.vue';
 import TemplatePropertiesPanel from './TemplatePropertiesPanel.vue';
 
 const props = defineProps<{
@@ -207,6 +209,8 @@ async function confirmDelete(): Promise<void> {
           placeholder="Write the template body — appears in every note created from this template."
           :icon-catalog="editorIconCatalog"
           :icon-component="Icon"
+          :breadcrumb-component="BreadcrumbBlockEmbed"
+          :media-component="MediaBlockEmbed"
         />
       </section>
 

@@ -39,6 +39,9 @@ import CalloutNodeView from './nodes/CalloutNodeView.vue';
 import ChartNodeView from './nodes/ChartNodeView.vue';
 import DatabaseNodeView from './nodes/DatabaseNodeView.vue';
 import FootnoteNodeView from './nodes/FootnoteNodeView.vue';
+import BreadcrumbBlockNodeView from './nodes/BreadcrumbBlockNodeView.vue';
+import MediaBlockNodeView from './nodes/MediaBlockNodeView.vue';
+import TabsNodeView from './nodes/TabsNodeView.vue';
 import EditorBubbleMenu from './components/EditorBubbleMenu.vue';
 import EditorBlockHandle from './components/EditorBlockHandle.vue';
 import {
@@ -46,6 +49,10 @@ import {
   ICON_COMPONENT_KEY,
   SELECT_COMPONENT_KEY,
   DATABASE_COMPONENT_KEY,
+  BREADCRUMB_COMPONENT_KEY,
+  MEDIA_COMPONENT_KEY,
+  EDITOR_NOTE_CONTEXT_KEY,
+  type EditorNoteContext,
   type IconCatalogEntry,
 } from './hostBridge';
 import {
@@ -96,6 +103,12 @@ const props = withDefaults(
      * "missing host" placeholder for any embedded database block.
      */
     databaseComponent?: Component | null;
+    /** Host renderer for the dynamic Breadcrumbs block. */
+    breadcrumbComponent?: Component | null;
+    /** Host renderer for video/audio/file blocks. */
+    mediaComponent?: Component | null;
+    /** Current note context consumed by host-aware blocks. */
+    noteContext?: EditorNoteContext | null;
     /**
      * Items shown in the slash-command popup. Defaults to the full
      * Continuum command set (`createDefaultSlashCommands()`); pass an
@@ -119,6 +132,9 @@ const props = withDefaults(
     iconComponent: null,
     selectComponent: null,
     databaseComponent: null,
+    breadcrumbComponent: null,
+    mediaComponent: null,
+    noteContext: null,
     slashCommandItems: () => createDefaultSlashCommands(),
     editable: true,
   },
@@ -201,6 +217,9 @@ provide(ICON_CATALOG_KEY, props.iconCatalog);
 if (props.iconComponent) provide(ICON_COMPONENT_KEY, markRaw(props.iconComponent));
 if (props.selectComponent) provide(SELECT_COMPONENT_KEY, markRaw(props.selectComponent));
 if (props.databaseComponent) provide(DATABASE_COMPONENT_KEY, markRaw(props.databaseComponent));
+if (props.breadcrumbComponent) provide(BREADCRUMB_COMPONENT_KEY, markRaw(props.breadcrumbComponent));
+if (props.mediaComponent) provide(MEDIA_COMPONENT_KEY, markRaw(props.mediaComponent));
+provide(EDITOR_NOTE_CONTEXT_KEY, computed(() => props.noteContext ?? null));
 
 // Collaboration is only valid in WYSIWYG mode.
 const collab = computed<CollaborationConfig | null>(() => {
@@ -305,6 +324,9 @@ const editor = useEditor({
       chartView: markRaw(ChartNodeView),
       databaseView: markRaw(DatabaseNodeView),
       footnoteView: markRaw(FootnoteNodeView),
+      breadcrumbBlockView: markRaw(BreadcrumbBlockNodeView),
+      mediaBlockView: markRaw(MediaBlockNodeView),
+      tabsView: markRaw(TabsNodeView),
       mathematics: true,
       tableOfContents: { onUpdate: emitToc },
       wikilink: {

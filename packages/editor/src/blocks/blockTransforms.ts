@@ -39,6 +39,7 @@ export type TurnIntoSourceType =
   | 'details'
   | 'chart'
   | 'database'
+  | 'tabs'
   | 'footnote';
 
 export type TurnIntoGroup = 'text' | 'list' | 'container';
@@ -83,12 +84,14 @@ export const TURN_INTO_TARGETS_BY_SOURCE = {
   details: TEXT_FLOW_TARGETS,
   chart: [],
   database: [],
+  tabs: [],
   footnote: [],
 } as const satisfies Record<TurnIntoSourceType, readonly TurnIntoTargetId[]>;
 
 const SOURCE_PRIORITY: readonly TurnIntoSourceType[] = [
   'database',
   'chart',
+  'tabs',
   'table',
   'image',
   'horizontalRule',

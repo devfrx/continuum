@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDebounceFn } from '@vueuse/core';
-import { ContinuumEditor, type IconCatalogEntry, type TocAnchor } from '@continuum/editor';
+import { ContinuumEditor, type EditorNoteContext, type IconCatalogEntry, type TocAnchor } from '@continuum/editor';
 import { api, type BacklinkEntry } from '@/api';
 import type { AiSearchHit, Note, EntityKind, FolderNode, ContextMenuItem, CoverPosition } from '@continuum/shared';
 import NotesSidebar from '@/components/notes/NotesSidebar.vue';
@@ -17,6 +17,8 @@ import NoteTocPanel from '@/components/notes/NoteTocPanel.vue';
 import NotePeekOverlay from '@/components/notes/NotePeekOverlay.vue';
 import EmptyEditor from '@/components/notes/EmptyEditor.vue';
 import DatabaseBlockEmbed from '@/components/databases/DatabaseBlockEmbed.vue';
+import BreadcrumbBlockEmbed from '@/components/editorBlocks/BreadcrumbBlockEmbed.vue';
+import MediaBlockEmbed from '@/components/editorBlocks/MediaBlockEmbed.vue';
 import {
   DATABASE_ROW_OPEN_EVENT,
   isPeekOpenMode,
@@ -99,7 +101,7 @@ const notesSidebarPillLabel = computed(() =>
   notesSidebarOpen.value ? 'Collapse notes sidebar' : 'Expand notes sidebar',
 );
 const notesSidebarPillIcon = computed<AppIconName>(() =>
-  notesSidebarOpen.value ? 'chevron-left' : 'chevron-right',
+  notesSidebarOpen.value ? 'chevron-left' : 'notes',
 );
 
 const search = ref('');
@@ -372,6 +374,19 @@ const backlinksLoading = ref(false);
 const selected = computed<Note | null>(
   () => notes.value.find((n) => n.id === selectedId.value) ?? null,
 );
+
+const editorNoteContext = computed<EditorNoteContext | null>(() => {
+  const note = selected.value;
+  if (!note) return null;
+  return {
+    noteId: note.id,
+    title: draftTitle.value || note.title,
+    folderId: note.folderId ?? null,
+    onSelectFolder: (folderId) => {
+      selectedFolderId.value = folderId;
+    },
+  };
+});
 
 // --- Loading & selection ---
 async function load(): Promise<void> {
@@ -954,6 +969,9 @@ onBeforeUnmount(() => {
                 :icon-component="Icon"
                 :select-component="UiSelect"
                 :database-component="DatabaseBlockEmbed"
+                :breadcrumb-component="BreadcrumbBlockEmbed"
+                :media-component="MediaBlockEmbed"
+                :note-context="editorNoteContext"
                 @request-context-menu="onEditorContextMenu"
                 @request-prompt="onEditorPrompt"
                 @wikilink-navigate="onWikilinkNavigate"
@@ -1043,35 +1061,37 @@ onBeforeUnmount(() => {
   top: 50%;
   left: 0;
   transform: translate(-1px, -50%);
-  width: var(--layout-pill-w, 14px);
-  height: var(--layout-pill-h, 64px);
+  width: 28px;
+  height: 28px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
-  color: var(--fg-subtle);
-  border: var(--border-width-1) solid var(--border-subtle);
+  background: var(--surface-3);
+  color: var(--fg-muted);
+  border: var(--border-width-1) solid var(--border);
   border-left: none;
-  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
   cursor: pointer;
   z-index: calc(var(--z-overlay) - 1);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
   transition:
     transform var(--duration-normal) var(--ease-decel),
     background-color var(--duration-fast) var(--ease-standard),
     color var(--duration-fast) var(--ease-standard),
-    width var(--duration-fast) var(--ease-standard),
     box-shadow var(--duration-fast) var(--ease-standard);
 }
 
-.notes-sidebar-pill:hover,
-.notes-sidebar-pill.is-active {
+.notes-sidebar-pill:hover {
   background: var(--surface-2);
-  color: var(--fg-strong);
-  width: 18px;
+  color: var(--fg);
   box-shadow: var(--shadow-sm);
+}
+
+.notes-sidebar-pill.is-active {
+  background: var(--surface-3);
+  color: var(--accent);
+  border-color: var(--accent-border);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .notes-sidebar-pill:focus-visible {

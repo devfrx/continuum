@@ -7,7 +7,7 @@
  */
 import type { Editor } from '@tiptap/core';
 import type { EditorBlockSnapshot } from './blockActions';
-import { getBlockElement, listTopLevelBlocks } from './blockActions';
+import { getBlockElement, listSiblingBlocks, listTopLevelBlocks } from './blockActions';
 
 /** Width reserved by the gutter handle, kept in sync with `blockHandle.css`. */
 const HANDLE_WIDTH = 48;
@@ -58,7 +58,8 @@ export function getToolbarPlacement(
   const editorRect = editor.view.dom.getBoundingClientRect();
   const firstLine = firstLineRect(editor, block, rect);
   const lineCenter = firstLine.top + (firstLine.bottom - firstLine.top) / 2;
-  const x = Math.max(8, editorRect.left - HANDLE_WIDTH - HANDLE_GAP);
+  const anchorLeft = block.depth > 0 ? rect.left : editorRect.left;
+  const x = Math.max(8, anchorLeft - HANDLE_WIDTH - HANDLE_GAP);
   const y = Math.max(8, lineCenter - HANDLE_WIDTH / 4);
   return { x, y };
 }
@@ -88,6 +89,11 @@ export function getHoverBlockAtCoords(
   if (clientY < hostRect.top || clientY > hostRect.bottom) return null;
 
   const candidates = blockRectCandidates(editor);
+  const containing = candidates
+    .filter(({ rect }) => clientY >= rect.top && clientY <= rect.bottom)
+    .sort((a, b) => b.block.depth - a.block.depth || a.rect.height - b.rect.height);
+  if (containing[0]) return containing[0].block;
+
   for (let index = 0; index < candidates.length; index += 1) {
     const previous = candidates[index - 1]?.rect ?? null;
     const current = candidates[index]!;
@@ -122,8 +128,8 @@ export function getDropTargetAtCoords(
   const editorRect = editor.view.dom.getBoundingClientRect();
   let bestBlock: EditorBlockSnapshot | null = null;
   let bestRect: DOMRect | null = null;
-  let bestIndex = -1;
   let bestDistance = Number.POSITIVE_INFINITY;
+  let bestDepth = -1;
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index]!;
     const el = getBlockElement(editor, block);
@@ -134,15 +140,16 @@ export function getDropTargetAtCoords(
       : clientY > rect.bottom
         ? clientY - rect.bottom
         : 0;
-    if (distance < bestDistance) {
+    if (distance < bestDistance || (distance === bestDistance && block.depth > bestDepth)) {
       bestDistance = distance;
       bestBlock = block;
       bestRect = rect;
-      bestIndex = index;
-      if (distance === 0) break;
+      bestDepth = block.depth;
     }
   }
   if (!bestBlock || !bestRect) return null;
+  const siblings = listSiblingBlocks(editor, bestBlock);
+  const siblingIndex = siblings.findIndex((block) => block.from === bestBlock?.from && block.to === bestBlock.to);
   const edge: BlockDropTarget['edge'] =
     clientY < bestRect.top + bestRect.height / 2 ? 'before' : 'after';
   return {
@@ -151,16 +158,16 @@ export function getDropTargetAtCoords(
     position: edge === 'before' ? bestBlock.from : bestBlock.to,
     adjacent: edge === 'before'
       ? {
-          before: bestIndex > 0 ? blocks[bestIndex - 1]! : null,
+          before: siblingIndex > 0 ? siblings[siblingIndex - 1]! : null,
           after: bestBlock,
         }
       : {
           before: bestBlock,
-          after: bestIndex < blocks.length - 1 ? blocks[bestIndex + 1]! : null,
+          after: siblingIndex >= 0 && siblingIndex < siblings.length - 1 ? siblings[siblingIndex + 1]! : null,
         },
     indicatorTop: edge === 'before' ? bestRect.top : bestRect.bottom,
-    indicatorLeft: editorRect.left,
-    indicatorWidth: editorRect.width,
+    indicatorLeft: bestBlock.depth > 0 ? bestRect.left : editorRect.left,
+    indicatorWidth: bestBlock.depth > 0 ? bestRect.width : editorRect.width,
   };
 }
 

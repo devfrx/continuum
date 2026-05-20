@@ -25,11 +25,16 @@ import {
   type DatabaseViewConfig,
   type DatabaseViewType,
 } from '@continuum/shared';
+import { BreadcrumbBlock } from '../nodes/BreadcrumbBlock';
 import { Callout } from '../nodes/Callout';
 import { Chart } from '../nodes/Chart';
 import { Database } from '../nodes/Database';
 import { Details, DetailsSummary, DetailsContent } from '../nodes/Details';
 import { Footnote } from '../nodes/Footnote';
+import { MediaBlock } from '../nodes/MediaBlock';
+import { createMediaBlockAttrs, type MediaBlockKind } from '../nodes/mediaBlockTypes';
+import { Tabs, TabPanel } from '../nodes/Tabs';
+import { createTabsBlockContent } from '../nodes/tabsTypes';
 import { lowlight } from '../codeLanguages';
 import type {
   BlockCapability,
@@ -60,6 +65,12 @@ export interface BuiltinBlockViews {
   databaseView?: Component;
   /** NodeView for the inline Footnote atom. */
   footnoteView: Component;
+  /** NodeView wrapper for the dynamic breadcrumb block. */
+  breadcrumbBlockView: Component;
+  /** NodeView wrapper for video/audio/file blocks. */
+  mediaBlockView: Component;
+  /** NodeView for the tabbed container block. */
+  tabsView: Component;
 }
 
 /** Convenience helper: read-only set with the supplied capabilities. */
@@ -103,6 +114,33 @@ function databaseViewBlockCommand(input: {
           type: 'database',
           attrs: createDatabaseBlockAttrs(newBlockId(), initialView),
         })
+        .run();
+    },
+  };
+}
+
+function mediaBlockCommand(input: {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  kind: MediaBlockKind;
+  keywords: readonly string[];
+}): BlockSlashDescriptor {
+  return {
+    id: input.id,
+    title: input.title,
+    hint: 'Media',
+    description: input.description,
+    icon: input.icon,
+    section: 'Insert',
+    keywords: ['media', 'upload', 'embed', 'link', ...input.keywords],
+    action: ({ editor, range }) => {
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({ type: 'mediaBlock', attrs: createMediaBlockAttrs(input.kind) })
         .run();
     },
   };
@@ -351,6 +389,60 @@ export const BUILTIN_BLOCK_SLASH = {
         .insertContent({ type: 'footnote', attrs: { content: '' } })
         .run(),
   },
+  breadcrumb: {
+    id: 'breadcrumb-block',
+    title: 'Breadcrumbs',
+    description: 'Live folder path for this note',
+    icon: 'breadcrumbs',
+    section: 'Insert',
+    keywords: ['breadcrumb', 'path', 'folder', 'location', 'trail'],
+    action: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({ type: 'breadcrumbBlock', attrs: { showLeaf: true } })
+        .run(),
+  },
+  tabs: {
+    id: 'tabs-block',
+    title: 'Tabs',
+    description: 'Organize content into editable tab panels',
+    icon: 'tabs',
+    section: 'Blocks',
+    keywords: ['tabs', 'tabbed', 'panels', 'sections', 'organize'],
+    action: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent(createTabsBlockContent())
+        .run(),
+  },
+  video: mediaBlockCommand({
+    id: 'video-block',
+    title: 'Video',
+    description: 'Upload a video or embed one by URL',
+    icon: 'video',
+    kind: 'video',
+    keywords: ['movie', 'mp4', 'webm', 'recording'],
+  }),
+  audio: mediaBlockCommand({
+    id: 'audio-block',
+    title: 'Audio',
+    description: 'Upload audio or attach one by URL',
+    icon: 'audio',
+    kind: 'audio',
+    keywords: ['sound', 'music', 'mp3', 'wav', 'voice'],
+  }),
+  file: mediaBlockCommand({
+    id: 'file-block',
+    title: 'File',
+    description: 'Attach a downloadable file',
+    icon: 'file',
+    kind: 'file',
+    keywords: ['attachment', 'download', 'pdf', 'document'],
+  }),
 } as const satisfies Record<string, BlockSlashDescriptor>;
 
 /**
@@ -463,6 +555,63 @@ export function createBuiltinBlocks(views: BuiltinBlockViews): BlockDefinition[]
     slash: BUILTIN_BLOCK_SLASH.footnote,
   };
 
+  const breadcrumbs: BlockDefinition = {
+    type: 'breadcrumbBlock',
+    label: 'Breadcrumbs',
+    description: 'Dynamic note folder path rendered from host context.',
+    icon: 'breadcrumbs',
+    status: 'ready',
+    category: 'embed',
+    capabilities: caps('drag', 'duplicate', 'delete', 'host-required'),
+    schemaVersion: 1,
+    extensions: () => [
+      BreadcrumbBlock.extend({
+        addNodeView() {
+          return VueNodeViewRenderer(views.breadcrumbBlockView);
+        },
+      }),
+    ],
+    slash: BUILTIN_BLOCK_SLASH.breadcrumb,
+  };
+
+  const media: BlockDefinition = {
+    type: 'mediaBlock',
+    label: 'Media',
+    description: 'Video, audio and file attachments backed by upload or URL sources.',
+    icon: 'file',
+    status: 'ready',
+    category: 'media',
+    capabilities: caps('drag', 'duplicate', 'delete', 'host-required'),
+    schemaVersion: 1,
+    extensions: () => [
+      MediaBlock.extend({
+        addNodeView() {
+          return VueNodeViewRenderer(views.mediaBlockView);
+        },
+      }),
+    ],
+  };
+
+  const tabs: BlockDefinition = {
+    type: 'tabs',
+    label: 'Tabs',
+    description: 'Tabbed container with editable nested block content.',
+    icon: 'tabs',
+    status: 'ready',
+    category: 'container',
+    capabilities: caps('drag', 'duplicate', 'delete', 'nest-blocks', 'host-required'),
+    schemaVersion: 1,
+    extensions: () => [
+      Tabs.extend({
+        addNodeView() {
+          return VueNodeViewRenderer(views.tabsView);
+        },
+      }),
+      TabPanel,
+    ],
+    slash: BUILTIN_BLOCK_SLASH.tabs,
+  };
+
   const codeBlock: BlockDefinition = {
     type: 'codeBlock',
     label: 'Code block',
@@ -482,5 +631,5 @@ export function createBuiltinBlocks(views: BuiltinBlockViews): BlockDefinition[]
     slash: BUILTIN_BLOCK_SLASH.codeBlock,
   };
 
-  return [callout, details, legacyChart, database, footnote, codeBlock];
+  return [callout, details, tabs, legacyChart, database, footnote, breadcrumbs, media, codeBlock];
 }
