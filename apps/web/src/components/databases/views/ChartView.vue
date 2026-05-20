@@ -1,244 +1,213 @@
 <script setup lang="ts">
-/**
- * ChartView.vue — lightweight aggregate visualizer.
- *
- * The renderer groups rows by an option-bearing property (select,
- * multi-select or status — same set as `BoardView`) and aggregates a
- * metric per bucket. Three chart shapes are supported with pure CSS,
- * keeping the bundle library-free:
- *   – `bar`    horizontal bars with bucket label + numeric value
- *   – `pie`    classic pie via `conic-gradient`
- *   – `donut`  same as pie with a centered hole
- *
- * Aggregations:
- *   – `count`  number of rows in the bucket (default)
- *   – `sum`    sum of `valuePropertyId` (a numeric property)
- *   – `avg`    arithmetic mean of `valuePropertyId`
- *
- * Multi-select rows participate in *every* bucket whose option id they
- * carry (consistent with Board's column logic via `readSelectedOptionIds`).
- * Rows with no value land in the synthetic "No value" bucket.
- */
 import { computed } from 'vue';
 import { Icon } from '@/components/ui';
-import type {
-    DatabaseRowSnapshot,
-    PropertyDefinition,
-    PropertyOption,
-} from '@continuum/shared';
-import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types';
+import type { PropertyDefinition } from '@continuum/shared';
+import type { DatabaseViewSurfaceEmits, DatabaseViewSurfaceProps } from './types';
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
-import { isBoardGroupable, readSelectedOptionIds } from './boardGrouping';
+import ChartCanvas from './chart/ChartCanvas.vue';
+import {
+    aggregationLabel,
+    buildChartBuckets,
+    chartKindLabel,
+    findGroupProperty,
+    findValueProperty,
+    formatChartValue,
+    maxBucketValue,
+    readChartAggregation,
+    readChartKind,
+    totalValue,
+    type ChartBucket,
+    type ChartKind,
+} from './chart/chartData';
 
 const props = defineProps<DatabaseViewSurfaceProps>();
-// Chart is read-only — declared for contract parity with other view surfaces.
-defineEmits<DatabaseViewSurfaceEmits>();
+const emit = defineEmits<DatabaseViewSurfaceEmits>();
+
 const { common } = useDatabaseRowDisplay(() => props.activeView);
-
-// ── Configuration ────────────────────────────────────────────────────────
-
-type ChartType = 'bar' | 'pie' | 'donut';
-type Aggregation = 'count' | 'sum' | 'avg';
 
 const layout = computed<Record<string, unknown>>(
     () => (props.activeView.config.layout ?? {}) as Record<string, unknown>,
 );
 
-const chartType = computed<ChartType>(() => {
-    const v = layout.value.chartType;
-    return v === 'pie' || v === 'donut' ? v : 'bar';
+const chartKind = computed(() => readChartKind(layout.value));
+const aggregation = computed(() => readChartAggregation(layout.value));
+const groupProperty = computed(() => findGroupProperty(props.schema, layout.value));
+const valueProperty = computed(() => findValueProperty(props.schema, aggregation.value, layout.value));
+const buckets = computed<ChartBucket[]>(() => {
+    if (!groupProperty.value) return [];
+    return buildChartBuckets(props.rows, groupProperty.value, valueProperty.value, aggregation.value);
 });
 
-const aggregation = computed<Aggregation>(() => {
-    const v = layout.value.aggregation;
-    return v === 'sum' || v === 'avg' ? v : 'count';
-});
+const chartTotal = computed(() => totalValue(buckets.value));
+const chartMax = computed(() => maxBucketValue(buckets.value));
+const bucketCount = computed(() => buckets.value.length);
+const hasNumericRequirement = computed(() => aggregation.value !== 'count');
+const hasRows = computed(() => props.rows.length > 0);
+const visibleBuckets = computed(() => [...buckets.value].sort((a, b) => b.value - a.value));
+const topBucket = computed(() => visibleBuckets.value.find((bucket) => bucket.rows > 0) ?? null);
 
-const explicitGroupId = computed<string | null>(() =>
-    typeof layout.value.groupByPropertyId === 'string' ? layout.value.groupByPropertyId : null,
-);
-
-const groupProperty = computed<PropertyDefinition | null>(() => {
-    const explicit = explicitGroupId.value;
-    if (explicit) {
-        const def = props.schema.find((p) => p.id === explicit);
-        if (def && isBoardGroupable(def)) return def;
-    }
-    return props.schema.find(isBoardGroupable) ?? null;
-});
-
-const explicitValueId = computed<string | null>(() =>
-    typeof layout.value.valuePropertyId === 'string' ? layout.value.valuePropertyId : null,
-);
-
-const valueProperty = computed<PropertyDefinition | null>(() => {
-    if (aggregation.value === 'count') return null;
-    const numeric = props.schema.filter((p) => p.type === 'number');
-    const explicit = explicitValueId.value;
-    if (explicit) {
-        const def = numeric.find((p) => p.id === explicit);
-        if (def) return def;
-    }
-    return numeric[0] ?? null;
-});
-
-// ── Bucketing ────────────────────────────────────────────────────────────
-
-interface Bucket {
-    id: string;
-    label: string;
-    color: string;
-    /** Aggregate value rendered as a bar / slice. */
-    value: number;
-    /** Bookkeeping for `avg`. */
-    count: number;
-}
-
-const NONE = '__none__';
-const PALETTE = [
-    '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4',
-    '#84cc16', '#f97316', '#ec4899', '#14b8a6', '#a855f7', '#3b82f6',
+const chartKindOptions: readonly { value: ChartKind; label: string }[] = [
+    { value: 'bar', label: 'Bar' },
+    { value: 'horizontalBar', label: 'Rows' },
+    { value: 'line', label: 'Line' },
+    { value: 'area', label: 'Area' },
+    { value: 'pie', label: 'Pie' },
+    { value: 'donut', label: 'Donut' },
 ];
 
-function rowNumber(row: DatabaseRowSnapshot, def: PropertyDefinition | null): number | null {
-    if (!def) return null;
-    const value = row.properties.find((p) => p.definition.id === def.id)?.value;
-    if (!value || value.type !== 'number') return null;
-    return Number.isFinite(value.value) ? value.value : null;
-}
+const metricLabel = computed(() => {
+    const base = aggregationLabel(aggregation.value);
+    return aggregation.value === 'count' ? base : `${base} of ${valueProperty.value?.label ?? 'value'}`;
+});
 
-const buckets = computed<Bucket[]>(() => {
-    const groupDef = groupProperty.value;
-    if (!groupDef) return [];
-    const cfg = (groupDef.config ?? {}) as { options?: PropertyOption[] };
-    const options = cfg.options ?? [];
-    const byId = new Map<string, Bucket>();
-    options.forEach((opt, i) =>
-        byId.set(opt.id, {
-            id: opt.id,
-            label: opt.label,
-            color: opt.color || PALETTE[i % PALETTE.length],
-            value: 0,
-            count: 0,
-        }),
-    );
-    byId.set(NONE, {
-        id: NONE,
-        label: 'No value',
-        color: 'rgba(255, 255, 255, 0.18)',
-        value: 0,
-        count: 0,
+const primaryStat = computed(() => {
+    if (aggregation.value === 'avg') return { label: 'Mean', value: meanOfBuckets(buckets.value) };
+    if (aggregation.value === 'min') return { label: 'Lowest', value: minOfBuckets(buckets.value) };
+    if (aggregation.value === 'max') return { label: 'Highest', value: chartMax.value };
+    return { label: aggregation.value === 'count' ? 'Rows' : 'Total', value: chartTotal.value };
+});
+
+const groupLabel = computed(() => groupProperty.value?.label ?? 'Group');
+
+const measureLabel = computed(() => {
+    if (aggregation.value === 'count') return 'Rows';
+    return valueProperty.value?.label ?? 'Value';
+});
+
+function setChartKind(kind: ChartKind): void {
+    if (kind === chartKind.value) return;
+    emit('view-config-changed', {
+        layout: {
+            ...layout.value,
+            chartType: kind,
+        },
     });
-
-    const valDef = valueProperty.value;
-    for (const row of props.rows) {
-        const entry = row.properties.find((p) => p.definition.id === groupDef.id);
-        const ids = readSelectedOptionIds(entry?.value);
-        const targets = ids.length ? ids : [NONE];
-        const contribution = aggregation.value === 'count'
-            ? 1
-            : rowNumber(row, valDef) ?? 0;
-        for (const id of targets) {
-            const bucket = byId.get(id);
-            if (!bucket) continue;
-            bucket.value += contribution;
-            bucket.count += 1;
-        }
-    }
-
-    if (aggregation.value === 'avg') {
-        for (const b of byId.values()) b.value = b.count ? b.value / b.count : 0;
-    }
-
-    // Stable order: schema option order first, "No value" last.
-    const ordered: Bucket[] = [];
-    for (const opt of options) {
-        const b = byId.get(opt.id);
-        if (b) ordered.push(b);
-    }
-    const none = byId.get(NONE);
-    if (none && none.count > 0) ordered.push(none);
-    return ordered;
-});
-
-const total = computed(() => buckets.value.reduce((sum, b) => sum + Math.max(0, b.value), 0));
-const maxValue = computed(() => buckets.value.reduce((m, b) => Math.max(m, b.value), 0));
-
-/** Build the `conic-gradient` background for pie / donut charts. */
-const pieGradient = computed<string>(() => {
-    if (total.value <= 0) return 'conic-gradient(rgba(255, 255, 255, 0.08) 0 360deg)';
-    const stops: string[] = [];
-    let cursor = 0;
-    for (const b of buckets.value) {
-        const slice = (Math.max(0, b.value) / total.value) * 360;
-        if (slice <= 0) continue;
-        stops.push(`${b.color} ${cursor}deg ${cursor + slice}deg`);
-        cursor += slice;
-    }
-    return `conic-gradient(${stops.join(', ')})`;
-});
-
-function barWidth(value: number): string {
-    if (maxValue.value <= 0) return '0%';
-    return `${Math.max(0, Math.min(100, (value / maxValue.value) * 100))}%`;
 }
 
-function fmt(value: number): string {
-    if (!Number.isFinite(value)) return '0';
-    const rounded = Math.round(value * 100) / 100;
-    return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(2);
+function percent(bucket: ChartBucket): string {
+    if (chartTotal.value <= 0) return '0%';
+    return `${Math.round((Math.max(0, bucket.value) / chartTotal.value) * 100)}%`;
+}
+
+function rowCountLabel(bucket: ChartBucket): string {
+    if (aggregation.value === 'count') return `${bucket.rows} row${bucket.rows === 1 ? '' : 's'}`;
+    return `${bucket.count} value${bucket.count === 1 ? '' : 's'}`;
+}
+
+function meanOfBuckets(items: readonly ChartBucket[]): number {
+    const valued = items.filter((bucket) => bucket.count > 0);
+    if (valued.length === 0) return 0;
+    return valued.reduce((sum, bucket) => sum + bucket.value, 0) / valued.length;
+}
+
+function minOfBuckets(items: readonly ChartBucket[]): number {
+    const valued = items.filter((bucket) => bucket.count > 0);
+    if (valued.length === 0) return 0;
+    return valued.reduce((min, bucket) => Math.min(min, bucket.value), valued[0]!.value);
+}
+
+function propertyLabel(property: PropertyDefinition | null): string {
+    return property?.label ?? 'property';
 }
 </script>
 
 <template>
     <div class="db-chart" :class="{ 'db-chart--wrap': common.wrapContent }">
         <div v-if="!groupProperty" class="db-chart__empty">
-            <Icon name="view-chart" :size="22" />
-            <h4>Chart needs an option-based property</h4>
-            <p>Add a <strong>Select</strong>, <strong>Multi-select</strong> or <strong>Status</strong>
-                property to group the rows.</p>
+            <Icon name="view-chart" :size="24" />
+            <h4>Chart needs a group property</h4>
+            <p>Add a Select, Multi-select or Status property to split rows into series.</p>
         </div>
-        <div
-            v-else-if="aggregation !== 'count' && !valueProperty"
-            class="db-chart__empty">
-            <Icon name="view-chart" :size="22" />
+
+        <div v-else-if="hasNumericRequirement && !valueProperty" class="db-chart__empty">
+            <Icon name="prop-number" :size="24" />
             <h4>Add a numeric property</h4>
-            <p>Sum and average aggregations need a <strong>Number</strong> property to add up.</p>
+            <p>{{ aggregationLabel(aggregation) }} charts need a Number property to measure.</p>
         </div>
+
+        <div v-else-if="!hasRows" class="db-chart__empty">
+            <Icon name="view-chart" :size="24" />
+            <h4>No rows to chart</h4>
+            <p>Add rows from a Table or List view to populate this chart.</p>
+        </div>
+
         <template v-else>
-            <header class="db-chart__head">
-                <span class="db-chart__title">
-                    {{ aggregation === 'count' ? 'Count' : `${aggregation === 'sum' ? 'Sum' : 'Avg'} of ${valueProperty?.label}` }}
-                    · by {{ groupProperty.label }}
-                </span>
+            <header class="db-chart__header">
+                <div class="db-chart__heading">
+                    <span class="db-chart__heading-icon">
+                        <Icon name="view-chart" :size="16" />
+                    </span>
+                    <div class="db-chart__heading-copy">
+                        <span>Database chart</span>
+                        <h4>{{ metricLabel }}</h4>
+                        <p>{{ chartKindLabel(chartKind) }} by {{ propertyLabel(groupProperty) }}</p>
+                    </div>
+                </div>
+
+                <div class="db-chart__type-switch" role="group" aria-label="Chart type">
+                    <button
+                        v-for="option in chartKindOptions"
+                        :key="option.value"
+                        type="button"
+                        :class="{ 'is-active': option.value === chartKind }"
+                        @click="setChartKind(option.value)">
+                        {{ option.label }}
+                    </button>
+                </div>
             </header>
 
-            <div v-if="chartType === 'bar'" class="db-chart__bars">
-                <div v-for="b in buckets" :key="b.id" class="db-chart__bar-row">
-                    <span class="db-chart__bar-label">
-                        <span class="db-chart__swatch" :style="{ background: b.color }" />
-                        {{ b.label }}
-                    </span>
-                    <div class="db-chart__bar-track">
-                        <div class="db-chart__bar-fill" :style="{ width: barWidth(b.value), background: b.color }" />
-                    </div>
-                    <span class="db-chart__bar-value">{{ fmt(b.value) }}</span>
+            <dl class="db-chart__stats">
+                <div>
+                    <dt>{{ primaryStat.label }}</dt>
+                    <dd>{{ formatChartValue(primaryStat.value) }}</dd>
                 </div>
-            </div>
+                <div>
+                    <dt>Group</dt>
+                    <dd>{{ groupLabel }}</dd>
+                </div>
+                <div>
+                    <dt>Measure</dt>
+                    <dd>{{ measureLabel }}</dd>
+                </div>
+                <div>
+                    <dt>Top</dt>
+                    <dd>{{ topBucket?.label ?? 'None' }}</dd>
+                </div>
+            </dl>
 
-            <div v-else class="db-chart__pie-wrap">
-                <div
-                    class="db-chart__pie"
-                    :class="{ 'db-chart__pie--donut': chartType === 'donut' }"
-                    :style="{ background: pieGradient }" />
-                <ol class="db-chart__legend">
-                    <li v-for="b in buckets" :key="b.id">
-                        <span class="db-chart__swatch" :style="{ background: b.color }" />
-                        <span class="db-chart__legend-label">{{ b.label }}</span>
-                        <span class="db-chart__legend-value">{{ fmt(b.value) }}</span>
-                    </li>
-                </ol>
-            </div>
+            <section class="db-chart__content">
+                <div class="db-chart__plot">
+                    <div class="db-chart__plot-head">
+                        <span>{{ bucketCount }} series</span>
+                        <span>{{ formatChartValue(chartMax) }} max</span>
+                    </div>
+                    <ChartCanvas
+                        :kind="chartKind"
+                        :buckets="buckets"
+                        :metric-label="metricLabel"
+                        :total="chartTotal" />
+                </div>
+
+                <aside class="db-chart__legend" aria-label="Chart series">
+                    <div class="db-chart__legend-head">
+                        <span>Series</span>
+                        <span>{{ metricLabel }}</span>
+                    </div>
+                    <ol>
+                        <li v-for="bucket in visibleBuckets" :key="bucket.id">
+                            <span class="db-chart__swatch" :style="{ background: bucket.color }" />
+                            <span class="db-chart__legend-main">
+                                <span class="db-chart__legend-label">{{ bucket.label }}</span>
+                                <span class="db-chart__legend-meta">{{ rowCountLabel(bucket) }}</span>
+                            </span>
+                            <span class="db-chart__legend-value">
+                                <strong>{{ formatChartValue(bucket.value) }}</strong>
+                                <small>{{ percent(bucket) }}</small>
+                            </span>
+                        </li>
+                    </ol>
+                </aside>
+            </section>
         </template>
     </div>
 </template>
@@ -247,146 +216,316 @@ function fmt(value: number): string {
 .db-chart {
     display: flex;
     flex-direction: column;
-    padding: 0.75rem 1rem;
-    color: var(--fg, #ededed);
-    font-size: 0.78rem;
+    gap: var(--space-3);
     min-height: 0;
+    padding: var(--space-4);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
 }
 
-.db-chart__head {
-    margin-bottom: 0.6rem;
-}
-
-.db-chart__title {
-    color: var(--fg-muted, #a09b90);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-/* ── Bar chart ────────────────────────────────────────────────────── */
-
-.db-chart__bars {
+.db-chart__header {
     display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
-    max-width: 720px;
-}
-
-.db-chart__bar-row {
-    display: grid;
-    grid-template-columns: minmax(120px, 1fr) 3fr auto;
     align-items: center;
-    gap: 0.6rem;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-width: 0;
 }
 
-.db-chart__bar-label {
+.db-chart__heading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.db-chart__heading-icon {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    color: var(--fg, #ededed);
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface-1));
+    color: var(--accent);
+}
+
+.db-chart__heading-copy {
+    min-width: 0;
+}
+
+.db-chart__heading-copy h4,
+.db-chart__heading-copy p,
+.db-chart__heading-copy span {
+    margin: 0;
+}
+
+.db-chart__heading-copy span {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.db-chart__heading-copy h4 {
     overflow: hidden;
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--leading-tight);
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.db-chart__heading-copy p {
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.db-chart__type-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+    padding: 2px;
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+}
+
+.db-chart__type-switch button {
+    min-width: 0;
+    height: 1.75rem;
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--text-xs);
+    font-weight: var(--font-weight-medium);
+    line-height: 1;
+}
+
+.db-chart__type-switch button:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
+}
+
+.db-chart__type-switch button.is-active {
+    color: var(--text-primary);
+    background: var(--surface-0);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+}
+
+.db-chart__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin: 0;
+}
+
+.db-chart__stats div {
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+}
+
+.db-chart__stats dt,
+.db-chart__stats dd {
+    margin: 0;
+}
+
+.db-chart__stats dt {
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+}
+
+.db-chart__stats dd {
+    overflow: hidden;
+    margin-top: 2px;
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.db-chart__content {
+    display: grid;
+    grid-template-columns: minmax(300px, 1fr) minmax(220px, 300px);
+    gap: var(--space-3);
+    min-height: 340px;
+}
+
+.db-chart__plot {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 340px;
+    padding: var(--space-3);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 48%, transparent), transparent 42%),
+        var(--surface-1);
+}
+
+.db-chart__plot-head {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+}
+
+.db-chart__legend {
+    min-width: 0;
+    padding: var(--space-3);
+    border: var(--border-width-1) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+}
+
+.db-chart__legend-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+}
+
+.db-chart__legend ol {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-height: 318px;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+}
+
+.db-chart__legend li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 36px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+}
+
+.db-chart__legend li:hover {
+    background: var(--surface-hover);
 }
 
 .db-chart__swatch {
     width: 10px;
     height: 10px;
     border-radius: var(--radius-sm);
-    flex: 0 0 auto;
 }
 
-.db-chart__bar-track {
-    height: 12px;
-    border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.04);
-    overflow: hidden;
-}
-
-.db-chart__bar-fill {
-    height: 100%;
-    border-radius: var(--radius-sm);
-    transition: width 120ms ease;
-}
-
-.db-chart__bar-value {
-    color: var(--fg, #ededed);
-    font-variant-numeric: tabular-nums;
-    min-width: 2ch;
-    text-align: right;
-}
-
-/* ── Pie / donut ──────────────────────────────────────────────────── */
-
-.db-chart__pie-wrap {
-    display: flex;
-    align-items: center;
-    gap: 1.25rem;
-    flex-wrap: wrap;
-}
-
-.db-chart__pie {
-    width: 200px;
-    height: 200px;
-    border-radius: var(--radius-sm);
-    flex: 0 0 auto;
-}
-
-.db-chart__pie--donut {
-    -webkit-mask: radial-gradient(circle, transparent 38%, #000 39%);
-            mask: radial-gradient(circle, transparent 38%, #000 39%);
-}
-
-.db-chart__legend {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+.db-chart__legend-main {
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
-    min-width: 180px;
-}
-
-.db-chart__legend li {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    align-items: center;
-    gap: 0.4rem;
+    min-width: 0;
 }
 
 .db-chart__legend-label {
-    color: var(--fg, #ededed);
     overflow: hidden;
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+.db-chart__legend-meta {
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+}
+
 .db-chart__legend-value {
-    color: var(--fg-muted, #a09b90);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
 
-/* ── Empty state ──────────────────────────────────────────────────── */
+.db-chart__legend-value strong {
+    color: var(--text-primary);
+    font-size: var(--text-xs);
+}
+
+.db-chart__legend-value small {
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+}
 
 .db-chart__empty {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.3rem;
-    padding: 2rem 1rem;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 240px;
+    padding: var(--space-6) var(--space-4);
+    color: var(--text-muted);
     text-align: center;
-    color: var(--fg-muted, #a09b90);
+}
+
+.db-chart__empty h4,
+.db-chart__empty p {
+    margin: 0;
 }
 
 .db-chart__empty h4 {
-    margin: 0.3rem 0 0;
-    color: var(--fg, #ededed);
-    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-semibold);
 }
 
 .db-chart__empty p {
-    margin: 0;
-    max-width: 320px;
+    max-width: 360px;
+    line-height: var(--leading-normal);
+}
+
+@media (max-width: 860px) {
+    .db-chart__header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .db-chart__stats {
+        width: 100%;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .db-chart__type-switch {
+        align-self: flex-start;
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
+    .db-chart__content {
+        grid-template-columns: 1fr;
+    }
 }
 </style>

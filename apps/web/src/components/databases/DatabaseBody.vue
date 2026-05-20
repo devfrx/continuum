@@ -19,11 +19,9 @@
  */
 import { computed, ref } from 'vue';
 import { useDatabaseBundle, useDatabaseQuery } from '@/composables/useDatabase';
+import { useDatabaseDirectory } from '@/composables/useDatabaseDirectory';
 import { api } from '@/api';
-import {
-    publishDatabaseSchemaChanged,
-    publishPropertyValueChanged,
-} from '@/lib/realtime';
+import { publishPropertyValueChanged } from '@/lib/realtime';
 import type {
     DatabaseRowSnapshot,
     DatabaseView,
@@ -36,19 +34,30 @@ import DatabaseViewSettings from './DatabaseViewSettings.vue';
 import DatabaseLayoutRequirementModal from './DatabaseLayoutRequirementModal.vue';
 import DatabaseRowDraftBar from './DatabaseRowDraftBar.vue';
 import LinkExistingNoteModal from './LinkExistingNoteModal.vue';
+import { useLayoutRequirementPrompt } from './useLayoutRequirementPrompt';
+import {
+    createMissingLayoutRequirementProperties,
+    prepareDatabaseViewCreation,
+} from './viewCreation';
 import { DatabaseViewSummaryBar } from './summary';
-import { filterWithoutCondition, sortWithoutRule } from './summary/summarize';
+import {
+    conditionalColorsWithoutRule,
+    filterWithoutCondition,
+    sortWithoutRule,
+} from './summary/summarize';
 import type { AnchorRect } from './summary';
 import type { SectionId } from './viewSettings/sections';
 import { viewEntryFor, viewRegistry } from './views/registry';
+import {
+    findSourceTableView,
+    viewNeedsTableCompanion,
+} from './views/tableCompanion';
 import type {
     AddRowPlan,
     AddRowSeed,
-    LayoutPropertyRequirement,
 } from './views/types';
 import {
     buildViewLayoutContext,
-    createPayloadForRequirement,
     layoutPatchFromResolutions,
     missingPropertyRequirements,
     resolveLayoutRequirements,
@@ -67,7 +76,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     'select-view': [viewId: string];
-    'add-view': [payload: { type: DatabaseViewType; dataSourceDatabaseId: string; name?: string }];
+    'add-view': [
+        payload: {
+            type: DatabaseViewType;
+            dataSourceDatabaseId: string;
+            name?: string;
+            config?: Partial<DatabaseViewConfig>;
+        },
+    ];
     'rename-view': [viewId: string, name: string];
     'delete-view': [viewId: string];
     'change-view-source': [viewId: string, dataSourceDatabaseId: string];
@@ -102,6 +118,23 @@ const sourceBundleState = useDatabaseBundle(activeSourceIdRef);
 
 const activeSchema = computed(() => sourceBundleState.bundle.value?.schema ?? []);
 const activeDatabase = computed(() => sourceBundleState.bundle.value?.database ?? null);
+const databaseDirectory = useDatabaseDirectory();
+
+function fallbackSourceLabel(databaseId: string): string {
+    const active = activeDatabase.value;
+    if (active?.id === databaseId && active.title.trim()) return active.title;
+    return databaseId.slice(0, 6);
+}
+
+const sourceLabels = computed<Record<string, string>>(() => {
+    const labels: Record<string, string> = {};
+    for (const view of props.views) {
+        const database = databaseDirectory.byId(view.dataSourceDatabaseId);
+        const title = database?.title.trim();
+        labels[view.dataSourceDatabaseId] = title || fallbackSourceLabel(view.dataSourceDatabaseId);
+    }
+    return labels;
+});
 
 // Renderer for the active view, with a defensive fallback so a stale
 // type from an old node attr can never crash render.
@@ -146,8 +179,42 @@ const { finalRows, hasFilter, hasSort } = useDatabaseViewQuery({
     schema: activeSchema,
 });
 
+const hasConditionalColors = computed(() =>
+    (activeView.value?.config.conditionalColors?.length ?? 0) > 0,
+);
+
 const showSummaryBar = computed(() =>
-    !!activeView.value && activeSchema.value.length > 0 && (hasFilter.value || hasSort.value),
+    !!activeView.value
+    && (hasFilter.value || hasSort.value || hasConditionalColors.value),
+);
+
+const sourceTableView = computed<DatabaseView | null>(() => {
+    const view = activeView.value;
+    return view ? findSourceTableView(props.views, view.dataSourceDatabaseId) : null;
+});
+
+const showSourceTableAction = computed(() => {
+    const database = activeDatabase.value;
+    const view = activeView.value;
+    if (!database || !view) return false;
+    if (!props.editable && !sourceTableView.value) return false;
+    const entry = viewEntryFor(view.type);
+    return viewNeedsTableCompanion({
+        database,
+        schema: activeSchema.value,
+        activeView: view,
+        layoutRequirements: entry.layoutRequirements,
+    });
+});
+
+const sourceTableActionLabel = computed(() =>
+    sourceTableView.value ? 'Open table' : 'Create table',
+);
+
+const sourceTableActionTitle = computed(() =>
+    sourceTableView.value
+        ? 'Open the table view for this datasource'
+        : 'Create a table view for this datasource',
 );
 
 const isLoadingActive = computed(() => sourceBundleState.loading.value
@@ -168,39 +235,15 @@ interface BodyDraftState {
 }
 
 const bodyDraft = ref<BodyDraftState | null>(null);
-
-interface LayoutRequirementPromptState {
-    viewLabel: string;
-    requirements: LayoutPropertyRequirement[];
-}
-
-const layoutRequirementPrompt = ref<LayoutRequirementPromptState | null>(null);
-let layoutRequirementResolver: ((items: RequiredPropertyCreateInput[] | null) => void) | null = null;
+const {
+    layoutRequirementPrompt,
+    requestMissingLayoutProperties,
+    onLayoutRequirementSubmit,
+    onLayoutRequirementCancel,
+} = useLayoutRequirementPrompt();
 
 function messageFromUnknownError(err: unknown): string {
     return err instanceof Error ? err.message : 'Database operation failed';
-}
-
-function requestMissingLayoutProperties(
-    viewLabel: string,
-    requirements: LayoutPropertyRequirement[],
-): Promise<RequiredPropertyCreateInput[] | null> {
-    layoutRequirementPrompt.value = { viewLabel, requirements };
-    return new Promise((resolve) => {
-        layoutRequirementResolver = resolve;
-    });
-}
-
-function onLayoutRequirementSubmit(items: RequiredPropertyCreateInput[]): void {
-    layoutRequirementPrompt.value = null;
-    layoutRequirementResolver?.(items);
-    layoutRequirementResolver = null;
-}
-
-function onLayoutRequirementCancel(): void {
-    layoutRequirementPrompt.value = null;
-    layoutRequirementResolver?.(null);
-    layoutRequirementResolver = null;
 }
 
 async function createMissingLayoutProperties(
@@ -208,28 +251,20 @@ async function createMissingLayoutProperties(
     missing: LayoutRequirementResolution[],
     inputs: RequiredPropertyCreateInput[],
 ): Promise<{ schema: PropertyDefinition[]; layoutPatch: Record<string, unknown> }> {
-    const byKey = new Map(inputs.map((input) => [input.requirementKey, input] as const));
-    const created: PropertyDefinition[] = [];
-    const layoutPatch: Record<string, unknown> = {};
-    for (const resolution of missing) {
-        const input = byKey.get(resolution.requirement.key);
-        if (!input) continue;
-        const property = await api.databases.properties.create(
-            databaseId,
-            createPayloadForRequirement(resolution.requirement, input),
-        );
-        created.push(property);
-        layoutPatch[resolution.requirement.layoutKey] = property.id;
-    }
-    if (created.length > 0) {
-        publishDatabaseSchemaChanged(databaseId);
+    const created = await createMissingLayoutRequirementProperties({
+        databaseId,
+        schema: activeSchema.value,
+        missing,
+        inputs,
+    });
+    if (created.createdPropertyCount > 0) {
         await sourceBundleState.reload();
         await queryState.reload();
     }
     const reloadedSchema = sourceBundleState.bundle.value?.schema ?? [];
     return {
-        schema: reloadedSchema.length > 0 ? reloadedSchema : [...activeSchema.value, ...created],
-        layoutPatch,
+        schema: reloadedSchema.length > 0 ? reloadedSchema : created.schema,
+        layoutPatch: created.layoutPatch,
     };
 }
 
@@ -246,7 +281,7 @@ async function ensureLayoutRequirements(
     const entry = viewEntryFor(nextType);
     const base = { database, schema: activeSchema.value, activeView: view };
     const ctx = buildViewLayoutContext(base, nextType, layoutPatch);
-    const resolutions = resolveLayoutRequirements(entry.layoutRequirements, ctx);
+    const resolutions = resolveLayoutRequirements(entry.layoutRequirements ?? [], ctx);
     const missing = missingPropertyRequirements(resolutions);
     let schema = activeSchema.value;
     let requirementPatch = layoutPatchFromResolutions(resolutions);
@@ -379,6 +414,22 @@ function onLinkExisting(): void {
     linkExistingOpen.value = true;
 }
 
+function onOpenSourceTable(): void {
+    const view = activeView.value;
+    if (!view) return;
+    const tableView = sourceTableView.value;
+    if (tableView) {
+        emit('select-view', tableView.id);
+        return;
+    }
+    if (!props.editable) return;
+    emit('add-view', {
+        type: 'table',
+        dataSourceDatabaseId: view.dataSourceDatabaseId,
+        name: 'Table',
+    });
+}
+
 async function onLinkExistingDone(): Promise<void> {
     try {
         await queryState.reload();
@@ -439,7 +490,7 @@ function onToolbarOpenSettings(viewId: string, anchorRect: AnchorRect): void {
     settingsRequest.value = { viewId, anchorRect, section: null };
 }
 
-function onSummaryOpenSettings(section: 'filter' | 'sort', anchorRect: AnchorRect): void {
+function onSummaryOpenSettings(section: SectionId, anchorRect: AnchorRect): void {
     const view = activeView.value;
     if (!view) return;
     settingsRequest.value = { viewId: view.id, anchorRect, section };
@@ -454,6 +505,61 @@ function onSettingsChangeSource(databaseId: string): void {
     if (!req) return;
     settingsRequest.value = null;
     emit('change-view-source', req.viewId, databaseId);
+}
+
+/**
+ * "+" button on the toolbar. The user picked a layout + datasource;
+ * before we create the view we walk its layout requirements (e.g. a
+ * Chart needs a group-by, a Timeline needs a date range) and, when
+ * the chosen datasource is missing the necessary properties, prompt
+ * the user to create them up-front. The resolved `layout` patch is
+ * then forwarded along with the original payload so the new view
+ * lands fully configured.
+ */
+async function onToolbarAddView(payload: {
+    type: DatabaseViewType;
+    dataSourceDatabaseId: string;
+    name?: string;
+}): Promise<void> {
+    if (!props.editable) return;
+    actionError.value = null;
+
+    let database = activeDatabase.value;
+    let schema = activeSchema.value;
+    if (!database || database.id !== payload.dataSourceDatabaseId) {
+        try {
+            const bundle = await api.databases.bundle(payload.dataSourceDatabaseId);
+            database = bundle.database;
+            schema = bundle.schema;
+        } catch (err) {
+            actionError.value = messageFromUnknownError(err);
+            return;
+        }
+    }
+
+    try {
+        const prepared = await prepareDatabaseViewCreation({
+            blockId: props.blockId,
+            database,
+            schema,
+            existingViewCount: props.views.length,
+            intent: { type: payload.type, name: payload.name },
+            resolveMissingRequirements: requestMissingLayoutProperties,
+        });
+        if (!prepared) return;
+        if (prepared.createdPropertyCount > 0 && database.id === activeDatabase.value?.id) {
+            await sourceBundleState.reload();
+            await queryState.reload();
+        }
+        emit('add-view', {
+            type: prepared.type,
+            dataSourceDatabaseId: database.id,
+            name: prepared.name,
+            ...(prepared.config ? { config: prepared.config } : {}),
+        });
+    } catch (err) {
+        actionError.value = messageFromUnknownError(err);
+    }
 }
 
 async function onSettingsChangeType(type: DatabaseViewType): Promise<void> {
@@ -499,6 +605,13 @@ function onRemoveSortChip(ruleId: string): void {
     emit('patch-view-config', view.id, { sort: nextSort } as Partial<DatabaseViewConfig>);
 }
 
+function onRemoveConditionalColorChip(ruleId: string): void {
+    const view = activeView.value;
+    if (!view) return;
+    const nextRules = conditionalColorsWithoutRule(view.config.conditionalColors, ruleId);
+    emit('patch-view-config', view.id, { conditionalColors: nextRules } as Partial<DatabaseViewConfig>);
+}
+
 function onSaveAsNewView(name: string): void {
     const view = activeView.value;
     if (!view) return;
@@ -513,12 +626,17 @@ function onSaveAsNewView(name: string): void {
             :views="views"
             :active-view-id="activeView?.id ?? null"
             :editable="editable"
+            :source-labels="sourceLabels"
+            :show-source-table-action="showSourceTableAction"
+            :source-table-action-label="sourceTableActionLabel"
+            :source-table-action-title="sourceTableActionTitle"
             @select-view="(id) => emit('select-view', id)"
             @rename-view="(id, name) => emit('rename-view', id, name)"
             @delete-view="(id) => emit('delete-view', id)"
-            @add-view="(payload) => emit('add-view', payload)"
+            @add-view="onToolbarAddView"
             @add-row="onAddRow"
             @link-existing="onLinkExisting"
+            @open-source-table="onOpenSourceTable"
             @open-settings="onToolbarOpenSettings"
             @delete="emit('delete')" />
 
@@ -531,6 +649,7 @@ function onSaveAsNewView(name: string): void {
             @open-settings="onSummaryOpenSettings"
             @remove-filter="onRemoveFilterChip"
             @remove-sort="onRemoveSortChip"
+            @remove-conditional-color="onRemoveConditionalColorChip"
             @save-as-new-view="onSaveAsNewView" />
 
         <DatabaseRowDraftBar

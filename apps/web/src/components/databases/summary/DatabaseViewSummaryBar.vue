@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * DatabaseViewSummaryBar.vue — chips strip that surfaces the active
- * filter & sort directly above the view body.
+ * DatabaseViewSummaryBar.vue — chips strip that surfaces active
+ * filters, sorts and conditional colours directly above the view body.
  *
  * Two goals:
  *   1. Make the *applied* filter/sort visible at a glance — Notion's
@@ -11,14 +11,13 @@
  *      a permanent saved view.
  *
  * The bar is rendered by `DatabaseBody` and:
- *   – Shows one chip per filter condition and one per sort rule.
+ *   – Shows one chip per filter condition, sort rule and colour rule.
  *   – Clicking a chip opens the View options popover focused on the
- *     matching section (`emit('open-settings', 'filter' | 'sort')`).
+ *     matching section.
  *   – The trailing × on each chip removes that single condition / rule
  *     via `patch-config` so the user can iterate without opening a
  *     popover.
- *   – "+ Filter" / "+ Sort" buttons open the popover on the relevant
- *     section directly.
+ *   – "+" buttons open the popover on the relevant section directly.
  *   – "Save as new view" emits `save-as-new-view` carrying a name
  *     supplied by `UiPromptModal`. The parent owns the actual view
  *     creation so this component stays render-only.
@@ -29,19 +28,18 @@
 import { computed, ref } from 'vue';
 import { Icon, UiButton, UiPromptModal } from '@/components/ui';
 import type { DatabaseView, PropertyDefinition } from '@continuum/shared';
+import type { SectionId } from '../viewSettings/sections';
+import type { AnchorRect } from './types';
 import {
+    summarizeConditionalColorChips,
     summarizeFilterChips,
     summarizeSortChips,
+    type ConditionalColorChip,
     type FilterChip,
     type SortChip,
 } from './summarize';
 
-export interface AnchorRect {
-    top: number;
-    left: number;
-    bottom: number;
-    right: number;
-}
+type SummarySettingsSection = Extract<SectionId, 'filter' | 'sort' | 'conditionalColor'>;
 
 const props = defineProps<{
     view: DatabaseView;
@@ -53,24 +51,38 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     /** Open the view-options popover focused on a specific section. */
-    'open-settings': [section: 'filter' | 'sort', anchorRect: AnchorRect];
+    'open-settings': [section: SummarySettingsSection, anchorRect: AnchorRect];
     /** Remove a single filter condition by id. */
     'remove-filter': [conditionId: string];
     /** Remove a single sort rule by id. */
     'remove-sort': [ruleId: string];
-    /** Persist the current filter+sort as a brand-new view. */
+    /** Remove a single conditional-color rule by id. */
+    'remove-conditional-color': [ruleId: string];
+    /** Persist the current view config as a brand-new view. */
     'save-as-new-view': [name: string];
 }>();
 
 const filterChips = computed<FilterChip[]>(() =>
-    summarizeFilterChips(props.view.config.filter, props.schema),
+    summarizeFilterChips(props.view.config.filter, props.schema, {
+        conditionalColors: props.view.config.conditionalColors,
+    }),
 );
 
 const sortChips = computed<SortChip[]>(() =>
-    summarizeSortChips(props.view.config.sort, props.schema),
+    summarizeSortChips(props.view.config.sort, props.schema, {
+        conditionalColors: props.view.config.conditionalColors,
+    }),
 );
 
-const hasAny = computed(() => filterChips.value.length > 0 || sortChips.value.length > 0);
+const conditionalColorChips = computed<ConditionalColorChip[]>(() =>
+    summarizeConditionalColorChips(props.view.config.conditionalColors, props.schema),
+);
+
+const hasAny = computed(() =>
+    filterChips.value.length > 0
+    || sortChips.value.length > 0
+    || conditionalColorChips.value.length > 0,
+);
 
 function rectFrom(event: MouseEvent): AnchorRect {
     const target = event.currentTarget as HTMLElement | null;
@@ -94,6 +106,10 @@ function openSortSection(event: MouseEvent): void {
     emit('open-settings', 'sort', rectFrom(event));
 }
 
+function openConditionalColorSection(event: MouseEvent): void {
+    emit('open-settings', 'conditionalColor', rectFrom(event));
+}
+
 function onRemoveFilter(id: string, event: MouseEvent): void {
     event.stopPropagation();
     emit('remove-filter', id);
@@ -102,6 +118,11 @@ function onRemoveFilter(id: string, event: MouseEvent): void {
 function onRemoveSort(id: string, event: MouseEvent): void {
     event.stopPropagation();
     emit('remove-sort', id);
+}
+
+function onRemoveConditionalColor(id: string, event: MouseEvent): void {
+    event.stopPropagation();
+    emit('remove-conditional-color', id);
 }
 
 // ── Save as new view ────────────────────────────────────────────────────
@@ -119,7 +140,7 @@ function onSaveSubmit(value: string): void {
 </script>
 
 <template>
-    <div v-if="hasAny" class="db-summary" role="toolbar" aria-label="Active view filters and sorts">
+    <div v-if="hasAny" class="db-summary" role="toolbar" aria-label="Active view filters, sorts and colors">
         <div v-if="filterChips.length > 0" class="db-summary__group">
             <button
                 type="button"
@@ -202,6 +223,55 @@ function onSaveSubmit(value: string): void {
             </button>
         </div>
 
+        <div v-if="conditionalColorChips.length > 0" class="db-summary__group">
+            <button
+                type="button"
+                class="db-summary__lead"
+                :disabled="!editable"
+                title="Edit conditional colors"
+                @click="openConditionalColorSection">
+                <Icon name="palette" :size="12" />
+                <span>Color</span>
+            </button>
+            <button
+                v-for="chip in conditionalColorChips"
+                :key="chip.id"
+                type="button"
+                class="db-summary__chip db-summary__chip--color"
+                :disabled="!editable"
+                :title="editable ? 'Edit this conditional color rule' : ''"
+                @click="openConditionalColorSection">
+                <span
+                    class="db-summary__swatch"
+                    :style="{ background: chip.colorSwatch }"
+                    aria-hidden="true" />
+                <span class="db-summary__chip-field">{{ chip.fieldLabel }}</span>
+                <span class="db-summary__chip-op">{{ chip.operatorLabel }}</span>
+                <span v-if="chip.valueLabel" class="db-summary__chip-value">{{ chip.valueLabel }}</span>
+                <span v-if="chip.extraConditionCount" class="db-summary__chip-op">
+                    +{{ chip.extraConditionCount }}
+                </span>
+                <span class="db-summary__chip-op">{{ chip.colorLabel }}</span>
+                <span class="db-summary__chip-target">{{ chip.targetLabel }} {{ chip.scopeLabel }}</span>
+                <button
+                    v-if="editable"
+                    type="button"
+                    class="db-summary__chip-remove"
+                    aria-label="Remove conditional color rule"
+                    @click="onRemoveConditionalColor(chip.id, $event)">
+                    <Icon name="close" :size="10" />
+                </button>
+            </button>
+            <button
+                v-if="editable"
+                type="button"
+                class="db-summary__add"
+                title="Add conditional color"
+                @click="openConditionalColorSection">
+                <Icon name="plus" :size="11" />
+            </button>
+        </div>
+
         <div class="db-summary__spacer" />
 
         <span class="db-summary__count">
@@ -213,7 +283,7 @@ function onSaveSubmit(value: string): void {
             variant="ghost"
             size="sm"
             class="db-summary__save"
-            title="Save current filter and sort as a new view"
+            title="Save current view rules as a new view"
             @click="openSaveModal">
             <Icon name="save" :size="12" />
             <span>Save as new view</span>
@@ -309,8 +379,20 @@ function onSaveSubmit(value: string): void {
     background: var(--surface-3);
 }
 
+.db-summary__chip--color {
+    max-width: min(34rem, 70vw);
+}
+
 .db-summary__chip:disabled {
     cursor: default;
+}
+
+.db-summary__swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    border: var(--border-width-1) solid var(--border);
+    flex: 0 0 auto;
 }
 
 .db-summary__chip-field {
@@ -327,6 +409,14 @@ function onSaveSubmit(value: string): void {
     color: var(--text-primary);
     font-weight: var(--font-weight-medium);
     max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.db-summary__chip-target {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    max-width: 10rem;
     overflow: hidden;
     text-overflow: ellipsis;
 }

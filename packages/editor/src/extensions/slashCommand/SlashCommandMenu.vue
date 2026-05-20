@@ -13,6 +13,7 @@
  */
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { ICON_COMPONENT_KEY } from '../../hostBridge';
+import { useContinuumScrollLock } from '../../composables/useContinuumScrollLock';
 import {
   SLASH_COMMAND_SECTIONS,
   type SlashCommandItem,
@@ -35,6 +36,7 @@ const IconComponent = inject(ICON_COMPONENT_KEY, null);
 const root = ref<HTMLDivElement | null>(null);
 const listEl = ref<HTMLDivElement | null>(null);
 const selected = ref(0);
+useContinuumScrollLock(() => true);
 
 /** Group items into the canonical section order, dropping empty sections. */
 const grouped = computed<{ section: SlashCommandSection; items: SlashCommandItem[] }[]>(() => {
@@ -159,6 +161,7 @@ function flatIndex(section: SlashCommandSection, row: number): number {
     :style="{ top: `${position.top}px`, left: `${position.left}px`, width: `${POPUP_WIDTH}px` }"
     role="listbox"
     aria-label="Insert block"
+    data-continuum-scroll-lock-allow="true"
   >
     <header class="continuum-slash-menu__header">
       <span class="continuum-slash-menu__hint">
@@ -196,7 +199,10 @@ function flatIndex(section: SlashCommandSection, row: number): number {
               />
             </span>
             <span class="continuum-slash-menu__text">
-              <span class="continuum-slash-menu__title">{{ item.title }}</span>
+              <span class="continuum-slash-menu__title">
+                <span>{{ item.title }}</span>
+                <span v-if="item.hint" class="continuum-slash-menu__title-hint">· {{ item.hint }}</span>
+              </span>
               <span class="continuum-slash-menu__desc">{{ item.description }}</span>
             </span>
           </button>

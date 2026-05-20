@@ -4,7 +4,7 @@ import './styles/prosemirror.css';
 import './styles/nodes.css';
 import './styles/slashCommand.css';
 import './styles/bubbleMenu.css';
-import './styles/dragHandle.css';
+import './styles/blockHandle.css';
 import './styles/mathematics.css';
 import './styles/tableOfContents.css';
 import './styles/wikilink.css';
@@ -40,7 +40,7 @@ import ChartNodeView from './nodes/ChartNodeView.vue';
 import DatabaseNodeView from './nodes/DatabaseNodeView.vue';
 import FootnoteNodeView from './nodes/FootnoteNodeView.vue';
 import EditorBubbleMenu from './components/EditorBubbleMenu.vue';
-import EditorDragHandle from './components/EditorDragHandle.vue';
+import EditorBlockHandle from './components/EditorBlockHandle.vue';
 import {
   ICON_CATALOG_KEY,
   ICON_COMPONENT_KEY,
@@ -704,14 +704,11 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <EditorContent :editor="editor" class="content" @contextmenu="openContextMenu" />
-      <!-- Floating affordances: drag handle in the gutter, bubble menu
-           on the active selection. Both stay mounted regardless of the
-           editable flag — they self-suppress through the underlying
-           Tiptap plugins (`shouldShow` for the bubble, `isEditable`
-           for the drag handle). Toggling the wrapper via `v-if` would
-           tear down their body-portaled Tippy popups mid-patch and
-           crash Vue's reconciler. -->
-      <EditorDragHandle v-if="editor" :editor="editor" />
+       <!-- Floating affordances: native block handle in the gutter,
+         bubble menu on the active selection. Both remain package-owned
+         UI layers so block interactions, formatting and design stay
+         consistent with the editor rather than leaking host concerns. -->
+       <EditorBlockHandle v-if="editor" :editor="editor" />
       <EditorBubbleMenu v-if="editor" :editor="editor" :request-link="requestLinkPrompt" />
     </template>
 

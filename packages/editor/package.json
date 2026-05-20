@@ -23,8 +23,6 @@
     "@tiptap/extension-code-block-lowlight": "^2.10.3",
     "@tiptap/extension-collaboration": "^2.10.3",
     "@tiptap/extension-color": "^2.10.3",
-    "@tiptap/extension-drag-handle": "^2.27.2",
-    "@tiptap/extension-drag-handle-vue-3": "^2.27.2",
     "@tiptap/extension-highlight": "^2.10.3",
     "@tiptap/extension-image": "^2.10.3",
     "@tiptap/extension-link": "^2.10.3",

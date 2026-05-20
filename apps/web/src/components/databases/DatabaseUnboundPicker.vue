@@ -9,10 +9,10 @@
  *   2. Link an existing datasource from a small searchable list.
  *
  * The parent embed turns the chosen datasource into the block's first
- * view (defaulting to a Table), which flips the block out of unbound
- * state. The picker itself is intentionally datasource-aware only:
- * the view type is decided by the parent so the picker stays simple
- * and consistent with the "first view is always a Table" UX.
+ * view, using the block's initial view intent when it exists. The
+ * picker itself is intentionally datasource-aware only: the view type
+ * is decided by the parent so this component can stay focused on
+ * create/link/delete flows.
  *
  * Datasources can also be deleted from this list (trash icon on
  * hover): a hard delete cascades to every block view that points at
@@ -26,6 +26,9 @@ import { publishDatabaseDeleted } from '@/lib/realtime';
 import type { Database } from '@continuum/shared';
 
 const props = defineProps<{
+    viewLabel: string;
+    viewIcon?: string;
+    viewDescription?: string;
     editable: boolean;
     busy: boolean;
     error: string | null;
@@ -118,10 +121,13 @@ async function confirmDelete(): Promise<void> {
 <template>
     <div class="db-unbound">
         <div class="db-unbound__head">
-            <Icon name="database" />
+            <span class="db-unbound__icon">
+                <Icon :name="viewIcon ?? 'database'" />
+            </span>
             <div class="db-unbound__lead">
-                <strong>Database</strong>
-                <p>Pick a datasource to view here.</p>
+                <span class="db-unbound__eyebrow">Database view</span>
+                <strong>{{ viewLabel }}</strong>
+                <p>{{ viewDescription || 'Pick or create a datasource for this view.' }}</p>
             </div>
             <button
                 v-if="editable"
@@ -215,10 +221,35 @@ async function confirmDelete(): Promise<void> {
     gap: var(--space-3);
 }
 
+.db-unbound__icon {
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: var(--border-width-1) solid color-mix(in srgb, var(--accent) 24%, transparent);
+    border-radius: var(--radius-sm);
+}
+
 .db-unbound__lead {
     flex: 1;
     min-width: 0;
 }
+
+.db-unbound__eyebrow {
+    display: block;
+    margin-bottom: var(--space-1);
+    color: var(--text-muted);
+    font-size: 0.6875rem;
+    font-weight: var(--font-weight-semibold);
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0;
+}
+
 .db-unbound__lead strong {
     display: block;
     font-size: var(--text-md);

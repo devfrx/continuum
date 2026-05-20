@@ -21,6 +21,7 @@
     "@iconify/utils": "^2.1.0",
     "@iconify/vue": "^5.0.0",
     "@vueuse/core": "^11.3.0",
+    "chart.js": "^4.5.1",
     "three": "^0.184.0",
     "three-spritetext": "^1.10.0",
     "vue": "^3.5.13",

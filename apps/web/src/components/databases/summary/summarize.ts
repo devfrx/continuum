@@ -28,6 +28,7 @@
  */
 import { FILTER_OPERATORS, isFilterGroup } from '@continuum/shared';
 import type {
+    ConditionalColorRule,
     DatabaseViewConfig,
     FieldRef,
     PropertyDefinition,
@@ -42,7 +43,8 @@ import type {
     FilterOperatorId,
     FilterValue,
 } from '../filtering/types';
-import { TITLE_FIELD_ID } from '../filtering/types';
+import { CONDITIONAL_COLOR_FIELD_ID, TITLE_FIELD_ID } from '../filtering/types';
+import { colorTokenById } from '../conditionalColor/palette';
 
 /** Render-ready chip representing a single filter condition. */
 export interface FilterChip {
@@ -67,6 +69,27 @@ export interface SortChip {
     descriptor: DatabaseFieldDescriptor | null;
 }
 
+/** Render-ready chip representing a single conditional-color rule. */
+export interface ConditionalColorChip {
+    /** Mirrors the source `ConditionalColorRule.id` for keyed removal. */
+    id: string;
+    fieldLabel: string;
+    operatorLabel: string;
+    valueLabel: string | null;
+    /** Number of extra conditions when a future compound rule is persisted. */
+    extraConditionCount: number;
+    colorLabel: string;
+    colorSwatch: string;
+    scopeLabel: string;
+    targetLabel: string;
+    descriptor: DatabaseFieldDescriptor | null;
+}
+
+export interface SummaryFieldOptions {
+    /** Active conditional-color rules, used to label `viewMeta` filter/sort fields. */
+    conditionalColors?: readonly ConditionalColorRule[] | null;
+}
+
 // ─────────────────────────── Field resolution ──────────────────────────
 
 function descriptorOfRef(
@@ -78,6 +101,9 @@ function descriptorOfRef(
     }
     if (ref.kind === 'property') {
         return descriptors.find((d) => d.definition?.key === ref.key) ?? null;
+    }
+    if (ref.kind === 'viewMeta' && ref.id === 'view.conditionalColor') {
+        return descriptors.find((d) => d.id === CONDITIONAL_COLOR_FIELD_ID) ?? null;
     }
     return null;
 }
@@ -159,6 +185,46 @@ function formatValue(
     }
 }
 
+function conditionToFilterChip(
+    condition: FilterCondition,
+    descriptors: readonly DatabaseFieldDescriptor[],
+): FilterChip {
+    const descriptor = descriptorOfRef(condition.field, descriptors);
+    const op = FILTER_OPERATORS[condition.operator];
+    return {
+        id: condition.id,
+        fieldLabel: descriptor?.label ?? 'Field',
+        operatorLabel: op?.label ?? condition.operator,
+        valueLabel: formatValue(condition.operator, condition.value, descriptor),
+        descriptor,
+    };
+}
+
+function previewConditionNode(
+    node: FilterNode,
+    descriptors: readonly DatabaseFieldDescriptor[],
+): Omit<ConditionalColorChip, 'id' | 'colorLabel' | 'colorSwatch' | 'scopeLabel' | 'targetLabel'> {
+    const conditions = Array.from(iterateConditions(node));
+    const first = conditions[0];
+    if (!first) {
+        return {
+            fieldLabel: 'Rows',
+            operatorLabel: 'match',
+            valueLabel: null,
+            extraConditionCount: 0,
+            descriptor: null,
+        };
+    }
+    const chip = conditionToFilterChip(first, descriptors);
+    return {
+        fieldLabel: chip.fieldLabel,
+        operatorLabel: chip.operatorLabel,
+        valueLabel: chip.valueLabel,
+        extraConditionCount: Math.max(conditions.length - 1, 0),
+        descriptor: chip.descriptor,
+    };
+}
+
 /**
  * Convert the active view's filter config into a flat list of chips
  * ready for `<DatabaseViewSummaryBar>`. Returns an empty array when
@@ -168,21 +234,16 @@ function formatValue(
 export function summarizeFilterChips(
     filter: DatabaseViewConfig['filter'] | null | undefined,
     schema: readonly PropertyDefinition[],
+    options?: SummaryFieldOptions,
 ): FilterChip[] {
     if (!filter) return [];
-    const descriptors = describeFields(schema);
+    const descriptors = describeFields(schema, {
+        conditionalColors: options?.conditionalColors ?? null,
+    });
     const chips: FilterChip[] = [];
     const walk = isFilterGroup(filter) ? iterateConditions(filter) : iterateConditions(filter);
     for (const condition of walk) {
-        const descriptor = descriptorOfRef(condition.field, descriptors);
-        const op = FILTER_OPERATORS[condition.operator];
-        chips.push({
-            id: condition.id,
-            fieldLabel: descriptor?.label ?? 'Field',
-            operatorLabel: op?.label ?? condition.operator,
-            valueLabel: formatValue(condition.operator, condition.value, descriptor),
-            descriptor,
-        });
+        chips.push(conditionToFilterChip(condition, descriptors));
     }
     return chips;
 }
@@ -198,9 +259,12 @@ export function summarizeFilterChips(
 export function summarizeSortChips(
     sort: readonly SortRule[] | null | undefined,
     schema: readonly PropertyDefinition[],
+    options?: SummaryFieldOptions,
 ): SortChip[] {
     if (!sort || sort.length === 0) return [];
-    const descriptors = describeFields(schema);
+    const descriptors = describeFields(schema, {
+        conditionalColors: options?.conditionalColors ?? null,
+    });
     return sort.map((rule) => {
         const descriptor = descriptorOfRef(rule.field, descriptors);
         return {
@@ -208,6 +272,42 @@ export function summarizeSortChips(
             fieldLabel: descriptor?.label ?? 'Unknown',
             direction: rule.direction,
             descriptor,
+        };
+    });
+}
+
+// ─────────────────── Conditional-color chips ─────────────────────────
+
+function targetLabelOf(
+    rule: ConditionalColorRule,
+    schema: readonly PropertyDefinition[],
+): string {
+    if (rule.target === 'row') return 'Whole row';
+    const property = schema.find((definition) => definition.key === rule.propertyKey);
+    return property?.label ?? 'Unknown property';
+}
+
+function scopeLabelOf(rule: ConditionalColorRule): string {
+    return rule.scope === 'text' ? 'text' : 'background';
+}
+
+/** Convert conditional-color rules into summary chips. */
+export function summarizeConditionalColorChips(
+    rules: readonly ConditionalColorRule[] | null | undefined,
+    schema: readonly PropertyDefinition[],
+): ConditionalColorChip[] {
+    if (!rules || rules.length === 0) return [];
+    const descriptors = describeFields(schema);
+    return rules.map((rule) => {
+        const token = colorTokenById(rule.color);
+        const preview = previewConditionNode(rule.condition, descriptors);
+        return {
+            id: rule.id,
+            ...preview,
+            colorLabel: token.label,
+            colorSwatch: token.swatch,
+            scopeLabel: scopeLabelOf(rule),
+            targetLabel: targetLabelOf(rule, schema),
         };
     });
 }
@@ -240,6 +340,15 @@ export function sortWithoutRule(
     current: readonly SortRule[] | null | undefined,
     ruleId: string,
 ): SortRule[] {
+    if (!current) return [];
+    return current.filter((rule) => rule.id !== ruleId);
+}
+
+/** Build the conditional-colour patch that removes one rule by id. */
+export function conditionalColorsWithoutRule(
+    current: readonly ConditionalColorRule[] | null | undefined,
+    ruleId: string,
+): ConditionalColorRule[] {
     if (!current) return [];
     return current.filter((rule) => rule.id !== ruleId);
 }

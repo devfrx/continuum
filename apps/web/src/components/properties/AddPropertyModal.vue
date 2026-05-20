@@ -719,6 +719,7 @@ async function submit(): Promise<void> {
             await api.databases.properties.create(props.databaseId, {
                 label: label.value.trim(),
                 type: type.value,
+                icon: PROPERTY_TYPE_ICONS[type.value],
                 config,
             });
             publishDatabaseSchemaChanged(props.databaseId);

@@ -3,10 +3,10 @@
  * ChartLayoutSettings.vue — knobs specific to the Chart renderer.
  *
  * Mirrors `ChartView.vue` consumption from `config.layout`:
- *   – `chartType`            `'bar'` (default) | `'pie'` | `'donut'`
+ *   – `chartType`            `'bar'` (default) | `'horizontalBar'` | `'line'` | `'area'` | `'pie'` | `'donut'` | `'polarArea'`
  *   – `groupByPropertyId`    select / multi-select / status property
- *   – `aggregation`          `'count'` (default) | `'sum'` | `'avg'`
- *   – `valuePropertyId`      numeric property — required for `sum` / `avg`
+ *   – `aggregation`          `'count'` (default) | `'sum'` | `'avg'` | `'min'` | `'max'`
+ *   – `valuePropertyId`      numeric property — required for numeric aggregations
  *
  * The value-property picker only renders when the chosen aggregation
  * actually consumes one, keeping the surface uncluttered for the
@@ -40,24 +40,37 @@ const groupOptions = computed(() =>
 
 const chartType = computed<string>(() => {
     const v = (props.view.config.layout as { chartType?: unknown } | null | undefined)?.chartType;
-    return v === 'pie' || v === 'donut' ? v : 'bar';
+    return v === 'horizontalBar'
+        || v === 'line'
+        || v === 'area'
+        || v === 'pie'
+        || v === 'donut'
+        || v === 'polarArea'
+        ? v
+        : 'bar';
 });
 
 const aggregation = computed<string>(() => {
     const v = (props.view.config.layout as { aggregation?: unknown } | null | undefined)?.aggregation;
-    return v === 'sum' || v === 'avg' ? v : 'count';
+    return v === 'sum' || v === 'avg' || v === 'min' || v === 'max' ? v : 'count';
 });
 
 const CHART_OPTIONS = [
     { value: 'bar', label: 'Bar' },
+    { value: 'horizontalBar', label: 'Horizontal bar' },
+    { value: 'line', label: 'Line' },
+    { value: 'area', label: 'Area' },
     { value: 'pie', label: 'Pie' },
     { value: 'donut', label: 'Donut' },
+    { value: 'polarArea', label: 'Polar area' },
 ];
 
 const AGG_OPTIONS = [
     { value: 'count', label: 'Count rows' },
     { value: 'sum', label: 'Sum of…' },
     { value: 'avg', label: 'Average of…' },
+    { value: 'min', label: 'Minimum of…' },
+    { value: 'max', label: 'Maximum of…' },
 ];
 
 // ── Value property (only for sum / avg) ─────────────────────────────────
@@ -91,11 +104,16 @@ function patch(p: Record<string, unknown>): void {
         <template v-else>
             <div class="chart-layout__row chart-layout__row--stack">
                 <span class="chart-layout__label">Chart type</span>
-                <UiSelect
-                    :model-value="chartType"
-                    :options="CHART_OPTIONS"
-                    aria-label="Chart type"
-                    @update:model-value="(v) => patch({ chartType: String(v) })" />
+                <div class="chart-layout__segments" role="group" aria-label="Chart type">
+                    <button
+                        v-for="option in CHART_OPTIONS"
+                        :key="option.value"
+                        type="button"
+                        :class="{ 'is-active': option.value === chartType }"
+                        @click="patch({ chartType: option.value })">
+                        {{ option.label }}
+                    </button>
+                </div>
             </div>
             <div class="chart-layout__row chart-layout__row--stack">
                 <span class="chart-layout__label">Group by</span>
@@ -154,6 +172,39 @@ function patch(p: Record<string, unknown>): void {
 .chart-layout__label {
     font-size: 0.78rem;
     color: var(--fg, #ededed);
+}
+
+.chart-layout__segments {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px;
+    padding: 2px;
+    border: var(--border-width-1, 1px) solid var(--border, rgba(255, 255, 255, 0.08));
+    border-radius: var(--radius-sm);
+    background: var(--bg-soft, rgba(255, 255, 255, 0.04));
+}
+
+.chart-layout__segments button {
+    min-width: 0;
+    min-height: 1.9rem;
+    padding: 0.35rem 0.45rem;
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
+    background: transparent;
+    color: var(--fg-muted, #a09b90);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.75rem;
+}
+
+.chart-layout__segments button:hover {
+    color: var(--fg, #ededed);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.chart-layout__segments button.is-active {
+    color: var(--fg, #ededed);
+    background: var(--bg, rgba(255, 255, 255, 0.09));
 }
 
 .chart-layout__hint {

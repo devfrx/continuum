@@ -28,7 +28,7 @@
 // editable page, lock, tags, links, properties, graph membership), tied
 // to the Database by a membership row in `database_rows`.
 
-import type { UUID } from './index.js';
+import type { CoverPosition, UUID } from './index.js';
 import type { FilterNode } from './query/filters.js';
 import type { FieldRef } from './query/fields.js';
 import type { PropertyDefinition } from './properties.js';
@@ -58,13 +58,10 @@ export interface Database {
 /**
  * Supported view types.
  *
- * The first five (`table`, `list`, `board`, `gallery`, `calendar`) are
- * fully implemented renderers. The remaining types (`timeline`, `chart`,
- * `dashboard`, `feed`, `map`, `form`) are reserved entries — they are
- * accepted by the server, persistable in the DB, and surfaced by the
- * web view picker, but the frontend renders them through a shared
- * placeholder until the dedicated renderer ships. Adding a renderer
- * later is a single-file addition in
+ * Ready renderers are registered in the web view registry; planned
+ * entries are still accepted by the server, persistable in the DB, and
+ * surfaced by the web view picker through a shared placeholder. Adding
+ * a renderer later is a single-file addition in
  * `apps/web/src/components/databases/views/registry.ts`.
  *
  * Order matters: the picker UI mirrors this declaration order.
@@ -270,8 +267,19 @@ export interface DatabaseRow {
  * v2: dropped the inline `databaseId` / `viewId` references. The block
  * no longer owns a datasource — its views do. The active view selection
  * is preserved as a stable id; the source/type/config live server-side.
+ *
+ * v3: added an optional first-view intent. It is consumed once by the
+ * web NodeView when the unbound block creates or links its first
+ * datasource, then cleared from the document attrs.
  */
-export const DATABASE_BLOCK_SCHEMA_VERSION = 2;
+export const DATABASE_BLOCK_SCHEMA_VERSION = 3;
+
+/** Non-authoritative hint used to seed the first block view of a new database block. */
+export interface DatabaseBlockInitialView {
+  type: DatabaseViewType;
+  name?: string;
+  config?: Partial<DatabaseViewConfig> | null;
+}
 
 /**
  * Attributes serialized on the Tiptap `database` node. Stable, minimal,
@@ -283,15 +291,21 @@ export interface DatabaseBlockAttrs {
   blockId: string;
   /** Currently focused view; `null` until at least one view exists. */
   activeViewId: UUID | null;
+  /** Optional one-shot hint used while the block is still unbound. */
+  initialView: DatabaseBlockInitialView | null;
   /** Persisted attribute schema version. */
   schemaVersion: number;
 }
 
 /** Factory for a fresh, empty block (zero views, no active selection). */
-export function createDatabaseBlockAttrs(blockId: string): DatabaseBlockAttrs {
+export function createDatabaseBlockAttrs(
+  blockId: string,
+  initialView: DatabaseBlockInitialView | null = null,
+): DatabaseBlockAttrs {
   return {
     blockId,
     activeViewId: null,
+    initialView,
     schemaVersion: DATABASE_BLOCK_SCHEMA_VERSION,
   };
 }
@@ -341,6 +355,8 @@ export interface DatabaseRowSnapshot {
     folderId: UUID | null;
     /** Optional cover image — propagated so Gallery/Card layouts can render it. */
     coverImage: string | null;
+    /** Optional cover focal point — mirrors `Note.coverPosition`. */
+    coverPosition: CoverPosition | null;
     createdAt: string;
     updatedAt: string;
   };

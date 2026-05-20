@@ -64,9 +64,7 @@
   line-height: var(--leading-relaxed);
 }
 
-.continuum-editor:not(:hover):not(:focus-within) .continuum-drag-handle,
-.continuum-editor:not(:hover):not(:focus-within) .continuum-drag-handle[data-state='visible'],
-.continuum-editor:not(:hover):not(:focus-within) .continuum-drag-handle[data-state='hidden'] {
+.continuum-editor:not(:hover):not(:focus-within) .continuum-block-handle:not(.is-menu-open):not(.is-dragging) {
   opacity: 0;
   pointer-events: none;
 }

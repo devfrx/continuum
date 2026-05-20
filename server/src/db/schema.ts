@@ -71,6 +71,7 @@ export const notes = pgTable(
      * Stored as a string (relative `/uploads/...` or absolute URL).
      */
     coverImage: text('cover_image'),
+    coverPosition: jsonb('cover_position').$type<import('@continuum/shared').CoverPosition | null>(),
     /** Owning folder; `null` = root ("Inbox"). */
     folderId: uuid('folder_id').references(() => folders.id, { onDelete: 'set null' }),
     /**

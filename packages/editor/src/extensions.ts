@@ -4,6 +4,11 @@
  * Centralises the (large) extension list so the main component file stays
  * focused on UI concerns. Built lazily so collaboration mode can swap the
  * undo/redo history out without re-declaring the rest of the pipeline.
+ *
+ * Custom blocks (Callout, Chart, Database, Details, Footnote, CodeBlock)
+ * are sourced from the block registry — see `./blocks` — so adding a new
+ * block only requires registering a `BlockDefinition`, never editing
+ * this file.
  */
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
@@ -24,15 +29,7 @@ import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import Typography from '@tiptap/extension-typography';
 import UniqueID from '@tiptap/extension-unique-id';
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
-import { VueNodeViewRenderer } from '@tiptap/vue-3';
 import type { Component } from 'vue';
-import { all, createLowlight } from 'lowlight';
-import { Details, DetailsSummary, DetailsContent } from './nodes/Details';
-import { Callout } from './nodes/Callout';
-import { Chart } from './nodes/Chart';
-import { Database } from './nodes/Database';
-import { Footnote } from './nodes/Footnote';
 import { TrailingNode } from './extensions/TrailingNode';
 import {
   SlashCommand,
@@ -42,12 +39,12 @@ import {
 import { buildMathematics } from './extensions/Mathematics';
 import { buildTableOfContents, type TocAnchor } from './extensions/TableOfContents';
 import { WikilinkDecoration, type WikilinkClick } from './extensions/WikilinkDecoration';
-
-export const lowlight = createLowlight(all);
+import { createBlockRegistry, createBuiltinBlocks } from './blocks';
 
 // Re-exported here to preserve the public API for any external consumer
-// that previously imported `CODE_LANGUAGES` from this module.
-export { CODE_LANGUAGES } from './codeLanguages';
+// that previously imported `CODE_LANGUAGES` / `lowlight` from this module.
+export { CODE_LANGUAGES, lowlight } from './codeLanguages';
+
 
 interface BuildOptions {
   collaborative: boolean;
@@ -108,6 +105,22 @@ interface BuildOptions {
 }
 
 export function buildExtensions(opts: BuildOptions) {
+  // Compose a per-editor block registry from the built-in definitions
+  // (Callout, Details, Chart, Database, Footnote, CodeBlock). Each
+  // definition declares its own Tiptap extension(s) wired to the
+  // host-supplied NodeView — so this factory no longer needs to know
+  // about individual custom nodes.
+  const registry = createBlockRegistry(
+    createBuiltinBlocks({
+      codeBlockView: opts.codeBlockView,
+      detailsView: opts.detailsView,
+      calloutView: opts.calloutView,
+      chartView: opts.chartView,
+      databaseView: opts.databaseView,
+      footnoteView: opts.footnoteView,
+    }),
+  );
+
   return [
     StarterKit.configure({
       heading: { levels: [1, 2, 3, 4] },
@@ -169,42 +182,10 @@ export function buildExtensions(opts: BuildOptions) {
         };
       },
     }),
-    Details.extend({
-      addNodeView() {
-        return VueNodeViewRenderer(opts.detailsView);
-      },
-    }),
-    DetailsSummary,
-    DetailsContent,
-    Callout.extend({
-      addNodeView() {
-        return VueNodeViewRenderer(opts.calloutView);
-      },
-    }),
-    Chart.extend({
-      addNodeView() {
-        return VueNodeViewRenderer(opts.chartView);
-      },
-    }),
-    ...(opts.databaseView
-      ? [
-          Database.extend({
-            addNodeView() {
-              return VueNodeViewRenderer(opts.databaseView!);
-            },
-          }),
-        ]
-      : [Database]),
-    Footnote.extend({
-      addNodeView() {
-        return VueNodeViewRenderer(opts.footnoteView);
-      },
-    }),
-    CodeBlockLowlight.extend({
-      addNodeView() {
-        return VueNodeViewRenderer(opts.codeBlockView);
-      },
-    }).configure({ lowlight, defaultLanguage: 'plaintext' }),
+    // Custom blocks (Callout, Details + summary + content, Chart,
+    // Database, Footnote, CodeBlock) — sourced from the registry so
+    // adding a block elsewhere does not require touching this list.
+    ...registry.listExtensions(),
     TrailingNode,
     ...(opts.mathematics ? [buildMathematics()] : []),
     ...(opts.wikilink ? [WikilinkDecoration.configure({ onNavigate: opts.wikilink.onNavigate })] : []),
@@ -216,7 +197,6 @@ export function buildExtensions(opts: BuildOptions) {
           SlashCommand.configure({
             items: opts.slashCommand.items,
             render: opts.slashCommand.render,
-            limit: 12,
           }),
         ]
       : []),

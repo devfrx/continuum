@@ -47,7 +47,7 @@ export interface SlashRendererInstance {
 export interface SlashCommandOptions {
   /** Catalog of available commands. */
   items: SlashCommandItem[];
-  /** Maximum number of items shown after filtering. */
+  /** Maximum number of items shown after filtering. A value <= 0 disables the cap. */
   limit: number;
   /** Renderer factory — called once per active suggestion session. */
   render: () => SlashRendererInstance;
@@ -60,7 +60,8 @@ export interface SlashCommandOptions {
  */
 function filterItems(items: SlashCommandItem[], rawQuery: string, limit: number): SlashCommandItem[] {
   const q = rawQuery.trim().toLowerCase();
-  if (!q) return items.slice(0, limit);
+  if (!q) return items;
+  const hasLimit = limit > 0;
   const out: SlashCommandItem[] = [];
   for (const item of items) {
     const haystack = [item.title, item.description, ...(item.keywords ?? [])]
@@ -68,7 +69,7 @@ function filterItems(items: SlashCommandItem[], rawQuery: string, limit: number)
       .toLowerCase();
     if (haystack.includes(q)) {
       out.push(item);
-      if (out.length >= limit) break;
+      if (hasLimit && out.length >= limit) break;
     }
   }
   return out;
@@ -80,7 +81,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
   addOptions() {
     return {
       items: [],
-      limit: 12,
+      limit: 0,
       render: () => ({
         onStart: () => undefined,
         onUpdate: () => undefined,

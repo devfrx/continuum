@@ -22,6 +22,7 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useFloatingPosition } from '@/composables/useFloatingPosition';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 
 interface Props {
     /** Whether the panel is currently shown. */
@@ -61,6 +62,7 @@ const { style: panelStyle, reposition } = useFloatingPosition({
     maxHeight: props.maxHeight,
     minWidth: props.minWidth,
 });
+useContinuumScrollLock(open);
 
 // Recompute placement once the panel actually mounts (its scrollHeight
 // is required to decide whether to flip above the trigger).
@@ -96,7 +98,8 @@ defineExpose({ reposition });
 
 <template>
     <Teleport to="body">
-        <div v-if="open" ref="panelRef" class="prop-popover" :role="role" :style="panelStyle">
+        <div v-if="open" ref="panelRef" class="prop-popover" :role="role"
+            data-continuum-scroll-lock-allow="true" :style="panelStyle">
             <slot />
         </div>
     </Teleport>

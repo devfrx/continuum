@@ -1,10 +1,27 @@
 /**
  * "Insert" submenu — block-level inserts (divider, quote, code block,
- * task list, toggle, callout, table, chart, image, wikilink).
+ * task list, toggle, callout, table, database views, image, wikilink).
  */
 import type { ContextMenuItem } from '@continuum/shared';
-import { createDatabaseBlockAttrs } from '@continuum/shared';
+import {
+  createDatabaseBlockAttrs,
+  type DatabaseBlockInitialView,
+} from '@continuum/shared';
 import type { MenuContext } from '../editorMenu';
+
+function newBlockId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `block-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function insertDatabaseView(ctx: MenuContext, initialView: DatabaseBlockInitialView | null = null): void {
+  ctx.editor
+    .chain()
+    .focus()
+    .insertContent({ type: 'database', attrs: createDatabaseBlockAttrs(newBlockId(), initialView) })
+    .run();
+}
 
 export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
   const { editor } = ctx;
@@ -67,36 +84,20 @@ export function buildInsertSubmenu(ctx: MenuContext): ContextMenuItem {
         onSelect: () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
       },
       {
-        id: 'in-chart',
-        label: 'Chart',
-        icon: 'chart',
-        onSelect: () => editor.chain().focus().insertContent({
+        id: 'in-chart-view',
+        label: 'Chart view',
+        icon: 'view-chart',
+        onSelect: () => insertDatabaseView(ctx, {
           type: 'chart',
-          attrs: {
-            kind: 'bar',
-            data: {
-              labels: ['Jan', 'Feb', 'Mar', 'Apr'],
-              datasets: [{ label: 'Series A', data: [12, 19, 8, 15] }],
-            },
-            options: { title: 'Untitled chart', showLegend: true, showGrid: true },
-          },
-        }).run(),
+          name: 'Bar chart',
+          config: { layout: { chartType: 'bar', aggregation: 'count' } },
+        }),
       },
       {
         id: 'in-database',
         label: 'Database',
         icon: 'database',
-        onSelect: () => {
-          const blockId =
-            typeof crypto !== 'undefined' && 'randomUUID' in crypto
-              ? crypto.randomUUID()
-              : `block-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-          editor
-            .chain()
-            .focus()
-            .insertContent({ type: 'database', attrs: createDatabaseBlockAttrs(blockId) })
-            .run();
-        },
+        onSelect: () => insertDatabaseView(ctx),
       },
       {
         id: 'in-image',

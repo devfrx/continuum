@@ -15,6 +15,8 @@ export const STORAGE_KEYS = {
   theme: 'continuum:theme',
   /** Recently-viewed notes list. Value: JSON `RecentEntry[]`. */
   recentNotes: 'continuum.recentNotes.v1',
+  /** Notes view local sidebar open/closed flag. Value: `'1'` or `'0'`. */
+  notesSidebarOpen: 'continuum.notes.sidebar.open.v1',
   /** Persisted graph filter sliders/toggles. Value: JSON `GraphFilters`. */
   graphFilters: 'continuum.graph.filters.v1',
   /** Set of pinned/highlighted node ids on the graph. Value: JSON `string[]`. */

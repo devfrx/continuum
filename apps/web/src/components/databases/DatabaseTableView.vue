@@ -42,6 +42,7 @@ import type {
     NoteProperty,
     PropertyDefinition,
 } from '@continuum/shared';
+import { PROPERTY_TYPE_ICONS } from '@continuum/shared';
 import DatabaseCell from './DatabaseCell.vue';
 import {
     canSortProperty,
@@ -105,6 +106,10 @@ function onPropertyCreated(): void {
     showAddProperty.value = false;
     publishDatabaseSchemaChanged(props.database.id);
     emit('schema-changed');
+}
+
+function propertyIcon(property: PropertyDefinition): string {
+    return property.icon ?? PROPERTY_TYPE_ICONS[property.type];
 }
 
 // ── Column visibility from the active view ────────────────────────────────
@@ -662,7 +667,7 @@ function onRootContextMenu(event: MouseEvent): void {
                         name="drag"
                         :size="12"
                         class="db-table__col-drag" />
-                    <Icon :name="property.icon ?? 'circle'" :size="12" />
+                    <Icon :name="propertyIcon(property)" :size="12" />
                     <button
                         type="button"
                         class="db-table__col-trigger"

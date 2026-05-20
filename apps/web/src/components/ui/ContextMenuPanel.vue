@@ -75,7 +75,7 @@ defineExpose({ panelEl });
 
 <template>
     <div ref="panelEl" class="ui-context-menu ui-context-menu__panel" role="menu" :data-cm-panel="panelDataAttr"
-        :style="panelStyle">
+        data-continuum-scroll-lock-allow="true" :style="panelStyle">
         <div v-for="(item, idx) in items" :key="item.id" class="ui-cm__item">
             <div v-if="item.divider" class="ui-cm__divider" role="separator" />
             <div v-else-if="item.header" class="ui-cm__header">{{ item.label }}</div>
@@ -110,7 +110,8 @@ defineExpose({ panelEl });
 
     <div v-else-if="openChildItem && hasChildPanel"
         class="ui-context-menu ui-context-menu__panel ui-context-menu__panel--custom" role="dialog"
-        :data-cm-panel="`${depth + 1}:${openChildId}`" :style="childStyle">
+        :data-cm-panel="`${depth + 1}:${openChildId}`" data-continuum-scroll-lock-allow="true"
+        :style="childStyle">
         <component :is="openChildItem.panel" v-bind="openChildItem.panelProps ?? {}" />
     </div>
 </template>

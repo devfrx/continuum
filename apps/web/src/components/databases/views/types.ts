@@ -86,9 +86,9 @@ export interface DatabaseViewRegistryEntry {
   readonly defaultLayout?: Record<string, unknown>;
   /**
    * Declarative list of layout prerequisites consumed by the renderer.
-   * `DatabaseBody` uses it to auto-bind existing properties and prompt
-   * for missing database-scoped properties before a layout change or a
-   * row draft can proceed.
+   * `DatabaseBody` uses it to auto-bind existing properties, prompt for
+   * missing database-scoped properties, and expose a same-datasource
+   * table companion action for layouts that need structured properties.
    */
   readonly layoutRequirements?: readonly LayoutPropertyRequirement[];
   /**

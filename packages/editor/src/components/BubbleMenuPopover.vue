@@ -21,6 +21,7 @@
  *     land inside the wrapper) and on Escape.
  */
 import { ref, onBeforeUnmount, onMounted } from 'vue';
+import { useContinuumScrollLock } from '../composables/useContinuumScrollLock';
 
 withDefaults(
   defineProps<{
@@ -36,6 +37,7 @@ withDefaults(
 
 const open = ref(false);
 const root = ref<HTMLElement | null>(null);
+useContinuumScrollLock(open);
 
 function toggle(ev: PointerEvent | MouseEvent): void {
   // Block focus theft so the editor's selection survives.
@@ -84,7 +86,8 @@ defineExpose({ close });
           d="M2 3l2 2l2-2" />
       </svg>
     </button>
-    <div v-if="open" class="bm-popover__panel" role="menu" @pointerdown.stop>
+    <div v-if="open" class="bm-popover__panel" role="menu" data-continuum-scroll-lock-allow="true"
+      @pointerdown.stop>
       <slot :close="close" />
     </div>
   </div>

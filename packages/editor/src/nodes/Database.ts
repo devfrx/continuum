@@ -6,12 +6,15 @@
  * the schema flat (one node, one attribute) and survives Tiptap's HTML
  * round-trip without bespoke serialization.
  *
- * Payload (schema v2):
+ * Payload (schema v3):
  *   - `blockId`        — stable id (used to scope ephemeral UI state and
  *                        the server-side `database_block_views.block_id`).
  *   - `activeViewId`   — id of the currently visible `BlockView`, or
  *                        `null` while the block has no views yet
  *                        (unbound picker state).
+ *   - `initialView`    — one-shot creation intent used by slash commands
+ *                        such as "Line chart" / "Board view" before the
+ *                        first server-backed block view exists.
  *   - `schemaVersion`  — version stamp so future migrations can gate.
  *
  * v1 → v2 migration: legacy blocks stored `databaseId` and `viewId`
@@ -26,10 +29,25 @@
  */
 import { Node, mergeAttributes } from '@tiptap/core';
 import {
+  DATABASE_VIEW_TYPES,
   DATABASE_BLOCK_SCHEMA_VERSION,
   createDatabaseBlockAttrs,
+  type DatabaseBlockInitialView,
   type DatabaseBlockAttrs,
 } from '@continuum/shared';
+
+function safeInitialView(value: unknown): DatabaseBlockInitialView | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<DatabaseBlockInitialView>;
+  if (!candidate.type || !DATABASE_VIEW_TYPES.includes(candidate.type)) return null;
+  return {
+    type: candidate.type,
+    ...(typeof candidate.name === 'string' ? { name: candidate.name } : {}),
+    ...(candidate.config && typeof candidate.config === 'object'
+      ? { config: candidate.config }
+      : {}),
+  };
+}
 
 function safeParse(raw: string | null): DatabaseBlockAttrs {
   const fallback = createDatabaseBlockAttrs(
@@ -47,6 +65,7 @@ function safeParse(raw: string | null): DatabaseBlockAttrs {
           : fallback.blockId,
       activeViewId:
         typeof parsed.activeViewId === 'string' ? parsed.activeViewId : null,
+      initialView: safeInitialView(parsed.initialView),
       schemaVersion:
         typeof parsed.schemaVersion === 'number'
           ? parsed.schemaVersion
@@ -75,6 +94,11 @@ export const Database = Node.create({
         parseHTML: (el) =>
           safeParse(el.getAttribute('data-database')).activeViewId,
       },
+      initialView: {
+        default: null as DatabaseBlockInitialView | null,
+        parseHTML: (el) =>
+          safeParse(el.getAttribute('data-database')).initialView,
+      },
       schemaVersion: {
         default: DATABASE_BLOCK_SCHEMA_VERSION,
         parseHTML: (el) =>
@@ -91,6 +115,7 @@ export const Database = Node.create({
     const payload: DatabaseBlockAttrs = {
       blockId: node.attrs.blockId,
       activeViewId: node.attrs.activeViewId,
+      initialView: safeInitialView(node.attrs.initialView),
       schemaVersion:
         node.attrs.schemaVersion ?? DATABASE_BLOCK_SCHEMA_VERSION,
     };

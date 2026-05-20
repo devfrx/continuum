@@ -7,47 +7,40 @@
  * an `action` that receives the live editor + the range covering the
  * trigger text (`/query`) so it can replace it atomically.
  *
+ * Native StarterKit-based items (paragraph, headings, lists, quote,
+ * divider, table, wikilink) are declared inline below. Custom-block
+ * items (toggle, callout, code-block, database, footnote) are sourced
+ * from the block registry (`BUILTIN_BLOCK_SLASH`), while database view
+ * layouts are exposed as first-class insert commands backed by the same
+ * `database` node.
+ *
  * The list is intentionally a plain array so hosts can extend, filter,
  * or reorder it before passing back into `SlashCommand.configure({...})`.
  * Keep this file free of Vue / DOM imports — it is pure data + commands.
  */
-import type { Editor, Range } from '@tiptap/core';
-import { createDatabaseBlockAttrs } from '@continuum/shared';
+import { BUILTIN_BLOCK_SLASH, DATABASE_VIEW_BLOCK_SLASH } from '../../blocks/builtinBlocks';
+import {
+  SLASH_COMMAND_SECTIONS,
+  type BlockSlashDescriptor,
+  type SlashCommandSection,
+} from '../../blocks/types';
 
-/** Logical sections rendered as headers in the popup, in display order. */
-export const SLASH_COMMAND_SECTIONS = ['Basic', 'Lists', 'Blocks', 'Insert'] as const;
+export { SLASH_COMMAND_SECTIONS };
+export type { SlashCommandSection };
 
-export type SlashCommandSection = (typeof SLASH_COMMAND_SECTIONS)[number];
-
-export interface SlashCommandItem {
-  /** Stable identifier (used as Vue `:key` and analytics handle). */
-  id: string;
-  /** Primary label shown in the menu (e.g. "Heading 1"). */
-  title: string;
-  /** Single-line caption shown beneath the title. */
-  description: string;
-  /** Icon name resolved by the host icon catalog (`<Icon :name="…">`). */
-  icon: string;
-  /** Section header under which the item is grouped. */
-  section: SlashCommandSection;
-  /**
-   * Extra search terms that should match the typed query in addition to
-   * the title (e.g. `'h1', 'title'` for Heading 1, `'image', 'picture'`).
-   */
-  keywords?: string[];
-  /**
-   * Run the command. Implementations are responsible for clearing the
-   * trigger range (`editor.chain().focus().deleteRange(range)…`) so the
-   * `/query` text is replaced rather than left in the document.
-   */
-  action: (args: { editor: Editor; range: Range }) => void;
-}
+/**
+ * Structurally identical to `BlockSlashDescriptor`; aliased here so the
+ * slash extension keeps its own public type name while the registry
+ * remains the single source of truth.
+ */
+export type SlashCommandItem = BlockSlashDescriptor;
 
 /**
  * Builder for the default Continuum command set. Returning a fresh array
  * each call lets hosts mutate the list without poisoning the singleton.
  */
 export function createDefaultSlashCommands(): SlashCommandItem[] {
+  const block = BUILTIN_BLOCK_SLASH;
   return [
     // ── Basic ────────────────────────────────────────────────────────
     {
@@ -132,28 +125,8 @@ export function createDefaultSlashCommands(): SlashCommandItem[] {
       action: ({ editor, range }) =>
         editor.chain().focus().deleteRange(range).toggleTaskList().run(),
     },
-    {
-      id: 'toggle',
-      title: 'Toggle list',
-      description: 'Collapsible section',
-      icon: 'toggle',
-      section: 'Lists',
-      keywords: ['details', 'collapse', 'fold', 'accordion'],
-      action: ({ editor, range }) =>
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .insertContent({
-            type: 'details',
-            attrs: { open: true },
-            content: [
-              { type: 'detailsSummary', content: [{ type: 'text', text: 'Toggle' }] },
-              { type: 'detailsContent', content: [{ type: 'paragraph' }] },
-            ],
-          })
-          .run(),
-    },
+    // Toggle/Details lives in the block registry.
+    block.toggle,
 
     // ── Blocks ───────────────────────────────────────────────────────
     {
@@ -166,35 +139,8 @@ export function createDefaultSlashCommands(): SlashCommandItem[] {
       action: ({ editor, range }) =>
         editor.chain().focus().deleteRange(range).setBlockquote().run(),
     },
-    {
-      id: 'callout',
-      title: 'Callout',
-      description: 'Highlighted note with icon',
-      icon: 'callout',
-      section: 'Blocks',
-      keywords: ['note', 'info', 'warning', 'tip', 'admonition'],
-      action: ({ editor, range }) =>
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .insertContent({
-            type: 'callout',
-            attrs: { icon: 'name:info' },
-            content: [{ type: 'paragraph' }],
-          })
-          .run(),
-    },
-    {
-      id: 'code-block',
-      title: 'Code block',
-      description: 'Syntax-highlighted code',
-      icon: 'code-block',
-      section: 'Blocks',
-      keywords: ['code', 'pre', 'snippet', '```'],
-      action: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).setCodeBlock().run(),
-    },
+    block.callout,
+    block.codeBlock,
     {
       id: 'divider',
       title: 'Divider',
@@ -222,58 +168,8 @@ export function createDefaultSlashCommands(): SlashCommandItem[] {
           .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
           .run(),
     },
-    {
-      id: 'chart',
-      title: 'Chart',
-      description: 'Bar / line / pie data viz',
-      icon: 'chart',
-      section: 'Insert',
-      keywords: ['graph', 'plot', 'bar', 'line', 'pie', 'data'],
-      action: ({ editor, range }) =>
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .insertContent({
-            type: 'chart',
-            attrs: {
-              kind: 'bar',
-              data: {
-                labels: ['Jan', 'Feb', 'Mar', 'Apr'],
-                datasets: [{ label: 'Series A', data: [12, 19, 8, 15] }],
-              },
-              options: { title: 'Untitled chart', showLegend: true, showGrid: true },
-            },
-          })
-          .run(),
-    },
-    {
-      id: 'database',
-      title: 'Database',
-      description: 'Notion-like data source (table, list, board, \u2026)',
-      icon: 'database',
-      section: 'Insert',
-      keywords: ['table', 'list', 'board', 'kanban', 'data', 'notion'],
-      action: ({ editor, range }) => {
-        // Stable blockId so per-block ephemeral UI state (sticky view
-        // tab, scroll position) survives editor reloads. The actual
-        // `databaseId` stays null until the user picks "Create new" /
-        // "Link existing" from the unbound placeholder UI.
-        const blockId =
-          typeof crypto !== 'undefined' && 'randomUUID' in crypto
-            ? crypto.randomUUID()
-            : `block-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .insertContent({
-            type: 'database',
-            attrs: createDatabaseBlockAttrs(blockId),
-          })
-          .run();
-      },
-    },
+    block.database,
+    ...DATABASE_VIEW_BLOCK_SLASH,
     {
       id: 'wikilink',
       title: 'Wikilink',
@@ -293,20 +189,6 @@ export function createDefaultSlashCommands(): SlashCommandItem[] {
           .run();
       },
     },
-    {
-      id: 'footnote',
-      title: 'Footnote',
-      description: 'Inline reference with a popover note',
-      icon: 'footnote',
-      section: 'Insert',
-      keywords: ['footnote', 'note', 'reference', 'sup', 'cite'],
-      action: ({ editor, range }) =>
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .insertContent({ type: 'footnote', attrs: { content: '' } })
-          .run(),
-    },
+    block.footnote,
   ];
 }

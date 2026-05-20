@@ -29,6 +29,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 import { useFloatingPosition } from '@/composables/useFloatingPosition';
 import { useTypeahead } from '@/composables/useTypeahead';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 
 interface Option {
     label: string;
@@ -76,6 +77,7 @@ const { style: panelStyle, reposition } = useFloatingPosition({
     maxHeight: 320,
     minWidth: 160,
 });
+useContinuumScrollLock(open);
 
 // ---------- Open / close ----------
 
@@ -206,8 +208,8 @@ onBeforeUnmount(() => {
         </button>
 
         <Teleport to="body">
-            <div v-if="open" ref="panelRef" class="ui-select__panel" role="listbox" tabindex="-1" :style="panelStyle"
-                @keydown="onPanelKeydown">
+            <div v-if="open" ref="panelRef" class="ui-select__panel" role="listbox" tabindex="-1"
+                data-continuum-scroll-lock-allow="true" :style="panelStyle" @keydown="onPanelKeydown">
                 <button v-for="(opt, idx) in options" :key="String(opt.value)" type="button" class="ui-select__option"
                     role="option" :data-index="idx" :aria-selected="String(opt.value) === String(modelValue)" :class="{
                         'is-active': idx === activeIndex,

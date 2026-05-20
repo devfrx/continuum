@@ -7,6 +7,7 @@
  */
 import { computed, onBeforeUnmount, ref } from 'vue';
 import Icon from '@/components/ui/Icon.vue';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import { propertyEditorRegistry } from './editors/registry';
 import { useDatabaseDirectory } from '@/composables/useDatabaseDirectory';
 import {
@@ -65,6 +66,7 @@ const sharedDatabaseName = computed<string | null>(() => {
 
 const menuOpen = ref(false);
 const root = ref<HTMLDivElement | null>(null);
+useContinuumScrollLock(menuOpen);
 
 interface ReadonlyChip {
     label: string;
@@ -286,7 +288,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                 @reload="emit('reload')" />
         </div>
 
-        <div v-if="menuOpen && canOpenMenu" class="prop-row__menu" role="menu" @click="close">
+        <div v-if="menuOpen && canOpenMenu" class="prop-row__menu" role="menu"
+            data-continuum-scroll-lock-allow="true" @click="close">
             <button type="button" class="prop-row__menu-item prop-row__menu-item--danger" role="menuitem"
                 @click="emit('remove')">
                 <Icon name="trash" :size="12" />

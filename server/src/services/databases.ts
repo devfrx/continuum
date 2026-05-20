@@ -918,6 +918,7 @@ export async function queryDatabaseRows(
         locked: note.locked,
         folderId: note.folderId,
         coverImage: note.coverImage ?? null,
+        coverPosition: note.coverPosition ?? null,
         createdAt: note.createdAt.toISOString(),
         updatedAt: note.updatedAt.toISOString(),
       },

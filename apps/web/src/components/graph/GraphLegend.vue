@@ -6,8 +6,9 @@
  *
  * Owns the legend popover open state via v-model:open.
  */
-import { computed, inject, onMounted } from 'vue';
+import { computed, inject, onMounted, toRef } from 'vue';
 import { Icon, UiChip } from '@/components/ui';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import { fieldRefKey, type FieldRef, type KindDefinition } from '@continuum/shared';
 import { GRAPH_PROPERTY_ENCODINGS_KEY } from '@/components/query/graphQueryInjection';
 import { useFieldCatalog } from '@/composables/query/useFieldCatalog';
@@ -37,6 +38,7 @@ const emit = defineEmits<{
 const hiddenCount = computed(() => props.hiddenKinds.size);
 const encodings = inject(GRAPH_PROPERTY_ENCODINGS_KEY, null);
 const catalog = useFieldCatalog();
+useContinuumScrollLock(toRef(props, 'legendOpen'));
 
 onMounted(() => {
     void catalog.load('graph');
@@ -95,7 +97,7 @@ const styleRows = computed(() => {
             </button>
         </div>
         <transition name="rail-pop">
-            <div v-if="legendOpen" class="panel legend-pop" @click.stop>
+            <div v-if="legendOpen" class="panel legend-pop" data-continuum-scroll-lock-allow="true" @click.stop>
                 <div class="legend-section">
                     <div class="legend-head">
                         <span>Tipi nodo</span>

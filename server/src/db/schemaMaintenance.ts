@@ -22,6 +22,11 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS "cover_image" text
   `);
 
+  await db.execute(sql`
+    ALTER TABLE "notes"
+      ADD COLUMN IF NOT EXISTS "cover_position" jsonb
+  `);
+
   // GIN index over `value_json` so jsonb containment / `?|` lookups used
   // by the property-filter SQL stay fast as the property_values table
   // grows. `jsonb_path_ops` is the right opclass for `@>` containment,

@@ -31,6 +31,7 @@ const HostComponent = inject<Component | null>(DATABASE_COMPONENT_KEY, null);
 const attrs = computed<DatabaseBlockAttrs>(() => ({
     blockId: props.node.attrs.blockId,
     activeViewId: props.node.attrs.activeViewId ?? null,
+    initialView: props.node.attrs.initialView ?? null,
     schemaVersion: props.node.attrs.schemaVersion,
 }));
 

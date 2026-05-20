@@ -8,6 +8,11 @@ import { embedNote } from '../services/notes-embed.js';
 import { syncWikilinks } from '../services/notes-wikilinks.js';
 import { searchNotes } from '../services/notes-search.js';
 
+const coverPositionSchema = z.object({
+  x: z.number().finite().min(0).max(100),
+  y: z.number().finite().min(0).max(100),
+});
+
 const upsertSchema = z.object({
   title: z.string().trim().min(1),
   kind: z.string().trim().min(1).default('note'),
@@ -17,6 +22,7 @@ const upsertSchema = z.object({
   folderId: z.string().uuid().nullable().optional(),
   locked: z.boolean().optional(),
   coverImage: z.string().nullable().optional(),
+  coverPosition: coverPositionSchema.nullable().optional(),
 });
 
 /**
@@ -32,6 +38,7 @@ const partialUpdateSchema = z.object({
   folderId: z.string().uuid().nullable().optional(),
   locked: z.boolean().optional(),
   coverImage: z.string().nullable().optional(),
+  coverPosition: coverPositionSchema.nullable().optional(),
 });
 
 /** Fields that mutate user content; rejected when the note is locked. */
@@ -43,6 +50,7 @@ const MUTATION_FIELDS = [
   'tags',
   'folderId',
   'coverImage',
+  'coverPosition',
 ] as const;
 
 const searchSchema = z.object({

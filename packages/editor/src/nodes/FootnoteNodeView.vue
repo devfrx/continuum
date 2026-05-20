@@ -15,6 +15,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3';
 import { FOOTNOTE_NODE_NAME } from './Footnote';
+import { useContinuumScrollLock } from '../composables/useContinuumScrollLock';
 
 const props = defineProps(nodeViewProps);
 
@@ -22,6 +23,7 @@ const open = ref(false);
 const draft = ref('');
 const root = ref<HTMLElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
+useContinuumScrollLock(open);
 
 /**
  * 1-based position of this node among all `footnote` nodes in the doc.
@@ -109,6 +111,7 @@ onBeforeUnmount(() => {
             </button>
 
             <div v-if="open" class="continuum-footnote__popover" role="dialog"
+                data-continuum-scroll-lock-allow="true"
                 :aria-label="`Footnote ${number} editor`">
                 <header class="continuum-footnote__popover-head">
                     <span class="continuum-footnote__popover-title">Footnote {{ number }}</span>

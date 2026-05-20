@@ -16,11 +16,14 @@
  */
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { Icon, UiConfirmModal } from '@/components/ui';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
+import type { AppIconName } from '@/assets/icons';
 import type {
     DatabaseView,
     DatabaseViewType,
 } from '@continuum/shared';
 import AddViewModal from './AddViewModal.vue';
+import DatabaseViewSourceBadge from './DatabaseViewSourceBadge.vue';
 
 export interface AnchorRect {
     top: number;
@@ -33,6 +36,10 @@ const props = defineProps<{
     views: DatabaseView[];
     activeViewId: string | null;
     editable: boolean;
+    sourceLabels: Record<string, string>;
+    showSourceTableAction: boolean;
+    sourceTableActionLabel: string;
+    sourceTableActionTitle: string;
 }>();
 
 const emit = defineEmits<{
@@ -42,6 +49,8 @@ const emit = defineEmits<{
     'add-row': [];
     /** Open the link-existing-note flow scoped to the active datasource. */
     'link-existing': [];
+    /** Open or create a table view for the active datasource. */
+    'open-source-table': [];
     'rename-view': [viewId: string, name: string];
     'delete-view': [viewId: string];
     /**
@@ -59,6 +68,26 @@ const showAddView = ref(false);
 function openAddView(): void {
     if (!props.editable) return;
     showAddView.value = true;
+}
+
+function sourceLabelFor(view: DatabaseView): string {
+    return props.sourceLabels[view.dataSourceDatabaseId] ?? view.dataSourceDatabaseId.slice(0, 6);
+}
+
+function viewIconFor(type: DatabaseViewType): AppIconName {
+    switch (type) {
+        case 'table': return 'view-table';
+        case 'board': return 'view-board';
+        case 'gallery': return 'view-gallery';
+        case 'list': return 'view-list';
+        case 'calendar': return 'view-calendar';
+        case 'timeline': return 'view-timeline';
+        case 'chart': return 'view-chart';
+        case 'dashboard': return 'view-dashboard';
+        case 'feed': return 'view-feed';
+        case 'map': return 'view-map';
+        case 'form': return 'view-form';
+    }
 }
 
 function onPickNewView(payload: { type: DatabaseViewType; dataSourceDatabaseId: string }): void {
@@ -121,6 +150,7 @@ function closeMenu(): void {
 const menuView = computed<DatabaseView | null>(
     () => props.views.find((v) => v.id === menuForViewId.value) ?? null,
 );
+useContinuumScrollLock(() => menuForViewId.value !== null);
 
 function requestDelete(view: DatabaseView): void {
     closeMenu();
@@ -200,106 +230,122 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 </script>
 
 <template>
-    <header class="db-toolbar" @contextmenu="stopToolbarContext">
-        <nav class="db-toolbar__tabs">
-            <div
-                v-for="view in views"
-                :key="view.id"
-                class="db-toolbar__tab-wrap">
-                <input
-                    v-if="renamingViewId === view.id"
-                    v-model="renameDraft"
-                    class="db-toolbar__tab-rename"
-                    autofocus
-                    @keydown.enter="commitRename(view)"
-                    @keydown.escape="cancelRename"
-                    @blur="commitRename(view)" />
+    <div class="db-toolbar-shell">
+        <header class="db-toolbar" @contextmenu="stopToolbarContext">
+            <nav class="db-toolbar__tabs">
+                <div
+                    v-for="view in views"
+                    :key="view.id"
+                    class="db-toolbar__tab-wrap"
+                    :class="{ 'is-active': view.id === activeViewId }">
+                    <input
+                        v-if="renamingViewId === view.id"
+                        v-model="renameDraft"
+                        class="db-toolbar__tab-rename"
+                        autofocus
+                        @keydown.enter="commitRename(view)"
+                        @keydown.escape="cancelRename"
+                        @blur="commitRename(view)" />
+                    <button
+                        v-else
+                        type="button"
+                        class="db-toolbar__tab"
+                        :class="{ 'is-active': view.id === activeViewId }"
+                        :title="editable ? `${view.name} · ${sourceLabelFor(view)} (double-click to rename, right-click for more)` : `${view.name} · ${sourceLabelFor(view)}`"
+                        @click="emit('select-view', view.id)"
+                        @dblclick="startRename(view)"
+                        @contextmenu.stop.prevent="openMenu(view.id, $event)">
+                        <span class="db-toolbar__tab-main">
+                            <Icon :name="viewIconFor(view.type)" :size="13" class="db-toolbar__tab-icon" />
+                            <span class="db-toolbar__tab-name">{{ view.name }}</span>
+                            <DatabaseViewSourceBadge :label="sourceLabelFor(view)" />
+                        </span>
+                    </button>
+                    <button
+                        v-if="editable && renamingViewId !== view.id"
+                        type="button"
+                        class="db-toolbar__tab-settings"
+                        title="View settings"
+                        @click.stop="openSettings(view.id, $event)"
+                        @contextmenu.stop.prevent="openMenu(view.id, $event)">
+                        <Icon name="settings" :size="12" />
+                    </button>
+                    <Teleport to="body">
+                        <div
+                            v-if="menuForViewId === view.id && menuView && menuAnchorRect"
+                            class="db-toolbar__tab-menu"
+                            role="menu"
+                            data-continuum-scroll-lock-allow="true"
+                            :style="tabMenuStyle"
+                            @contextmenu.stop.prevent>
+                            <button type="button" class="db-toolbar__tab-menu-item" @click="startRename(menuView)">
+                                <Icon name="edit" :size="12" />
+                                <span>Rename view</span>
+                            </button>
+                            <button type="button" class="db-toolbar__tab-menu-item" @click="openSettingsFromMenu(menuView.id)">
+                                <Icon name="settings" :size="12" />
+                                <span>View settings</span>
+                            </button>
+                            <button type="button" class="db-toolbar__tab-menu-item db-toolbar__tab-menu-item--danger" @click="requestDelete(menuView)">
+                                <Icon name="trash" :size="12" />
+                                <span>Delete view</span>
+                            </button>
+                        </div>
+                    </Teleport>
+                </div>
                 <button
-                    v-else
-                    type="button"
-                    class="db-toolbar__tab"
-                    :class="{ 'is-active': view.id === activeViewId }"
-                    :title="editable ? `${view.name} (double-click to rename, right-click for more)` : view.name"
-                    @click="emit('select-view', view.id)"
-                    @dblclick="startRename(view)"
-                    @contextmenu.stop.prevent="openMenu(view.id, $event)">
-                    {{ view.name }}
+                    v-if="editable"
+                    class="db-toolbar__tab db-toolbar__tab--add"
+                    title="Add view"
+                    @click="openAddView">
+                    <Icon name="plus" />
                 </button>
-                <button
-                    v-if="editable && renamingViewId !== view.id"
-                    type="button"
-                    class="db-toolbar__tab-settings"
-                    title="View settings"
-                    @click.stop="openSettings(view.id, $event)"
-                    @contextmenu.stop.prevent="openMenu(view.id, $event)">
-                    <Icon name="settings" :size="12" />
-                </button>
-                <Teleport to="body">
-                    <div
-                        v-if="menuForViewId === view.id && menuView && menuAnchorRect"
-                        class="db-toolbar__tab-menu"
-                        role="menu"
-                        :style="tabMenuStyle"
-                        @contextmenu.stop.prevent>
-                        <button type="button" class="db-toolbar__tab-menu-item" @click="startRename(menuView)">
-                            <Icon name="edit" :size="12" />
-                            <span>Rename view</span>
-                        </button>
-                        <button type="button" class="db-toolbar__tab-menu-item" @click="openSettingsFromMenu(menuView.id)">
-                            <Icon name="settings" :size="12" />
-                            <span>View settings</span>
-                        </button>
-                        <button type="button" class="db-toolbar__tab-menu-item db-toolbar__tab-menu-item--danger" @click="requestDelete(menuView)">
-                            <Icon name="trash" :size="12" />
-                            <span>Delete view</span>
-                        </button>
-                    </div>
-                </Teleport>
-            </div>
-            <button
-                v-if="editable"
-                class="db-toolbar__tab db-toolbar__tab--add"
-                title="Add view"
-                @click="openAddView">
-                <Icon name="plus" />
-            </button>
-        </nav>
+            </nav>
 
-        <div class="db-toolbar__actions">
-            <button
-                v-if="editable"
-                class="db-toolbar__action db-toolbar__action--primary"
-                @click="emit('add-row')">
-                <Icon name="plus" />
-                <span>New row</span>
-            </button>
-            <button
-                v-if="editable"
-                class="db-toolbar__action"
-                title="Link an existing note as a row"
-                @click="emit('link-existing')">
-                <Icon name="link" />
-                <span>Link note</span>
-            </button>
-            <button
-                v-if="editable"
-                class="db-toolbar__action db-toolbar__action--icon db-toolbar__action--danger"
-                title="Remove block"
-                aria-label="Remove block"
-                @click="emit('delete')">
-                <Icon name="trash" />
-            </button>
-        </div>
-    </header>
-    <AddViewModal v-model="showAddView" @select="onPickNewView" />
-    <UiConfirmModal
-        :model-value="!!deleteTargetView"
-        title="Delete view"
-        :message="deleteMessage"
-        confirm-label="Delete"
-        confirm-variant="danger"
-        @update:model-value="(v) => { if (!v) deleteTargetView = null; }"
-        @confirm="confirmDeleteView" />
+            <div class="db-toolbar__actions">
+                <button
+                    v-if="editable"
+                    class="db-toolbar__action db-toolbar__action--primary"
+                    @click="emit('add-row')">
+                    <Icon name="plus" />
+                    <span>New row</span>
+                </button>
+                <button
+                    v-if="editable"
+                    class="db-toolbar__action"
+                    title="Link an existing note as a row"
+                    @click="emit('link-existing')">
+                    <Icon name="link" />
+                    <span>Link note</span>
+                </button>
+                <button
+                    v-if="showSourceTableAction"
+                    class="db-toolbar__action"
+                    :title="sourceTableActionTitle"
+                    @click="emit('open-source-table')">
+                    <Icon name="view-table" />
+                    <span>{{ sourceTableActionLabel }}</span>
+                </button>
+                <button
+                    v-if="editable"
+                    class="db-toolbar__action db-toolbar__action--icon db-toolbar__action--danger"
+                    title="Remove block"
+                    aria-label="Remove block"
+                    @click="emit('delete')">
+                    <Icon name="trash" />
+                </button>
+            </div>
+        </header>
+        <AddViewModal v-model="showAddView" @select="onPickNewView" />
+        <UiConfirmModal
+            :model-value="!!deleteTargetView"
+            title="Delete view"
+            :message="deleteMessage"
+            confirm-label="Delete"
+            confirm-variant="danger"
+            @update:model-value="(v) => { if (!v) deleteTargetView = null; }"
+            @confirm="confirmDeleteView" />
+    </div>
 </template>
 
 <style scoped>
@@ -309,6 +355,10 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
  * Continuum's design system: pure design tokens, no glass effects,
  * subtle horizontal divider and underline-style active tab.
  */
+.db-toolbar-shell {
+    display: contents;
+}
+
 .db-toolbar {
     display: flex;
     align-items: center;
@@ -336,27 +386,56 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
     position: relative;
     display: inline-flex;
     align-items: stretch;
+    min-width: 0;
+    border: var(--border-width-1) solid transparent;
     border-radius: var(--radius-sm);
-    transition: background-color var(--duration-fast) var(--ease-standard);
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
 }
 
 .db-toolbar__tab-wrap:hover {
     background: var(--surface-hover);
 }
 
+.db-toolbar__tab-wrap.is-active {
+    background: var(--surface-1);
+    border-color: color-mix(in srgb, var(--border) 72%, transparent);
+}
+
 .db-toolbar__tab {
     appearance: none;
     border: 0;
     background: transparent;
-    padding: var(--space-2) var(--space-3);
+    min-height: 30px;
+    padding: var(--space-1) var(--space-2);
     font: inherit;
     font-size: var(--text-sm);
     font-weight: var(--font-weight-medium);
     color: var(--text-secondary);
     cursor: pointer;
-    white-space: nowrap;
     position: relative;
+    text-align: left;
     transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.db-toolbar__tab-main {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 18rem;
+}
+
+.db-toolbar__tab-icon {
+    color: var(--text-muted);
+}
+
+.db-toolbar__tab-name {
+    max-width: 9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .db-toolbar__tab::after {
@@ -389,7 +468,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
     justify-content: center;
     width: 22px;
     height: 22px;
-    margin: auto var(--space-1) auto calc(-1 * var(--space-1));
+    margin: auto var(--space-1) auto 0;
     border: 0;
     background: transparent;
     color: var(--text-muted);
@@ -403,7 +482,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
 }
 
 .db-toolbar__tab-wrap:hover .db-toolbar__tab-settings,
-.db-toolbar__tab.is-active + .db-toolbar__tab-settings,
+.db-toolbar__tab-wrap.is-active .db-toolbar__tab-settings,
 .db-toolbar__tab-settings:focus-visible {
     opacity: 1;
 }

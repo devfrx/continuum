@@ -24,6 +24,7 @@ import type { DatabaseViewSurfaceProps, DatabaseViewSurfaceEmits } from './types
 import { useDatabaseRowDisplay } from '../useDatabaseRowDisplay';
 import { useConditionalColors } from '../conditionalColor';
 import { readCardDisplay } from '../layout';
+import { coverBackgroundPosition } from '@/lib/noteCover';
 import { resolveCardProperties } from './cardProperties';
 import DatabaseCardProperty from './DatabaseCardProperty.vue';
 import { useDatabaseRowReorder } from './useDatabaseRowReorder';
@@ -131,6 +132,16 @@ function coverUrlFor(row: DatabaseRowSnapshot): string | null {
     }
 }
 
+function coverStyleFor(row: DatabaseRowSnapshot): Record<string, string> {
+    const url = coverUrlFor(row);
+    if (!url) return {};
+    const style: Record<string, string> = { backgroundImage: `url('${url}')` };
+    if (cardDisplay.value.cardPreview !== 'properties' && row.note.coverImage === url) {
+        style.backgroundPosition = coverBackgroundPosition(row.note.coverPosition);
+    }
+    return style;
+}
+
 const hasCoverFrame = computed<boolean>(() =>
     orderedRows.value.some((row) => coverUrlFor(row) !== null),
 );
@@ -190,7 +201,7 @@ function openRow(row: DatabaseRowSnapshot): void {
                 <div
                     v-if="coverUrlFor(row)"
                     class="db-gallery__cover"
-                    :style="{ backgroundImage: `url('${coverUrlFor(row)}')` }" />
+                    :style="coverStyleFor(row)" />
                 <div v-else-if="hasCoverFrame" class="db-gallery__cover db-gallery__cover--placeholder">
                     <Icon name="image" :size="22" />
                 </div>

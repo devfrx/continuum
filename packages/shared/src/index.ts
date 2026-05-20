@@ -1,5 +1,7 @@
 // ===== Domain types shared between server, web, and desktop =====
 
+export { lockContinuumScroll, SCROLL_LOCK_ALLOW_ATTRIBUTE } from './scrollLock.js';
+
 export type UUID = string;
 
 /**
@@ -30,6 +32,13 @@ export interface KindDefinition {
   updatedAt: string;
 }
 
+export interface CoverPosition {
+  /** Horizontal focal point, expressed as a CSS percentage from 0 to 100. */
+  x: number;
+  /** Vertical focal point, expressed as a CSS percentage from 0 to 100. */
+  y: number;
+}
+
 export interface Note {
   id: UUID;
   title: string;
@@ -52,6 +61,8 @@ export interface Note {
    * header when present. `null` means "no cover".
    */
   coverImage?: string | null;
+  /** Optional cover focal point used by the editor, board and gallery cards. */
+  coverPosition?: CoverPosition | null;
   createdAt: string;
   updatedAt: string;
 }

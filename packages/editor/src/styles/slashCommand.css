@@ -117,9 +117,18 @@
 }
 
 .continuum-slash-menu__title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
   font-size: var(--text-sm);
   font-weight: var(--font-weight-medium);
   line-height: 1.2;
+}
+
+.continuum-slash-menu__title-hint {
+  color: var(--fg-muted);
+  font-weight: var(--font-weight-regular);
 }
 
 .continuum-slash-menu__desc {

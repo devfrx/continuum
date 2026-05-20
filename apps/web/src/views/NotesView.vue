@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useDebounceFn } from '@vueuse/core';
 import { ContinuumEditor, type IconCatalogEntry, type TocAnchor } from '@continuum/editor';
 import { api, type BacklinkEntry } from '@/api';
-import type { AiSearchHit, Note, EntityKind, FolderNode, ContextMenuItem } from '@continuum/shared';
+import type { AiSearchHit, Note, EntityKind, FolderNode, ContextMenuItem, CoverPosition } from '@continuum/shared';
 import NotesSidebar from '@/components/notes/NotesSidebar.vue';
 import NoteEditorHeader from '@/components/notes/NoteEditorHeader.vue';
 import NoteCreateModal from '@/components/notes/NoteCreateModal.vue';
@@ -29,6 +29,7 @@ import { ICONS, type AppIconName } from '@/assets/icons';
 import { useAiHealth } from '@/composables/useAiHealth';
 import { useFolders } from '@/composables/useFolders';
 import { removeFolder } from '@/composables/foldersApi';
+import { useNotesSidebar } from '@/composables/useNotesSidebar';
 import { useRecentNotes } from '@/composables/useRecentNotes';
 import { usePromptModal } from '@/composables/usePromptModal';
 import {
@@ -42,6 +43,7 @@ const route = useRoute();
 const router = useRouter();
 const { embeddingsAvailable } = useAiHealth();
 const folders = useFolders();
+const { open: notesSidebarOpen, toggle: toggleNotesSidebar } = useNotesSidebar();
 const recentNotes = useRecentNotes();
 const { requestPrompt } = usePromptModal();
 
@@ -91,6 +93,14 @@ const draftLocked = ref<boolean>(false);
  * directly (no debounce) — cover changes are discrete user intents.
  */
 const draftCoverImage = ref<string | null>(null);
+const draftCoverPosition = ref<CoverPosition | null>(null);
+
+const notesSidebarPillLabel = computed(() =>
+  notesSidebarOpen.value ? 'Collapse notes sidebar' : 'Expand notes sidebar',
+);
+const notesSidebarPillIcon = computed<AppIconName>(() =>
+  notesSidebarOpen.value ? 'chevron-left' : 'chevron-right',
+);
 
 const search = ref('');
 const searchMode = ref<SearchMode>('filter');
@@ -408,6 +418,7 @@ function applyDraft(n: Note): void {
   draftTags.value = Array.isArray(n.tags) ? [...n.tags] : [];
   draftLocked.value = !!n.locked;
   draftCoverImage.value = n.coverImage ?? null;
+  draftCoverPosition.value = n.coverPosition ?? null;
   lastSavedAt.value = Date.parse(n.updatedAt) || Date.now();
   recentNotes.record(n.id);
 }
@@ -729,19 +740,27 @@ async function onLockToggle(value: boolean): Promise<void> {
  * reject the patch via the 423 contract; we surface that by rolling
  * back the optimistic mirror.
  */
-async function onCoverImageChange(value: string | null): Promise<void> {
+async function onCoverChange(payload: { image: string | null; position: CoverPosition | null }): Promise<void> {
   if (!selectedId.value) return;
   const id = selectedId.value;
-  const previous = draftCoverImage.value;
-  draftCoverImage.value = value;
+  const previousImage = draftCoverImage.value;
+  const previousPosition = draftCoverPosition.value;
+  draftCoverImage.value = payload.image;
+  draftCoverPosition.value = payload.position;
   try {
-    const updated = await api.notes.update(id, { coverImage: value });
+    const updated = await api.notes.update(id, {
+      coverImage: payload.image,
+      coverPosition: payload.position,
+    });
     const idx = notes.value.findIndex((n) => n.id === id);
     if (idx >= 0) notes.value[idx] = updated;
+    draftCoverImage.value = updated.coverImage ?? null;
+    draftCoverPosition.value = updated.coverPosition ?? null;
     lastSavedAt.value = Date.parse(updated.updatedAt) || Date.now();
     publishNoteUpdated(id);
   } catch (err) {
-    draftCoverImage.value = previous;
+    draftCoverImage.value = previousImage;
+    draftCoverPosition.value = previousPosition;
     throw err;
   }
 }
@@ -874,16 +893,31 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="notes-layout">
-    <NotesSidebar class="pane left" :notes="notes" :selected-id="selectedId" :selected-folder-id="selectedFolderId"
-      :search-query="search" :search-mode="searchMode" :semantic-hits="semanticHits" :semantic-busy="semanticBusy"
-      :semantic-available="embeddingsAvailable" :dev-mode="isDev" :seed-busy="seedNotesBusy"
-      :seed-error="seedNotesError" @update:search-query="(v: string) => (search = v)"
-      @update:search-mode="(v: SearchMode) => (searchMode = v)"
-      @update:selected-folder-id="(v: string | null) => (selectedFolderId = v)" @select="selectById"
-      @create="openCreateNote" @seed-test-notes="seedSemanticTestNotes" @delete="remove"
-      @run-semantic="runSemanticSearch" @create-folder="openCreateFolder" @edit-folder="openEditFolder"
-      @delete-folder="requestDeleteFolder" @move-note="moveNoteToFolder" />
+  <div class="notes-layout" :class="{ 'notes-sidebar-open': notesSidebarOpen }">
+    <button
+      type="button"
+      class="notes-sidebar-pill"
+      :class="{ 'is-active': notesSidebarOpen }"
+      :aria-label="notesSidebarPillLabel"
+      :aria-expanded="notesSidebarOpen"
+      aria-controls="notes-sidebar"
+      :title="notesSidebarPillLabel"
+      @click="toggleNotesSidebar">
+      <Icon :name="notesSidebarPillIcon" :size="14" />
+    </button>
+
+    <Transition name="notes-sidebar-slide">
+      <NotesSidebar v-if="notesSidebarOpen" id="notes-sidebar" class="pane left notes-sidebar-pane"
+        :notes="notes" :selected-id="selectedId" :selected-folder-id="selectedFolderId"
+        :search-query="search" :search-mode="searchMode" :semantic-hits="semanticHits" :semantic-busy="semanticBusy"
+        :semantic-available="embeddingsAvailable" :dev-mode="isDev" :seed-busy="seedNotesBusy"
+        :seed-error="seedNotesError" @update:search-query="(v: string) => (search = v)"
+        @update:search-mode="(v: SearchMode) => (searchMode = v)"
+        @update:selected-folder-id="(v: string | null) => (selectedFolderId = v)" @select="selectById"
+        @create="openCreateNote" @seed-test-notes="seedSemanticTestNotes" @delete="remove"
+        @run-semantic="runSemanticSearch" @create-folder="openCreateFolder" @edit-folder="openEditFolder"
+        @delete-folder="requestDeleteFolder" @move-note="moveNoteToFolder" />
+    </Transition>
 
     <section v-if="selected" class="pane center">
       <div class="note-layout" :class="{ 'has-toc': tocAnchors.length, 'is-full-width': noteFullWidth }">
@@ -892,12 +926,13 @@ onBeforeUnmount(() => {
             :folder-id="selected.folderId ?? null"
             :editor-mode="editorMode" :full-width="noteFullWidth" :locked="draftLocked"
             :cover-image="draftCoverImage"
+            :cover-position="draftCoverPosition"
             :saved-at="lastSavedAt"
             :saving="saving" :now-tick="nowTick"
             @update:title="(v: string) => (draftTitle = v)" @update:kind="(v: EntityKind) => (draftKind = v)"
             @update:tags="(v: string[]) => (draftTags = v)" @update:editor-mode="(v: EditorMode) => (editorMode = v)"
             @update:full-width="setNoteFullWidth" @update:locked="onLockToggle"
-            @update:cover-image="onCoverImageChange"
+            @update:cover="onCoverChange"
             @navigate-folder="(id: string | null) => (selectedFolderId = id)"
             @apply-template="applyTemplateOpen = true"
             @save-as-template="saveAsTemplateOpen = true"
@@ -982,11 +1017,83 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .notes-layout {
+  position: relative;
   display: grid;
-  grid-template-columns: var(--layout-notes-sidebar-w) 1fr;
-  gap: var(--space-4);
+  grid-template-columns: 0 minmax(0, 1fr);
+  gap: 0;
   height: 100%;
   min-height: 0;
+  transition:
+    grid-template-columns var(--duration-normal) var(--ease-decel),
+    gap var(--duration-fast) var(--ease-standard);
+}
+
+.notes-layout.notes-sidebar-open {
+  grid-template-columns: var(--layout-notes-sidebar-w) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.notes-sidebar-pane {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.notes-sidebar-pill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate(-1px, -50%);
+  width: var(--layout-pill-w, 14px);
+  height: var(--layout-pill-h, 64px);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+  color: var(--fg-subtle);
+  border: var(--border-width-1) solid var(--border-subtle);
+  border-left: none;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  cursor: pointer;
+  z-index: calc(var(--z-overlay) - 1);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition:
+    transform var(--duration-normal) var(--ease-decel),
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    width var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.notes-sidebar-pill:hover,
+.notes-sidebar-pill.is-active {
+  background: var(--surface-2);
+  color: var(--fg-strong);
+  width: 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.notes-sidebar-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.notes-layout.notes-sidebar-open .notes-sidebar-pill {
+  transform: translate(calc(var(--layout-notes-sidebar-w) + var(--space-4) - 1px), -50%);
+}
+
+.notes-sidebar-slide-enter-active,
+.notes-sidebar-slide-leave-active {
+  transition:
+    transform var(--duration-normal) var(--ease-decel),
+    opacity var(--duration-normal) var(--ease-decel);
+}
+
+.notes-sidebar-slide-enter-from,
+.notes-sidebar-slide-leave-to {
+  transform: translateX(-16px);
+  opacity: 0;
 }
 
 .pane {
@@ -1005,6 +1112,7 @@ onBeforeUnmount(() => {
 /* Center pane scrolls vertically so the inline footer (Linked notes /
    Backlinks) sits naturally below the editor body. */
 .pane.center {
+  grid-column: 2;
   gap: 0;
   background: var(--bg);
   overflow-y: auto;

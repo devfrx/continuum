@@ -16,6 +16,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { Icon } from '@/components/ui';
 import { useFloatingPosition } from '@/composables/useFloatingPosition';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import type { DatabaseColorTokenId } from '@continuum/shared';
 import { DATABASE_COLOR_TOKENS, colorTokenById } from '../conditionalColor/palette';
 
@@ -41,6 +42,7 @@ const { style: panelStyle, reposition } = useFloatingPosition({
     maxHeight: 280,
     minWidth: 180,
 });
+useContinuumScrollLock(open);
 
 async function openPanel(): Promise<void> {
     if (open.value) return;
@@ -116,6 +118,7 @@ onBeforeUnmount(() => {
                 ref="panelRef"
                 class="color-token-picker__panel"
                 role="listbox"
+                data-continuum-scroll-lock-allow="true"
                 :style="panelStyle">
                 <li v-for="token in DATABASE_COLOR_TOKENS" :key="token.id">
                     <button

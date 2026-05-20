@@ -17,6 +17,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { useFloatingPosition } from '@/composables/useFloatingPosition';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import type { PropertyConfig, PropertyDefinition } from '@continuum/shared';
 import { propertySettingsRegistry, hasPropertySettings } from './registry';
 import { usePropertySettings } from './usePropertySettings';
@@ -51,6 +52,7 @@ const { style: panelStyle, reposition } = useFloatingPosition({
     maxHeight: 480,
     minWidth: 280,
 });
+useContinuumScrollLock(open);
 
 watch([open, () => props.triggerEl], async ([isOpen]) => {
     if (!isOpen) return;
@@ -105,7 +107,8 @@ onBeforeUnmount(() => {
 
 <template>
     <Teleport to="body">
-        <div v-if="open && definition" ref="panelRef" class="prop-settings-pop" role="dialog" :style="panelStyle">
+        <div v-if="open && definition" ref="panelRef" class="prop-settings-pop" role="dialog"
+            data-continuum-scroll-lock-allow="true" :style="panelStyle">
             <header class="prop-settings-pop__head">
                 <span class="prop-settings-pop__title">{{ definition.label }}</span>
                 <span v-if="saving" class="prop-settings-pop__status">Saving…</span>

@@ -14,6 +14,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { UiIconPicker, Icon } from '@/components/ui';
 import { useFloatingPosition } from '@/composables/useFloatingPosition';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import { PROPERTY_TYPE_ICONS, type PropertyType } from '@continuum/shared';
 
 interface Props {
@@ -49,6 +50,7 @@ const { style: panelStyle, reposition } = useFloatingPosition({
     maxHeight: 360,
     minWidth: 280,
 });
+useContinuumScrollLock(open);
 
 watch([open, () => props.triggerEl], async ([isOpen]) => {
     if (!isOpen) return;
@@ -97,7 +99,8 @@ onBeforeUnmount(() => {
 
 <template>
     <Teleport to="body">
-        <div v-if="open" ref="panelRef" class="prop-icon-pop" role="dialog" :style="panelStyle">
+        <div v-if="open" ref="panelRef" class="prop-icon-pop" role="dialog"
+            data-continuum-scroll-lock-allow="true" :style="panelStyle">
             <header class="prop-icon-pop__head">
                 <button type="button" class="prop-icon-pop__auto" :class="{ 'is-active': isAuto }"
                     title="Use the default icon for this property type" @click="pickAuto">

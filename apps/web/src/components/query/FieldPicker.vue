@@ -19,6 +19,7 @@ import {
 import Icon from '@/components/ui/Icon.vue';
 import { useFieldCatalog } from '@/composables/query/useFieldCatalog';
 import { useFloatingPosition } from '@/composables/useFloatingPosition';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 
 interface Props {
     modelValue: FieldRef | null;
@@ -114,6 +115,7 @@ const { style: panelStyle, reposition } = useFloatingPosition({
     maxHeight: 360,
     minWidth: 220,
 });
+useContinuumScrollLock(open);
 
 async function openPanel(): Promise<void> {
     if (props.disabled || open.value) return;
@@ -215,6 +217,7 @@ onBeforeUnmount(() => {
                 class="field-picker__panel"
                 role="listbox"
                 tabindex="-1"
+                data-continuum-scroll-lock-allow="true"
                 :style="panelStyle"
                 @keydown="onPanelKey"
             >

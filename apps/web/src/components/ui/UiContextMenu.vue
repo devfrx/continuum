@@ -33,6 +33,7 @@ import type { ContextMenuItem as SharedContextMenuItem } from '@continuum/shared
 import type { AppIconName as IconName } from '@/assets/icons';
 import { useContextMenuPosition } from '@/composables/useContextMenuPosition';
 import { useContextMenuKeyboard } from '@/composables/useContextMenuKeyboard';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import ContextMenuPanel from './ContextMenuPanel.vue';
 
 /**
@@ -132,6 +133,7 @@ useContextMenuKeyboard<ContextMenuItem>({
     onActivate,
     onClose: close,
 });
+useContinuumScrollLock(open);
 
 /* ── Outside-click ───────────────────────────────────────────── */
 

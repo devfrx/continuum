@@ -127,6 +127,8 @@ function planCondition(
     }
     case 'graphMetric':
       return { sql: null, postFilters: [condition] };
+    case 'viewMeta':
+      return { sql: sql`true`, postFilters: [] };
   }
 }
 

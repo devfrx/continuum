@@ -19,6 +19,7 @@ import {
     ICON_COMPONENT_KEY,
     type IconCatalogEntry,
 } from '../hostBridge';
+import { useContinuumScrollLock } from '../composables/useContinuumScrollLock';
 
 const props = defineProps(nodeViewProps);
 
@@ -49,6 +50,7 @@ function serializeIcon(parsed: ParsedIcon): string {
 const current = computed<ParsedIcon>(() => parseIcon(props.node.attrs.icon));
 
 const open = ref(false);
+useContinuumScrollLock(open);
 const tab = ref<'icons' | 'url'>('icons');
 const search = ref('');
 const urlValue = ref('');
@@ -121,7 +123,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
                 <span v-else class="continuum-callout__icon-emoji">{{ current.value }}</span>
             </button>
 
-            <div v-if="open" class="continuum-callout__picker" role="dialog" aria-label="Pick callout icon">
+            <div v-if="open" class="continuum-callout__picker" role="dialog" aria-label="Pick callout icon"
+                data-continuum-scroll-lock-allow="true">
                 <div class="continuum-callout__tabs" role="tablist">
                     <button v-if="iconCatalog.length > 0" type="button" role="tab" :aria-selected="tab === 'icons'"
                         class="continuum-callout__tab" :class="{ active: tab === 'icons' }" @click="tab = 'icons'">App

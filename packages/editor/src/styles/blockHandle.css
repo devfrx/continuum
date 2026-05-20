@@ -1,0 +1,351 @@
+/**
+ * Native block affordance layer.
+ *
+ * The handle is owned by the editor package, not by Tiptap's drag-handle
+ * extension. It tracks the hovered top-level block, exposes add / drag /
+ * actions, and renders a drop indicator during pointer-driven drag-drop.
+ *
+ * Sizing rule: the toolbar must fit inside `--drag-handle-gutter` (56px on
+ * desktop, 36px on narrow viewports) without overlapping the writing area.
+ */
+.continuum-block-affordance-layer {
+  display: contents;
+}
+
+.continuum-block-handle {
+  position: fixed;
+  z-index: var(--z-dropdown, 100);
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 26px;
+  padding: 2px;
+  border: var(--border-width-1) solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-elev) 94%, transparent);
+  color: var(--fg-muted);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  opacity: 0.92;
+  user-select: none;
+  touch-action: none;
+  transition:
+    opacity var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+/**
+ * Invisible hover corridor between the gutter handle and the editor's
+ * writing area. Without it, moving the pointer from the text into the
+ * handle would cross dead space and trigger `pointerleave`.
+ */
+.continuum-block-handle::after {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  width: 14px;
+  height: calc(100% + 12px);
+  pointer-events: auto;
+}
+
+.continuum-block-handle:hover,
+.continuum-block-handle.is-menu-open,
+.continuum-block-handle.is-dragging {
+  opacity: 1;
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  transform: translateX(-1px);
+}
+
+.continuum-block-handle__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.continuum-block-handle__button:hover,
+.continuum-block-handle__button:focus-visible {
+  outline: none;
+  color: var(--fg-strong);
+  background: var(--bg-soft);
+}
+
+.continuum-block-handle__grip {
+  cursor: grab;
+  touch-action: none;
+}
+
+.continuum-block-handle__grip:active,
+.continuum-block-handle.is-dragging .continuum-block-handle__grip {
+  cursor: grabbing;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.continuum-block-menu-shell {
+  display: contents;
+}
+
+.continuum-block-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 220px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: min(70vh, 420px);
+  padding: var(--space-3);
+  border: var(--border-width-1) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  color: var(--fg);
+  box-shadow: var(--shadow-lg);
+  overflow-x: hidden;
+  overflow-y: auto;
+  font-size: var(--text-sm);
+}
+
+.continuum-block-handle.is-menu-above .continuum-block-menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
+.continuum-block-menu__header {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-3);
+}
+
+.continuum-block-menu__block-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.continuum-block-menu__header-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.continuum-block-menu__eyebrow,
+.continuum-block-menu__group-label {
+  color: var(--fg-subtle);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.continuum-block-menu__title {
+  overflow: hidden;
+  color: var(--fg-strong);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.continuum-block-menu__section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.continuum-block-menu__item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 32px;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width-1) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.continuum-block-menu__item:hover:not(:disabled),
+.continuum-block-menu__item:focus-visible:not(:disabled) {
+  outline: none;
+  color: var(--fg-strong);
+  background: var(--bg-soft);
+}
+
+.continuum-block-menu__item.is-active:not(.is-danger) {
+  color: var(--accent);
+}
+
+.continuum-block-menu__item.has-submenu {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.continuum-block-menu__item:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-dim, 0.5);
+  background: transparent;
+}
+
+.continuum-block-menu__item.is-danger {
+  color: var(--danger);
+}
+
+.continuum-block-menu__item.is-danger:hover:not(:disabled),
+.continuum-block-menu__item.is-danger:focus-visible:not(:disabled) {
+  background: var(--danger-soft, color-mix(in srgb, var(--danger) 14%, transparent));
+}
+
+.continuum-block-menu__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-subtle);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.continuum-block-menu__item.is-danger .continuum-block-menu__icon {
+  color: currentColor;
+}
+
+.continuum-block-menu__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.continuum-block-menu__shortcut,
+.continuum-block-menu__chevron {
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0;
+}
+
+.continuum-block-menu__chevron {
+  display: inline-flex;
+  align-items: center;
+}
+
+.continuum-block-menu__submenu-wrap {
+  position: relative;
+}
+
+.continuum-block-menu__submenu {
+  position: fixed;
+  z-index: calc(var(--z-dropdown, 100) + 1);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 220px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: min(70vh, 420px);
+  padding: var(--space-3);
+  border: var(--border-width-1) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  color: var(--fg);
+  box-shadow: var(--shadow-lg);
+  overflow-y: auto;
+}
+
+.continuum-block-menu__submenu .continuum-block-menu__item {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.continuum-block-menu__divider {
+  height: 1px;
+  margin: var(--space-2) calc(-1 * var(--space-3));
+  background: var(--border);
+}
+
+.continuum-block-menu__group-label {
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+.continuum-block-drop-indicator {
+  position: fixed;
+  z-index: var(--z-dropdown, 100);
+  height: 2px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent) 78%, var(--fg) 22%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+  pointer-events: none;
+  transform: translateY(-1px);
+  transition: top var(--duration-fast) var(--ease-standard);
+}
+
+.continuum-block-drop-indicator::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent) 78%, var(--fg) 22%);
+  transform: translateY(-50%);
+}
+
+.continuum-block-drop-adjacent-highlight {
+  position: fixed;
+  z-index: calc(var(--z-dropdown, 100) - 1);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+  transition:
+    left var(--duration-fast) var(--ease-standard),
+    top var(--duration-fast) var(--ease-standard),
+    width var(--duration-fast) var(--ease-standard),
+    height var(--duration-fast) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+@media (max-width: 720px) {
+  .continuum-block-handle {
+    left: 8px !important;
+  }
+
+  .continuum-block-handle__button {
+    width: 18px;
+  }
+
+  .continuum-block-menu {
+    min-width: 204px;
+  }
+}

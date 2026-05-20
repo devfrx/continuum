@@ -3,8 +3,18 @@
  *
  * Extracted from `extensions.ts` so menu/UI components can import the list
  * without pulling in the entire Tiptap extension graph. `extensions.ts`
- * re-exports `CODE_LANGUAGES` to preserve the public API.
+ * re-exports `CODE_LANGUAGES` and `lowlight` to preserve the public API.
  */
+import { all, createLowlight } from 'lowlight';
+
+/**
+ * Shared `lowlight` instance used by the code-block extension for
+ * syntax highlighting. Defined here (rather than in `extensions.ts`)
+ * so the block registry can wire `CodeBlockLowlight` without creating
+ * a circular import back into the extension factory.
+ */
+export const lowlight = createLowlight(all);
+
 export const CODE_LANGUAGES: { value: string; label: string }[] = [
   { value: 'plaintext', label: 'Plain text' },
   { value: 'bash', label: 'Bash' },

@@ -8,6 +8,7 @@
  * (layout switch / add-row).
  */
 import {
+    PROPERTY_TYPE_ICONS,
     defaultConfigFor,
     type DatabaseView,
     type DatabaseViewType,
@@ -47,6 +48,7 @@ export interface RequiredPropertyCreateInput {
 export interface RequiredPropertyCreatePayload {
     label: string;
     type: PropertyType;
+    icon: string;
     config: PropertyConfig;
 }
 
@@ -115,6 +117,7 @@ export function createPayloadForRequirement(
     return {
         label: input.label.trim() || requirement.defaultLabel,
         type: input.type,
+        icon: PROPERTY_TYPE_ICONS[input.type],
         config,
     };
 }
@@ -197,13 +200,13 @@ export const chartValueRequirement: LayoutPropertyRequirement = {
     key: 'chart.valuePropertyId',
     layoutKey: 'valuePropertyId',
     label: 'Value property',
-    description: 'Sum and average charts need a Number property to aggregate.',
+    description: 'Numeric chart aggregations need a Number property to aggregate.',
     propertyTypes: ['number'],
     defaultLabel: 'Value',
     defaultType: 'number',
     requiredWhen: (ctx) => {
         const aggregation = readLayout(ctx.activeView).aggregation;
-        return aggregation === 'sum' || aggregation === 'avg';
+        return aggregation === 'sum' || aggregation === 'avg' || aggregation === 'min' || aggregation === 'max';
     },
 };
 

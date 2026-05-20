@@ -42,6 +42,7 @@ import {
     publishDatabaseRowsChanged,
     publishPropertyValueChanged,
 } from '@/lib/realtime';
+import { coverBackgroundPosition } from '@/lib/noteCover';
 import type {
     DatabaseRowSnapshot,
     PropertyDefinition,
@@ -102,6 +103,15 @@ function cardCoverUrl(row: DatabaseRowSnapshot): string | null {
     // to a cover image when present so the user still gets a preview
     // surface; degrade to no media otherwise.
     return row.note?.coverImage ?? null;
+}
+
+function cardCoverStyle(row: DatabaseRowSnapshot): Record<string, string> {
+    const url = cardCoverUrl(row);
+    if (!url) return {};
+    return {
+        backgroundImage: `url('${url}')`,
+        backgroundPosition: coverBackgroundPosition(row.note.coverPosition),
+    };
 }
 
 /**
@@ -371,7 +381,7 @@ function isCardDragging(rowId: string): boolean {
                             v-if="cardCoverUrl(row)"
                             class="db-board__card-cover"
                             :class="{ 'db-board__card-cover--fit': cardDisplay.fitMedia }"
-                            :style="{ backgroundImage: `url('${cardCoverUrl(row)}')` }" />
+                            :style="cardCoverStyle(row)" />
                         <div class="db-board__card-title-row">
                             <Icon
                                 v-if="common.showPageIcon"

@@ -21,6 +21,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue';
 import { Icon } from '@/components/ui';
 import { useDatabaseBundle } from '@/composables/useDatabase';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import type { DatabaseView, DatabaseViewConfig, DatabaseViewType } from '@continuum/shared';
 import { sectionById, SECTIONS, type SectionId } from './viewSettings/sections';
 import LayoutPanel from './viewSettings/LayoutPanel.vue';
@@ -71,6 +72,7 @@ const POPOVER_WIDTH_WIDE = 360;
 const POPOVER_MAX_HEIGHT = 480;
 const popoverRef = ref<HTMLElement | null>(null);
 const popoverStyle = ref<Record<string, string>>({});
+useContinuumScrollLock(toRef(props, 'modelValue'));
 
 /**
  * Sections that need extra horizontal room (multi-control rows). Keep
@@ -194,6 +196,7 @@ onBeforeUnmount(() => {
             class="db-view-settings"
             role="dialog"
             aria-label="View settings"
+            data-continuum-scroll-lock-allow="true"
             :style="popoverStyle"
             @scroll.passive="resetShellScroll"
             @click.stop>

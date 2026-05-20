@@ -74,10 +74,14 @@ export function useDatabaseDirectory(): UseDatabaseDirectoryReturn {
     ensureSubscribed();
     ensureLoaded();
     const map = computed(() => new Map(list.value.map((db) => [db.id, db] as const)));
+    function displayName(id: string): string {
+        const title = map.value.get(id)?.title.trim();
+        return title || id.slice(0, 6);
+    }
     return {
         databases: computed(() => list.value.slice()),
         byId: (id: string) => map.value.get(id) ?? null,
-        displayName: (id: string) => map.value.get(id)?.title ?? id.slice(0, 6),
+        displayName,
         refresh: async () => {
             loaded.value = false;
             loadingPromise = null;

@@ -12,6 +12,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useFloatingPosition } from '@/composables/useFloatingPosition';
+import { useContinuumScrollLock } from '@/composables/useContinuumScrollLock';
 import Icon from './Icon.vue';
 
 interface Props {
@@ -44,6 +45,7 @@ const { style: panelStyle, reposition } = useFloatingPosition({
     minWidth: 260,
     maxHeight: props.datetime ? 380 : 340,
 });
+useContinuumScrollLock(open);
 
 /** Month being browsed in the popover (1st of the month, local time). */
 const cursor = ref<Date>(new Date());
@@ -241,7 +243,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick, true
         </button>
 
         <Teleport to="body">
-            <div v-if="open" ref="panel" class="ui-dp__panel" role="dialog" :style="panelStyle">
+            <div v-if="open" ref="panel" class="ui-dp__panel" role="dialog"
+                data-continuum-scroll-lock-allow="true" :style="panelStyle">
                 <header class="ui-dp__header">
                     <button type="button" class="ui-dp__nav" @click="shiftMonth(-1)" aria-label="Previous month">
                         <Icon name="chevron-left" :size="12" />

@@ -13,7 +13,7 @@
  */
 import type { Editor } from '@tiptap/core';
 import type { ContextMenuItem } from '@continuum/shared';
-import { buildTurnIntoSubmenu } from './menu/turnInto';
+import { buildTurnIntoMenuItem } from './menu/turnInto';
 import { buildFormatSubmenu } from './menu/format';
 import { buildColorSubmenu } from './menu/color';
 import { buildInsertSubmenu } from './menu/insert';
@@ -54,12 +54,10 @@ export interface MenuContext {
 
 export function buildEditorMenu(ctx: MenuContext): ContextMenuItem[] {
   const { editor } = ctx;
-  const items: ContextMenuItem[] = [
-    buildTurnIntoSubmenu(ctx),
-    buildFormatSubmenu(ctx),
-    buildColorSubmenu(ctx),
-    buildInsertSubmenu(ctx),
-  ];
+  const items: ContextMenuItem[] = [];
+  const turnInto = buildTurnIntoMenuItem(ctx);
+  if (turnInto) items.push(turnInto);
+  items.push(buildFormatSubmenu(ctx), buildColorSubmenu(ctx), buildInsertSubmenu(ctx));
 
   // Image-specific actions when an image node is selected.
   if (editor.isActive('image')) {

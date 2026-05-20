@@ -8,4 +8,20 @@ export {
   type ExtractedFootnote,
 } from './nodes/Footnote';
 export { Database as DatabaseNode } from './nodes/Database';
+// Block platform (registry-driven definitions, slash descriptors).
+export {
+  BlockRegistry,
+  createBlockRegistry,
+  createBuiltinBlocks,
+  BUILTIN_BLOCK_SLASH,
+  SLASH_COMMAND_SECTIONS,
+  type BlockCapability,
+  type BlockCategory,
+  type BlockDefinition,
+  type BlockExtension,
+  type BlockSlashDescriptor,
+  type BlockStatus,
+  type BuiltinBlockViews,
+  type SlashCommandSection,
+} from './blocks';
 export const EDITOR_VERSION = '0.0.1';
